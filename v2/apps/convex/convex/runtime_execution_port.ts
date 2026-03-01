@@ -1,23 +1,29 @@
 import {
+  RuntimeAdapterError,
   RuntimeExecutionPortError,
   type ExecuteRuntimeRun,
-} from "@executor-v2/engine";
-import {
-  ToolProviderRegistryService,
+  type ExecuteRuntimeRunInput,
   makeRuntimeAdapterRegistry,
-  makeToolProviderRegistry,
   type RuntimeExecuteError,
 } from "@executor-v2/engine";
 import { makeLocalInProcessRuntimeAdapter } from "@executor-v2/runtime-local-inproc";
-import { type ExecuteRunInput } from "@executor-v2/sdk";
 import * as Effect from "effect/Effect";
 
 const convexRuntimeAdapter = makeLocalInProcessRuntimeAdapter();
 
 const runtimeAdapters = makeRuntimeAdapterRegistry([convexRuntimeAdapter]);
-const toolProviders = makeToolProviderRegistry([]);
 
-export const executeRuntimeRunInConvex: ExecuteRuntimeRun = (input: ExecuteRunInput) =>
+const missingToolCallService = (runId: string, toolPath: string): RuntimeAdapterError =>
+  new RuntimeAdapterError({
+    operation: "call_tool",
+    runtimeKind: convexRuntimeAdapter.kind,
+    message: `No runtime tool-call service configured in convex for ${toolPath}`,
+    details: `runId=${runId}`,
+  });
+
+export const executeRuntimeRunInConvex: ExecuteRuntimeRun = (
+  input: ExecuteRuntimeRunInput,
+) =>
   Effect.gen(function* () {
     const runtimeAdapter = yield* runtimeAdapters.get(convexRuntimeAdapter.kind).pipe(
       Effect.mapError(
@@ -41,12 +47,15 @@ export const executeRuntimeRunInConvex: ExecuteRuntimeRun = (input: ExecuteRunIn
 
     return yield* runtimeAdapter
       .execute({
+        runId: input.runId,
         code: input.code,
         timeoutMs: input.timeoutMs,
-        tools: [],
+        toolCallService: {
+          callTool: (toolInput) =>
+            Effect.fail(missingToolCallService(toolInput.runId, toolInput.toolPath)),
+        },
       })
       .pipe(
-        Effect.provideService(ToolProviderRegistryService, toolProviders),
         Effect.mapError(
           (error: RuntimeExecuteError) =>
             new RuntimeExecutionPortError({

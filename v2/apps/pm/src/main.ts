@@ -11,7 +11,6 @@ import {
   createRuntimeToolCallHandler,
   createUnimplementedRuntimeToolInvoker,
   makeRuntimeAdapterRegistry,
-  makeToolProviderRegistry,
 } from "@executor-v2/engine";
 import {
   makeLocalSourceStore,
@@ -56,7 +55,6 @@ const pmRuntimeAdapters = [
 ];
 
 const runtimeAdapters = makeRuntimeAdapterRegistry(pmRuntimeAdapters);
-const toolProviders = makeToolProviderRegistry([]);
 
 const defaultRuntimeKind =
   readConfiguredRuntimeKind(process.env.PM_RUNTIME_KIND) ?? pmRuntimeAdapters[0].kind;
@@ -85,21 +83,21 @@ const controlPlaneWebHandler = makeControlPlaneWebHandler(
   PmActorLive(localStateStore),
 );
 
-const executeRuntimeRun = createPmExecuteRuntimeRun({
-  defaultRuntimeKind,
-  runtimeAdapters,
-  toolProviders,
-});
-
-const runExecutor = createRunExecutor(executeRuntimeRun);
-const handleMcp = createPmMcpHandler(runExecutor.executeRun);
-
 const resolveCredentials = createPmResolveToolCredentials(localStateStore);
 const invokeRuntimeTool = createUnimplementedRuntimeToolInvoker("pm");
 const handleToolCall = createRuntimeToolCallHandler({
   resolveCredentials,
   invokeRuntimeTool,
 });
+
+const executeRuntimeRun = createPmExecuteRuntimeRun({
+  defaultRuntimeKind,
+  runtimeAdapters,
+  handleToolCall,
+});
+
+const runExecutor = createRunExecutor(executeRuntimeRun);
+const handleMcp = createPmMcpHandler(runExecutor.executeRun);
 
 const handleToolCallHttp = createPmToolCallHttpHandler((input) =>
   Effect.runPromise(handleToolCall(input)),

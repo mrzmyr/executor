@@ -10,6 +10,10 @@ export class RuntimeExecutionPortError extends Data.TaggedError(
   details: string | null;
 }> {}
 
+export type ExecuteRuntimeRunInput = ExecuteRunInput & {
+  runId: string;
+};
+
 export type ExecuteRuntimeRun = (
-  input: ExecuteRunInput,
+  input: ExecuteRuntimeRunInput,
 ) => Effect.Effect<unknown, RuntimeExecutionPortError>;

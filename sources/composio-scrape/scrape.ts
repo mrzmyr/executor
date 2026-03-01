@@ -204,8 +204,17 @@ function extractUsableSpecUrls(markdown: string, matchedApisGuru: ApisGuruMatch 
 
   for (const url of extractUrls(markdown)) {
     const lower = url.toLowerCase();
+    const parsed = new URL(url);
+    const host = parsed.hostname.toLowerCase();
+    const path = parsed.pathname.toLowerCase();
 
-    if (/\/graphql($|[/?#])/i.test(url) || /graphql\./i.test(lower)) {
+    const isDocsHost = /^(docs|developer|developers)\./.test(host) || path.includes("/docs/");
+    const looksLikeGraphqlEndpoint =
+      host.startsWith("graphql.") ||
+      /\/graphql($|\/)/.test(path) ||
+      /\/api\/graphql($|\/)/.test(path);
+
+    if (looksLikeGraphqlEndpoint && !isDocsHost) {
       graphqlUrls.add(url);
     }
 

@@ -16,7 +16,10 @@ export const executeRun = (
   Effect.gen(function* () {
     const runId = options.makeRunId?.() ?? `run_${crypto.randomUUID()}`;
 
-    const runtimeResult = yield* executeRuntimeRun(input).pipe(Effect.either);
+    const runtimeResult = yield* executeRuntimeRun({
+      ...input,
+      runId,
+    }).pipe(Effect.either);
     if (Either.isLeft(runtimeResult)) {
       const error = runtimeResult.left;
       return {

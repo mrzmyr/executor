@@ -10,6 +10,7 @@ export {
   type RuntimeExecuteError,
   type RuntimeExecuteInput,
   type RuntimeRunnableTool,
+  type RuntimeToolCallService,
 } from "./runtime-adapters";
 
 export {
@@ -46,6 +47,7 @@ export {
 export {
   RuntimeExecutionPortError,
   type ExecuteRuntimeRun,
+  type ExecuteRuntimeRunInput,
 } from "./runtime-execution-port";
 
 export {

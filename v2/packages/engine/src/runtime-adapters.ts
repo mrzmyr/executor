@@ -5,10 +5,7 @@ import * as Layer from "effect/Layer";
 
 import type { Source } from "@executor-v2/schema";
 
-import type {
-  CanonicalToolDescriptor,
-  ToolProviderRegistryService,
-} from "./tool-providers";
+import type { CanonicalToolDescriptor } from "./tool-providers";
 
 export type RuntimeAdapterKind = string;
 
@@ -17,9 +14,19 @@ export type RuntimeRunnableTool = {
   source: Source | null;
 };
 
+export type RuntimeToolCallService = {
+  callTool: (input: {
+    runId: string;
+    callId: string;
+    toolPath: string;
+    input?: Record<string, unknown>;
+  }) => Effect.Effect<unknown, RuntimeAdapterError>;
+};
+
 export type RuntimeExecuteInput = {
+  runId: string;
   code: string;
-  tools: ReadonlyArray<RuntimeRunnableTool>;
+  toolCallService?: RuntimeToolCallService;
   timeoutMs?: number;
 };
 
@@ -37,7 +44,7 @@ export interface RuntimeAdapter {
   readonly isAvailable: () => Effect.Effect<boolean>;
   readonly execute: (
     input: RuntimeExecuteInput,
-  ) => Effect.Effect<unknown, RuntimeExecuteError, ToolProviderRegistryService>;
+  ) => Effect.Effect<unknown, RuntimeExecuteError>;
 }
 
 export class RuntimeAdapterRegistryError extends Data.TaggedError(
@@ -63,7 +70,7 @@ export interface RuntimeAdapterRegistry {
 
   readonly execute: (
     input: RuntimeExecuteInput & { runtimeKind: RuntimeAdapterKind },
-  ) => Effect.Effect<unknown, RuntimeExecuteError | RuntimeAdapterRegistryError, ToolProviderRegistryService>;
+  ) => Effect.Effect<unknown, RuntimeExecuteError | RuntimeAdapterRegistryError>;
 }
 
 export class RuntimeAdapterRegistryService extends Context.Tag(
@@ -124,11 +131,7 @@ export const makeRuntimeAdapterRegistry = (
 
   const execute = (
     input: RuntimeExecuteInput & { runtimeKind: RuntimeAdapterKind },
-  ): Effect.Effect<
-    unknown,
-    RuntimeExecuteError | RuntimeAdapterRegistryError,
-    ToolProviderRegistryService
-  > =>
+  ): Effect.Effect<unknown, RuntimeExecuteError | RuntimeAdapterRegistryError> =>
     Effect.gen(function* () {
       const adapter = yield* get(input.runtimeKind);
       return yield* adapter.execute(input);

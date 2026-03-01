@@ -1,67 +1,40 @@
 import { describe, expect, it } from "@effect/vitest";
-import {
-  CanonicalToolDescriptorSchema,
-  type CanonicalToolDescriptor,
-} from "@executor-v2/schema";
 import * as Effect from "effect/Effect";
 import * as Either from "effect/Either";
-import * as Schema from "effect/Schema";
 
+import { makeCloudflareWorkerLoaderRuntimeAdapter } from "@executor-v2/runtime-cloudflare-worker-loader";
+import { makeLocalInProcessRuntimeAdapter } from "@executor-v2/runtime-local-inproc";
 import {
   makeRuntimeAdapterRegistry,
   RuntimeAdapterError,
 } from "./runtime-adapters";
-import { makeCloudflareWorkerLoaderRuntimeAdapter } from "@executor-v2/runtime-cloudflare-worker-loader";
-import { makeLocalInProcessRuntimeAdapter } from "@executor-v2/runtime-local-inproc";
-import {
-  makeToolProviderRegistry,
-  ToolProviderRegistryService,
-  type ToolProvider,
-} from "./tool-providers";
-
-const decodeCanonicalToolDescriptor = Schema.decodeUnknownSync(
-  CanonicalToolDescriptorSchema,
-);
-
-const sumToolDescriptor: CanonicalToolDescriptor = decodeCanonicalToolDescriptor({
-  providerKind: "in_memory",
-  sourceId: null,
-  workspaceId: null,
-  toolId: "sum",
-  name: "sum",
-  description: null,
-  invocationMode: "in_memory",
-  availability: "local_only",
-  providerPayload: null,
-});
 
 describe("runtime adapters", () => {
   it.effect("executes with local-inproc adapter via runtime registry", () =>
     Effect.gen(function* () {
-      const sumProvider: ToolProvider = {
-        kind: "in_memory",
-        invoke: (input) =>
-          Effect.gen(function* () {
-            const args = input.args as { a: number; b: number };
-            return {
-              output: args.a + args.b,
-              isError: false,
-            } as const;
-          }),
-      };
-
-      const toolRegistry = makeToolProviderRegistry([sumProvider]);
       const runtimeRegistry = makeRuntimeAdapterRegistry([
         makeLocalInProcessRuntimeAdapter(),
       ]);
 
-      const result = yield* runtimeRegistry
-        .execute({
-          runtimeKind: "local-inproc",
-          code: "return await tools.sum({ a: 2, b: 4 });",
-          tools: [{ descriptor: sumToolDescriptor, source: null }],
-        })
-        .pipe(Effect.provideService(ToolProviderRegistryService, toolRegistry));
+      const result = yield* runtimeRegistry.execute({
+        runtimeKind: "local-inproc",
+        runId: "run_test_1",
+        code: "return await tools.sum({ a: 2, b: 4 });",
+        toolCallService: {
+          callTool: (input) =>
+            input.toolPath === "sum"
+              ? Effect.succeed(
+                  ((input.input?.a as number) ?? 0) +
+                    ((input.input?.b as number) ?? 0),
+                )
+              : new RuntimeAdapterError({
+                  operation: "call_tool",
+                  runtimeKind: "local-inproc",
+                  message: `Unknown tool path: ${input.toolPath}`,
+                  details: null,
+                }),
+        },
+      });
 
       expect(result).toBe(6);
     }),
@@ -69,19 +42,16 @@ describe("runtime adapters", () => {
 
   it.effect("returns typed not-implemented error for cloudflare adapter", () =>
     Effect.gen(function* () {
-      const toolRegistry = makeToolProviderRegistry([]);
       const runtimeRegistry = makeRuntimeAdapterRegistry([
         makeCloudflareWorkerLoaderRuntimeAdapter(),
       ]);
 
       const result = yield* Effect.either(
-        runtimeRegistry
-          .execute({
-            runtimeKind: "cloudflare-worker-loader",
-            code: "return 1;",
-            tools: [],
-          })
-          .pipe(Effect.provideService(ToolProviderRegistryService, toolRegistry)),
+        runtimeRegistry.execute({
+          runtimeKind: "cloudflare-worker-loader",
+          runId: "run_test_2",
+          code: "return 1;",
+        }),
       );
 
       expect(Either.isLeft(result)).toBe(true);

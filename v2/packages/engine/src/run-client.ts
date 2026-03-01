@@ -1,19 +1,12 @@
 import * as Effect from "effect/Effect";
 import * as Either from "effect/Either";
 
-import {
-  ToolProviderError,
-  ToolProviderRegistryService,
-  makeToolProviderRegistry,
-  type CanonicalToolDescriptor,
-  type ToolProvider,
-  type ToolProviderRegistry,
-} from "./tool-providers";
 import type {
   RuntimeAdapter,
   RuntimeExecuteError,
-  RuntimeRunnableTool,
+  RuntimeToolCallService,
 } from "./runtime-adapters";
+import { RuntimeAdapterError } from "./runtime-adapters";
 
 export type RuntimeRunClientExecuteInput = {
   code: string;
@@ -44,8 +37,7 @@ export type InMemorySandboxToolMap = Record<string, InMemorySandboxTool>;
 
 export type CreateRuntimeRunClientOptions = {
   runtimeAdapter: RuntimeAdapter;
-  tools?: ReadonlyArray<RuntimeRunnableTool>;
-  toolProviderRegistry: ToolProviderRegistry;
+  toolCallService?: RuntimeToolCallService;
   defaults?: {
     timeoutMs?: number;
   };
@@ -64,59 +56,37 @@ export type CreateInMemoryRuntimeRunClientOptions = {
 const formatRuntimeExecuteError = (error: RuntimeExecuteError): string =>
   error.details ? `${error.message}: ${error.details}` : error.message;
 
-const toInMemoryDescriptor = (
-  toolName: string,
-  tool: InMemorySandboxTool,
-): CanonicalToolDescriptor => ({
-  providerKind: "in_memory",
-  sourceId: null,
-  workspaceId: null,
-  toolId: toolName,
-  name: toolName,
-  description: tool.description ?? null,
-  invocationMode: "in_memory",
-  availability: "local_only",
-  providerPayload: null,
-});
-
-const makeInMemoryRuntimeTools = (
+const inMemoryToolCallService = (
+  runtimeKind: string,
   tools: InMemorySandboxToolMap,
-): ReadonlyArray<RuntimeRunnableTool> =>
-  Object.entries(tools).map(([toolName, tool]) => ({
-    descriptor: toInMemoryDescriptor(toolName, tool),
-    source: null,
-  }));
-
-const makeInMemoryToolProvider = (
-  tools: InMemorySandboxToolMap,
-): ToolProvider => ({
-  kind: "in_memory",
-  invoke: (input) => {
-    const implementation = tools[input.tool.toolId];
-
+): RuntimeToolCallService => ({
+  callTool: (input) => {
+    const implementation = tools[input.toolPath];
     if (!implementation) {
-      return Effect.succeed({
-        output: `Unknown in-memory tool: ${input.tool.toolId}`,
-        isError: true,
+      return new RuntimeAdapterError({
+        operation: "call_tool",
+        runtimeKind,
+        message: `Unknown in-memory tool: ${input.toolPath}`,
+        details: null,
+      });
+    }
+
+    if (!implementation.execute) {
+      return new RuntimeAdapterError({
+        operation: "call_tool",
+        runtimeKind,
+        message: `In-memory tool '${input.toolPath}' has no execute function`,
+        details: null,
       });
     }
 
     return Effect.tryPromise({
-      try: async () => {
-        if (!implementation.execute) {
-          throw new Error(`In-memory tool '${input.tool.toolId}' has no execute function`);
-        }
-
-        return {
-          output: await implementation.execute(input.args, undefined),
-          isError: false,
-        };
-      },
+      try: () => implementation.execute!(input.input ?? {}, undefined),
       catch: (cause) =>
-        new ToolProviderError({
-          operation: "invoke",
-          providerKind: "in_memory",
-          message: `In-memory tool invocation failed: ${input.tool.toolId}`,
+        new RuntimeAdapterError({
+          operation: "call_tool",
+          runtimeKind,
+          message: `In-memory tool invocation failed: ${input.toolPath}`,
           details: String(cause),
         }),
     });
@@ -156,18 +126,12 @@ export const createRuntimeRunClient = (
 
       const executionResult = await Effect.runPromise(
         Effect.either(
-          options.runtimeAdapter
-            .execute({
-              code: input.code,
-              timeoutMs: input.timeoutMs ?? options.defaults?.timeoutMs,
-              tools: options.tools ?? [],
-            })
-            .pipe(
-              Effect.provideService(
-                ToolProviderRegistryService,
-                options.toolProviderRegistry,
-              ),
-            ),
+          options.runtimeAdapter.execute({
+            runId,
+            code: input.code,
+            timeoutMs: input.timeoutMs ?? options.defaults?.timeoutMs,
+            toolCallService: options.toolCallService,
+          }),
         ),
       );
 
@@ -191,14 +155,9 @@ export const createRuntimeRunClient = (
 export const createInMemoryRuntimeRunClient = (
   options: CreateInMemoryRuntimeRunClientOptions,
 ): RuntimeRunClient => {
-  const toolProviderRegistry = makeToolProviderRegistry([
-    makeInMemoryToolProvider(options.tools),
-  ]);
-
   return createRuntimeRunClient({
     runtimeAdapter: options.runtimeAdapter,
-    tools: makeInMemoryRuntimeTools(options.tools),
-    toolProviderRegistry,
+    toolCallService: inMemoryToolCallService(options.runtimeAdapter.kind, options.tools),
     defaults: options.defaults,
     makeRunId: options.makeRunId,
   });

@@ -17,7 +17,7 @@ const toErrorMessage = (error) => {
   return String(error);
 };
 
-const createToolCaller = (toolId) => (args) =>
+const createToolCaller = (toolPath) => (args) =>
   new Promise((resolve, reject) => {
     const requestId = crypto.randomUUID();
     pendingToolCalls.set(requestId, { resolve, reject });
@@ -25,16 +25,33 @@ const createToolCaller = (toolId) => (args) =>
     writeMessage({
       type: "tool_call",
       requestId,
-      toolId,
+      toolPath,
       args: args === undefined ? {} : args,
     });
   });
 
-const runUserCode = async (code, toolIds) => {
-  const tools = Object.create(null);
-  for (const toolId of toolIds) {
-    tools[toolId] = createToolCaller(toolId);
-  }
+const createToolsProxy = (path = []) => {
+  const callable = () => undefined;
+
+  return new Proxy(callable, {
+    get(_target, prop) {
+      if (prop === "then") return undefined;
+      if (typeof prop !== "string") return undefined;
+      return createToolsProxy([...path, prop]);
+    },
+    apply(_target, _thisArg, args) {
+      const toolPath = path.join(".");
+      if (!toolPath) {
+        throw new Error("Tool path missing in invocation");
+      }
+
+      return createToolCaller(toolPath)(args.length > 0 ? args[0] : undefined);
+    },
+  });
+};
+
+const runUserCode = async (code) => {
+  const tools = createToolsProxy();
 
   const execute = new Function(
     "tools",
@@ -55,7 +72,7 @@ const handleStart = (message) => {
 
   started = true;
 
-  runUserCode(message.code, message.toolIds)
+  runUserCode(message.code)
     .then((result) => {
       writeMessage({
         type: "completed",

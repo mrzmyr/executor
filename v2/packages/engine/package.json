@@ -17,6 +17,7 @@
     "effect": "catalog:"
   },
   "devDependencies": {
+    "@effect/platform": "catalog:",
     "@effect/vitest": "catalog:",
     "@executor-v2/management-api": "workspace:*",
     "vitest": "catalog:"

@@ -1,23 +1,25 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 
+import {
+  HttpApi,
+  HttpApiEndpoint,
+  HttpApiGroup,
+  HttpApiSchema,
+  OpenApi,
+} from "@effect/platform";
 import { describe, expect, it } from "@effect/vitest";
+import { makeSourceManagerService } from "@executor-v2/management-api";
 import { type ToolArtifactStore } from "@executor-v2/persistence-ports";
 import { type Source, SourceSchema, type ToolArtifact } from "@executor-v2/schema";
-import { makeSourceManagerService } from "@executor-v2/management-api";
 import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
 import { executeJavaScriptWithTools } from "@executor-v2/runtime-local-inproc";
-import {
-  makeOpenApiToolProvider,
-  openApiToolDescriptorsFromManifest,
-} from "./openapi-provider";
-import {
-  makeToolProviderRegistry,
-  ToolProviderRegistryService,
-} from "./tool-providers";
+import { makeOpenApiToolProvider, openApiToolDescriptorsFromManifest } from "./openapi-provider";
+import { RuntimeAdapterError } from "./runtime-adapters";
+import { makeToolProviderRegistry } from "./tool-providers";
 
 const decodeSource = Schema.decodeUnknownSync(SourceSchema);
 
@@ -25,8 +27,7 @@ type TestServer = {
   baseUrl: string;
   requests: Array<{
     path: string;
-    query: string;
-    apiKey: string | null;
+    accept: string | null;
   }>;
   close: () => Promise<void>;
 };
@@ -57,6 +58,22 @@ const getHeaderValue = (
   return null;
 };
 
+const githubOwnerParam = HttpApiSchema.param("owner", Schema.String);
+const githubRepoParam = HttpApiSchema.param("repo", Schema.String);
+
+class GitHubReposApi extends HttpApiGroup.make("repos").add(
+  HttpApiEndpoint.get("getRepo")`/repos/${githubOwnerParam}/${githubRepoParam}`.addSuccess(
+    Schema.Unknown,
+  ),
+) {}
+
+class GitHubApi extends HttpApi.make("github").add(GitHubReposApi) {}
+
+const githubOpenApiSpec = OpenApi.fromApi(GitHubApi);
+
+const quoteJavaScriptString = (value: string): string =>
+  `"${value.replaceAll("\\", "\\\\").replaceAll('"', '\\"')}"`;
+
 const makeTestServer = Effect.acquireRelease(
   Effect.promise<TestServer>(
     () =>
@@ -67,17 +84,16 @@ const makeTestServer = Effect.acquireRelease(
           const host = getHeaderValue(req, "host") ?? "127.0.0.1";
           const url = new URL(req.url ?? "/", `http://${host}`);
 
-          if (url.pathname === "/users/u123") {
+          if (url.pathname === "/repos/octocat/hello-world" && req.method === "GET") {
             requests.push({
               path: url.pathname,
-              query: url.search,
-              apiKey: getHeaderValue(req, "x-api-key"),
+              accept: getHeaderValue(req, "accept"),
             });
 
             jsonResponse(res, 200, {
-              id: "u123",
-              verbose: url.searchParams.get("verbose") === "true",
-              apiKey: getHeaderValue(req, "x-api-key"),
+              full_name: "octocat/hello-world",
+              stargazers_count: 42,
+              private: false,
             });
             return;
           }
@@ -111,7 +127,7 @@ const makeTestServer = Effect.acquireRelease(
               }),
           });
         });
-      })
+      }),
   ),
   (testServer) =>
     Effect.tryPromise({
@@ -124,41 +140,14 @@ const makeTestServer = Effect.acquireRelease(
 );
 
 describe("OpenAPI execution vertical slice", () => {
-  it.scoped("extracts OpenAPI tools and executes code against provider", () =>
+  it.scoped("loads GitHub OpenAPI tool and executes it in sandbox", () =>
     Effect.gen(function* () {
       const testServer = yield* makeTestServer;
-
-      const openApiSpec = {
-        openapi: "3.1.0",
-        paths: {
-          "/users/{userId}": {
-            get: {
-              operationId: "getUser",
-              parameters: [
-                {
-                  name: "userId",
-                  in: "path",
-                  required: true,
-                },
-                {
-                  name: "verbose",
-                  in: "query",
-                },
-                {
-                  name: "x-api-key",
-                  in: "header",
-                  required: true,
-                },
-              ],
-            },
-          },
-        },
-      };
 
       const source: Source = decodeSource({
         id: "src_openapi",
         workspaceId: "ws_local",
-        name: "local-openapi",
+        name: "github",
         kind: "openapi",
         endpoint: testServer.baseUrl,
         status: "connected",
@@ -178,17 +167,14 @@ describe("OpenAPI execution vertical slice", () => {
           ),
         upsert: (artifact: ToolArtifact) =>
           Effect.sync(() => {
-            artifactsByKey.set(
-              `${artifact.workspaceId}:${artifact.sourceId}`,
-              artifact,
-            );
+            artifactsByKey.set(`${artifact.workspaceId}:${artifact.sourceId}`, artifact);
           }),
       };
-      const sourceManager = makeSourceManagerService(artifactStore);
 
+      const sourceManager = makeSourceManagerService(artifactStore);
       const refreshResult = yield* sourceManager.refreshOpenApiArtifact({
         source,
-        openApiSpec,
+        openApiSpec: githubOpenApiSpec,
       });
 
       const tools = yield* openApiToolDescriptorsFromManifest(
@@ -196,49 +182,69 @@ describe("OpenAPI execution vertical slice", () => {
         refreshResult.artifact.manifestJson,
       );
 
-      const getUserTool = tools.find((tool) => tool.toolId === "getUser");
-      if (!getUserTool) {
-        throw new Error("expected getUser tool");
-      }
+      expect(tools).toHaveLength(1);
+      const githubTool = tools[0]!;
 
       const registry = makeToolProviderRegistry([makeOpenApiToolProvider()]);
 
       const executionResult = yield* executeJavaScriptWithTools({
-        code: `
-return await tools.getUser({
-  userId: "u123",
-  verbose: "true",
-  "x-api-key": "sk_test"
-});
-`,
-        tools: [
-          {
-            descriptor: getUserTool,
-            source,
+        runId: "run_openapi_1",
+        code: `return await tools[${quoteJavaScriptString(githubTool.toolId)}]({ owner: "octocat", repo: "hello-world" });`,
+        toolCallService: {
+          callTool: (input) => {
+            if (input.toolPath !== githubTool.toolId) {
+              return new RuntimeAdapterError({
+                operation: "call_tool",
+                runtimeKind: "local-inproc",
+                message: `Unknown tool path: ${input.toolPath}`,
+                details: null,
+              });
+            }
+
+            return registry
+              .invoke({
+                source,
+                tool: githubTool,
+                args: input.input ?? {},
+              })
+              .pipe(
+                Effect.mapError(
+                  (error) =>
+                    new RuntimeAdapterError({
+                      operation: "call_tool",
+                      runtimeKind: "local-inproc",
+                      message: error.message,
+                      details: null,
+                    }),
+                ),
+                Effect.flatMap((result) =>
+                  result.isError
+                    ? Effect.fail(
+                        new RuntimeAdapterError({
+                          operation: "call_tool",
+                          runtimeKind: "local-inproc",
+                          message: `Tool call returned error: ${input.toolPath}`,
+                          details: null,
+                        }),
+                      )
+                    : Effect.succeed(result.output),
+                ),
+              );
           },
-        ],
-      }).pipe(
-        Effect.provideService(ToolProviderRegistryService, registry),
-      );
+        },
+      });
 
-      const output = executionResult as {
-        status: number;
+      expect(executionResult).toMatchObject({
+        status: 200,
         body: {
-          id: string;
-          verbose: boolean;
-          apiKey: string | null;
-        };
-      };
-
-      expect(output.status).toBe(200);
-      expect(output.body.id).toBe("u123");
-      expect(output.body.verbose).toBe(true);
-      expect(output.body.apiKey).toBe("sk_test");
+          full_name: "octocat/hello-world",
+          stargazers_count: 42,
+          private: false,
+        },
+      });
 
       expect(testServer.requests).toHaveLength(1);
-      expect(testServer.requests[0]?.path).toBe("/users/u123");
-      expect(testServer.requests[0]?.query).toBe("?verbose=true");
-      expect(testServer.requests[0]?.apiKey).toBe("sk_test");
+      expect(testServer.requests[0]?.path).toBe("/repos/octocat/hello-world");
     }),
   );
 });

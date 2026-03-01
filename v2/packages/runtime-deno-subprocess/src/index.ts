@@ -8,8 +8,7 @@ import * as Schema from "effect/Schema";
 import {
   RuntimeAdapterError,
   type RuntimeAdapter,
-  type RuntimeRunnableTool,
-  ToolProviderRegistryService,
+  type RuntimeToolCallService,
 } from "@executor-v2/engine";
 import { spawnDenoWorkerProcess } from "./deno-worker-process";
 
@@ -18,11 +17,10 @@ const runtimeKind = "deno-subprocess";
 export const DenoSubprocessRunnerError = RuntimeAdapterError;
 export type DenoSubprocessRunnerError = RuntimeAdapterError;
 
-export type DenoRunnableTool = RuntimeRunnableTool;
-
 export type ExecuteJavaScriptInDenoInput = {
+  runId: string;
   code: string;
-  tools: ReadonlyArray<RuntimeRunnableTool>;
+  toolCallService?: RuntimeToolCallService;
   timeoutMs?: number;
   denoExecutable?: string;
 };
@@ -37,7 +35,6 @@ const IPC_PREFIX = "@@engine-ipc@@";
 const HostStartMessageSchema = Schema.Struct({
   type: Schema.Literal("start"),
   code: Schema.String,
-  toolIds: Schema.Array(Schema.String),
 });
 
 const HostToolResultMessageSchema = Schema.Struct({
@@ -56,7 +53,7 @@ const HostToWorkerMessageSchema = Schema.Union(
 const WorkerToolCallMessageSchema = Schema.Struct({
   type: Schema.Literal("tool_call"),
   requestId: Schema.String,
-  toolId: Schema.String,
+  toolPath: Schema.String,
   args: Schema.Unknown,
 });
 
@@ -85,27 +82,11 @@ const decodeWorkerMessageLine = Schema.decodeUnknownSync(
 );
 const encodeHostMessage = Schema.encodeSync(Schema.parseJson(HostToWorkerMessageSchema));
 
-const duplicateToolIdError = (toolId: string): DenoSubprocessRunnerError =>
+const missingToolCallServiceError = (toolPath: string): DenoSubprocessRunnerError =>
   new DenoSubprocessRunnerError({
-    operation: "build_tools",
+    operation: "call_tool",
     runtimeKind,
-    message: `Duplicate tool id in run context: ${toolId}`,
-    details: null,
-  });
-
-const missingToolBindingError = (toolId: string): DenoSubprocessRunnerError =>
-  new DenoSubprocessRunnerError({
-    operation: "invoke_tool",
-    runtimeKind,
-    message: `Worker requested unknown tool id: ${toolId}`,
-    details: null,
-  });
-
-const toolCallFailedError = (toolId: string): DenoSubprocessRunnerError =>
-  new DenoSubprocessRunnerError({
-    operation: "invoke_tool",
-    runtimeKind,
-    message: `Tool call returned error: ${toolId}`,
+    message: `No tool call service configured for path: ${toolPath}`,
     details: null,
   });
 
@@ -130,23 +111,6 @@ const workerProcessError = (
     runtimeKind,
     message,
     details,
-  });
-
-const buildToolBindings = (
-  tools: ReadonlyArray<DenoRunnableTool>,
-): Effect.Effect<Map<string, DenoRunnableTool>, DenoSubprocessRunnerError> =>
-  Effect.gen(function* () {
-    const byToolId = new Map<string, DenoRunnableTool>();
-
-    for (const tool of tools) {
-      const toolId = tool.descriptor.toolId;
-      if (byToolId.has(toolId)) {
-        return yield* duplicateToolIdError(toolId);
-      }
-      byToolId.set(toolId, tool);
-    }
-
-    return byToolId;
   });
 
 const defaultDenoExecutable = (): string => {
@@ -186,51 +150,66 @@ const writeMessage = (
       ),
   });
 
-const handleToolCall = (
+const normalizeToolInput = (args: unknown): Record<string, unknown> | undefined => {
+  if (!args || typeof args !== "object" || Array.isArray(args)) {
+    return undefined;
+  }
+
+  return args as Record<string, unknown>;
+};
+
+const callTool = (
+  runId: string,
   message: WorkerToolCallMessage,
-  toolBindings: ReadonlyMap<string, DenoRunnableTool>,
+  toolCallService: RuntimeToolCallService | undefined,
+): Effect.Effect<unknown, DenoSubprocessRunnerError> =>
+  Effect.gen(function* () {
+    if (!toolCallService) {
+      return yield* missingToolCallServiceError(message.toolPath);
+    }
+
+    return yield* toolCallService
+      .callTool({
+        runId,
+        callId: message.requestId,
+        toolPath: message.toolPath,
+        input: normalizeToolInput(message.args),
+      })
+      .pipe(
+        Effect.mapError((cause) =>
+          workerProcessError(
+            "call_tool",
+            `Tool call failed: ${message.toolPath}`,
+            cause.details ?? cause.message,
+          ),
+        ),
+      );
+  });
+
+const handleToolCall = (
+  runId: string,
+  message: WorkerToolCallMessage,
+  toolCallService: RuntimeToolCallService | undefined,
   runPromise: <A, E>(effect: Effect.Effect<A, E, never>) => Promise<A>,
-  invokeTool: (input: {
-    source: RuntimeRunnableTool["source"];
-    tool: RuntimeRunnableTool["descriptor"];
-    args: unknown;
-  }) => Effect.Effect<{ output: unknown; isError: boolean }, unknown>,
   stdin: NodeJS.WritableStream,
 ): Effect.Effect<void, DenoSubprocessRunnerError> =>
   Effect.gen(function* () {
-    const binding = toolBindings.get(message.toolId);
-    if (!binding) {
-      return yield* writeMessage(stdin, {
-        type: "tool_result",
-        requestId: message.requestId,
-        ok: false,
-        error: missingToolBindingError(message.toolId).message,
-      });
-    }
-
     const invokeResult = yield* Effect.tryPromise({
-      try: () =>
-        runPromise(
-          invokeTool({
-            source: binding.source,
-            tool: binding.descriptor,
-            args: message.args,
-          }),
-        ),
+      try: () => runPromise(Effect.either(callTool(runId, message, toolCallService))),
       catch: (cause) =>
         workerProcessError(
-          "invoke_tool",
+          "call_tool",
           "Tool invocation threw while handling worker tool_call",
           String(cause),
         ),
     });
 
-    if (invokeResult.isError) {
+    if (invokeResult._tag === "Left") {
       yield* writeMessage(stdin, {
         type: "tool_result",
         requestId: message.requestId,
         ok: false,
-        error: toolCallFailedError(message.toolId).message,
+        error: invokeResult.left.message,
       });
       return;
     }
@@ -239,7 +218,7 @@ const handleToolCall = (
       type: "tool_result",
       requestId: message.requestId,
       ok: true,
-      value: invokeResult.output,
+      value: invokeResult.right,
     });
   });
 
@@ -249,37 +228,43 @@ export const isDenoSubprocessRuntimeAvailable = (
 
 export const executeJavaScriptInDenoSubprocess = (
   input: ExecuteJavaScriptInDenoInput,
-): Effect.Effect<unknown, DenoSubprocessRunnerError, ToolProviderRegistryService> =>
+): Effect.Effect<unknown, DenoSubprocessRunnerError> =>
   Effect.gen(function* () {
-    const registry = yield* ToolProviderRegistryService;
     const runtime = yield* Effect.runtime<never>();
     const runPromise = Runtime.runPromise(runtime);
-    const toolBindings = yield* buildToolBindings(input.tools);
-    const toolIds = Array.from(toolBindings.keys()).sort();
     const denoExecutable = input.denoExecutable ?? defaultDenoExecutable();
     const timeoutMs = Math.max(100, input.timeoutMs ?? 30_000);
+
     return yield* Effect.tryPromise({
       try: () =>
         new Promise<unknown>((resolve, reject) => {
           let settled = false;
           let stderrBuffer = "";
           let worker: ReturnType<typeof spawnDenoWorkerProcess> | null = null;
-          const finish = (result: { ok: true; value: unknown } | { ok: false; error: Error }) => {
+
+          const finish = (
+            result: { ok: true; value: unknown } | { ok: false; error: Error },
+          ) => {
             if (settled) {
               return;
             }
+
             settled = true;
             clearTimeout(timeout);
             worker?.dispose();
+
             if (result.ok) {
               resolve(result.value);
-            } else {
-              reject(result.error);
+              return;
             }
+
+            reject(result.error);
           };
+
           const fail = (error: DenoSubprocessRunnerError) => {
             finish({ ok: false, error });
           };
+
           const timeout = setTimeout(() => {
             fail(
               workerProcessError(
@@ -289,6 +274,7 @@ export const executeJavaScriptInDenoSubprocess = (
               ),
             );
           }, timeoutMs);
+
           const handleStdoutLine = (rawLine: string) => {
             const line = rawLine.trim();
             if (line.length === 0 || !line.startsWith(IPC_PREFIX)) {
@@ -303,11 +289,12 @@ export const executeJavaScriptInDenoSubprocess = (
               fail(parseWorkerMessageError(payload, cause));
               return;
             }
+
             if (message.type === "tool_call") {
               if (!worker) {
                 fail(
                   workerProcessError(
-                    "invoke_tool",
+                    "call_tool",
                     "Deno subprocess unavailable while handling worker tool_call",
                     null,
                   ),
@@ -317,10 +304,10 @@ export const executeJavaScriptInDenoSubprocess = (
 
               runPromise(
                 handleToolCall(
+                  input.runId,
                   message,
-                  toolBindings,
+                  input.toolCallService,
                   runPromise,
-                  (invokeInput) => registry.invoke(invokeInput),
                   worker.stdin,
                 ),
               ).catch((cause) => {
@@ -336,6 +323,7 @@ export const executeJavaScriptInDenoSubprocess = (
               });
               return;
             }
+
             if (message.type === "completed") {
               finish({ ok: true, value: message.result });
               return;
@@ -400,7 +388,6 @@ export const executeJavaScriptInDenoSubprocess = (
             writeMessage(worker.stdin, {
               type: "start",
               code: input.code,
-              toolIds,
             }),
           ).catch((cause) => {
             fail(
@@ -432,11 +419,10 @@ export const makeDenoSubprocessRuntimeAdapter = (
   isAvailable: () => Effect.succeed(true),
   execute: (input) =>
     executeJavaScriptInDenoSubprocess({
+      runId: input.runId,
       code: input.code,
-      tools: input.tools,
+      toolCallService: input.toolCallService,
       timeoutMs: input.timeoutMs ?? options.defaultTimeoutMs,
       denoExecutable: options.denoExecutable,
     }),
 });
-
-export type { RuntimeRunnableTool };
