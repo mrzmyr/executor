@@ -2,11 +2,49 @@ import {
   ControlPlaneService,
   type ControlPlaneServiceShape,
 } from "@executor-v2/management-api";
+import type { SourceToolSummary } from "@executor-v2/management-api/tools/api";
 import * as Effect from "effect/Effect";
 
-import { api } from "../_generated/api";
+import { api, internal } from "../_generated/api";
 import type { ActionCtx } from "../_generated/server";
 import { toSourceStoreError } from "./errors";
+
+const runtimeInternal = internal as any;
+const toolPageSize = 250;
+
+const collectWorkspaceToolSummaries = async (
+  ctx: ActionCtx,
+  input: {
+    workspaceId: string;
+    sourceId?: string;
+  },
+): Promise<Array<SourceToolSummary>> => {
+  await ctx.runAction(runtimeInternal.control_plane.tool_registry.ensureWorkspaceToolIndexCoverage, {
+    workspaceId: input.workspaceId,
+    ...(input.sourceId ? { sourceId: input.sourceId } : {}),
+  });
+
+  const summaries: Array<SourceToolSummary> = [];
+  let cursor: string | null = null;
+
+  do {
+    const page: {
+      summaries: Array<SourceToolSummary>;
+      continueCursor: string | null;
+      isDone: boolean;
+    } = await ctx.runQuery(runtimeInternal.control_plane.tools.listWorkspaceToolSummaryPage, {
+      workspaceId: input.workspaceId,
+      ...(input.sourceId ? { sourceId: input.sourceId } : {}),
+      cursor,
+      pageSize: toolPageSize,
+    });
+
+    summaries.push(...page.summaries);
+    cursor = page.isDone ? null : page.continueCursor;
+  } while (cursor);
+
+  return summaries;
+};
 
 export const makeConvexControlPlaneService = (
   ctx: ActionCtx,
@@ -121,16 +159,13 @@ export const makeConvexControlPlaneService = (
       }),
     listWorkspaceTools: (workspaceId) =>
       Effect.tryPromise({
-        try: () =>
-          ctx.runAction(api.controlPlane.listWorkspaceTools, {
-            workspaceId,
-          }),
+        try: () => collectWorkspaceToolSummaries(ctx, { workspaceId }),
         catch: (cause) => toSourceStoreError("controlPlane.listWorkspaceTools", cause),
       }),
     listSourceTools: (input) =>
       Effect.tryPromise({
         try: () =>
-          ctx.runAction(api.controlPlane.listSourceTools, {
+          collectWorkspaceToolSummaries(ctx, {
             workspaceId: input.workspaceId,
             sourceId: input.sourceId,
           }),

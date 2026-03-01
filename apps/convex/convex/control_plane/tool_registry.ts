@@ -506,6 +506,52 @@ export const ingestOpenApiManifest = action({
       artifactId: artifactMeta.artifactId,
     });
 
+    const namespace = sourceNamespace({ id: args.sourceId, name: args.sourceName });
+    await ctx.runMutation(runtimeInternal.control_plane.tool_registry.clearWorkspaceSourceToolIndex, {
+      workspaceId: args.workspaceId,
+      sourceId: args.sourceId,
+    });
+
+    for (const batch of chunkArray(args.tools, writeBatchSize)) {
+      await ctx.runMutation(runtimeInternal.control_plane.tool_registry.appendWorkspaceSourceToolIndexChunk, {
+        workspaceId: args.workspaceId,
+        sourceId: args.sourceId,
+        sourceName: args.sourceName,
+        sourceKind: "openapi",
+        artifactId: artifactMeta.artifactId,
+        namespace,
+        refHintTableJson: null,
+        insertOnly: true,
+        rows: batch.map((tool) => {
+          const operationPath = `${tool.method.toUpperCase()} ${tool.path}`;
+          const path = `${namespace}.${tool.toolId}`;
+
+          return {
+            toolId: tool.toolId,
+            protocol: "openapi",
+            method: tool.method.toLowerCase(),
+            path,
+            operationPath,
+            name: tool.name,
+            description: tool.description,
+            searchText: normalizedSearchText(
+              args.sourceName,
+              args.sourceEndpoint,
+              namespace,
+              tool.toolId,
+              tool.name,
+              tool.description,
+              tool.method,
+              tool.path,
+            ),
+            operationHash: tool.operationHash,
+            approvalMode: "auto",
+            status: args.sourceEnabled ? "active" : "disabled",
+          };
+        }),
+      });
+    }
+
     return {
       artifactId: artifactMeta.artifactId,
       created: artifactMeta.created,
@@ -1085,6 +1131,20 @@ export const getSourceArtifactBinding = internalQuery({
   },
 });
 
+export const listWorkspaceSourceArtifactBindings = internalQuery({
+  args: {
+    workspaceId: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const rows = await ctx.db
+      .query("sourceArtifactBindings")
+      .withIndex("by_workspaceId", (q) => q.eq("workspaceId", args.workspaceId))
+      .collect();
+
+    return rows.map((row) => stripConvexSystemFields(row as unknown as Record<string, unknown>));
+  },
+});
+
 export const getArtifactById = internalQuery({
   args: {
     artifactId: v.string(),
@@ -1112,6 +1172,189 @@ export const listArtifactTools = internalQuery({
     return rows
       .map((row) => stripConvexSystemFields(row as unknown as Record<string, unknown>))
       .sort((left, right) => String(left.toolId).localeCompare(String(right.toolId)));
+  },
+});
+
+export const listArtifactToolsPage = internalQuery({
+  args: {
+    artifactId: v.string(),
+    cursor: v.optional(v.union(v.string(), v.null())),
+    pageSize: v.optional(v.number()),
+  },
+  handler: async (ctx, args) => {
+    const pageSize = Math.max(1, Math.min(500, Math.floor(args.pageSize ?? 200)));
+    const page = await ctx.db
+      .query("artifactTools")
+      .withIndex("by_artifactId", (q) => q.eq("artifactId", args.artifactId))
+      .paginate({
+        cursor: args.cursor ?? null,
+        numItems: pageSize,
+      });
+
+    const rows = page.page.map((row) => stripConvexSystemFields(row as unknown as Record<string, unknown>));
+
+    return {
+      rows,
+      continueCursor: page.continueCursor,
+      isDone: page.isDone,
+    };
+  },
+});
+
+export const hasWorkspaceSourceToolIndexRows = internalQuery({
+  args: {
+    workspaceId: v.string(),
+    sourceId: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const page = await ctx.db
+      .query("workspaceToolIndex")
+      .withIndex("by_workspaceId_sourceId", (q) =>
+        q.eq("workspaceId", args.workspaceId).eq("sourceId", args.sourceId),
+      )
+      .paginate({
+        cursor: null,
+        numItems: 1,
+      });
+
+    return page.page.length > 0;
+  },
+});
+
+export const ensureWorkspaceToolIndexCoverage = internalAction({
+  args: {
+    workspaceId: v.string(),
+    sourceId: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    const sourceRows = await ctx.runQuery(runtimeInternal.control_plane.sources.listSources, {
+      workspaceId: args.workspaceId,
+    });
+    const sourceById = new Map<string, Record<string, unknown>>(
+      (sourceRows as Array<Record<string, unknown>>).map((row) => [String(row.id), row] as const),
+    );
+
+    const bindingRows = await ctx.runQuery(
+      runtimeInternal.control_plane.tool_registry.listWorkspaceSourceArtifactBindings,
+      {
+        workspaceId: args.workspaceId,
+      },
+    );
+
+    let rebuiltCount = 0;
+
+    for (const binding of bindingRows) {
+      const sourceId = String(binding.sourceId ?? "");
+      if (sourceId.length === 0) {
+        continue;
+      }
+
+      if (args.sourceId && sourceId !== args.sourceId) {
+        continue;
+      }
+
+      const source = sourceById.get(sourceId);
+      if (!source) {
+        continue;
+      }
+
+      const hasRows = await ctx.runQuery(runtimeInternal.control_plane.tool_registry.hasWorkspaceSourceToolIndexRows, {
+        workspaceId: args.workspaceId,
+        sourceId,
+      });
+      if (hasRows) {
+        continue;
+      }
+
+      const sourceName = String(source.name ?? "");
+      const sourceKind = String(source.kind ?? "openapi");
+      const sourceEndpoint = String(source.endpoint ?? "");
+      const sourceEnabled = source.enabled === true;
+      const artifactId = String(binding.artifactId ?? "");
+      if (artifactId.length === 0) {
+        continue;
+      }
+
+      const artifact = await ctx.runQuery(runtimeInternal.control_plane.tool_registry.getArtifactById, {
+        artifactId,
+      });
+      const namespace = sourceNamespace({ id: sourceId, name: sourceName });
+
+      await ctx.runMutation(runtimeInternal.control_plane.tool_registry.clearWorkspaceSourceToolIndex, {
+        workspaceId: args.workspaceId,
+        sourceId,
+      });
+
+      let cursor: string | null = null;
+      do {
+        const page: {
+          rows: Array<Record<string, unknown>>;
+          continueCursor: string | null;
+          isDone: boolean;
+        } = await ctx.runQuery(runtimeInternal.control_plane.tool_registry.listArtifactToolsPage, {
+          artifactId,
+          cursor,
+          pageSize: 200,
+        });
+
+        if (page.rows.length > 0) {
+          await ctx.runMutation(runtimeInternal.control_plane.tool_registry.appendWorkspaceSourceToolIndexChunk, {
+            workspaceId: args.workspaceId,
+            sourceId,
+            sourceName,
+            sourceKind,
+            artifactId,
+            namespace,
+            refHintTableJson: typeof artifact?.refHintTableJson === "string" ? artifact.refHintTableJson : null,
+            insertOnly: true,
+            rows: page.rows.map((row) => {
+              const toolId = String(row.toolId ?? "");
+              const protocol = String(row.protocol ?? "openapi");
+              const canonicalPath =
+                typeof row.canonicalPath === "string" && row.canonicalPath.trim().length > 0
+                  ? row.canonicalPath.trim()
+                  : null;
+              const method = toWorkspaceToolMethod(
+                protocol,
+                typeof row.metadataJson === "string" ? row.metadataJson : null,
+                canonicalPath,
+              );
+              const path = `${namespace}.${toolId}`;
+              const description = typeof row.description === "string" ? row.description : null;
+              const name = String(row.name ?? toolId);
+
+              return {
+                toolId,
+                protocol,
+                method,
+                path,
+                operationPath: canonicalPath,
+                name,
+                description,
+                searchText: normalizedSearchText(
+                  sourceName,
+                  sourceEndpoint,
+                  namespace,
+                  toolId,
+                  name,
+                  description,
+                  ...metadataSearchTerms(typeof row.metadataJson === "string" ? row.metadataJson : null),
+                ),
+                operationHash: String(row.operationHash ?? ""),
+                approvalMode: "auto",
+                status: sourceEnabled ? "active" : "disabled",
+              };
+            }),
+          });
+        }
+
+        cursor = page.isDone ? null : page.continueCursor;
+      } while (cursor);
+
+      rebuiltCount += 1;
+    }
+
+    return { rebuiltCount };
   },
 });
 
@@ -1292,6 +1535,10 @@ export const listWorkspaceNamespacesUncached = internalAction({
     limit: v.optional(v.number()),
   },
   handler: async (ctx, args) => {
+    await ctx.runAction(runtimeInternal.control_plane.tool_registry.ensureWorkspaceToolIndexCoverage, {
+      workspaceId: args.workspaceId,
+    });
+
     const grouped = new Map<
       string,
       {

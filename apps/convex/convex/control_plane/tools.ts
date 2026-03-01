@@ -303,6 +303,10 @@ export const listWorkspaceTools = action({
     workspaceId: v.string(),
   },
   handler: async (ctx, args): Promise<Array<SourceToolSummary>> => {
+    await ctx.runAction(runtimeInternal.control_plane.tool_registry.ensureWorkspaceToolIndexCoverage, {
+      workspaceId: args.workspaceId,
+    });
+
     const summaries: Array<SourceToolSummary> = [];
     let cursor: string | null = null;
 
@@ -331,6 +335,11 @@ export const listSourceTools = action({
     sourceId: v.string(),
   },
   handler: async (ctx, args): Promise<Array<SourceToolSummary>> => {
+    await ctx.runAction(runtimeInternal.control_plane.tool_registry.ensureWorkspaceToolIndexCoverage, {
+      workspaceId: args.workspaceId,
+      sourceId: args.sourceId,
+    });
+
     const summaries: Array<SourceToolSummary> = [];
     let cursor: string | null = null;
 
