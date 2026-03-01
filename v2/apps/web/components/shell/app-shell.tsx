@@ -6,6 +6,7 @@ import type { ReactNode } from "react";
 
 import { cn } from "../../lib/utils";
 import { ThemeSwitcher } from "./theme-switcher";
+import { WorkspaceSelector } from "./workspace-selector";
 
 type NavItem = {
   href: string;
@@ -108,16 +109,12 @@ const isActivePath = (pathname: string, item: NavItem): boolean => {
 type AppShellProps = {
   children: ReactNode;
   authEnabled: boolean;
-  workspaceId: string;
-  onWorkspaceChange: (value: string) => void;
   approvalsBadge?: ReactNode;
 };
 
 export function AppShell({
   children,
   authEnabled,
-  workspaceId,
-  onWorkspaceChange,
   approvalsBadge,
 }: AppShellProps) {
   const pathname = usePathname();
@@ -142,14 +139,7 @@ export function AppShell({
 
         {/* Workspace selector */}
         <div className="border-b border-sidebar-border px-3 py-2.5">
-          <label className="mb-1 block text-[10px] uppercase tracking-widest text-sidebar-foreground/50">
-            Workspace
-          </label>
-          <input
-            value={workspaceId}
-            onChange={(e) => onWorkspaceChange(e.target.value)}
-            className="h-7 w-full rounded border border-sidebar-border bg-sidebar-active/50 px-2 text-[12px] text-sidebar-foreground outline-none transition-colors placeholder:text-sidebar-foreground/30 focus:border-primary/50 focus:ring-1 focus:ring-primary/30"
-          />
+          <WorkspaceSelector />
         </div>
 
         {/* Nav items */}

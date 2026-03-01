@@ -30,13 +30,9 @@ function ConsoleShellInner({
   authEnabled: boolean;
   children: ReactNode;
 }) {
-  const { workspaceId, workspaceIdInput, setWorkspaceId } = useWorkspace();
-
   return (
     <AppShell
       authEnabled={authEnabled}
-      workspaceId={workspaceIdInput}
-      onWorkspaceChange={setWorkspaceId}
       approvalsBadge={<ApprovalsBadge />}
     >
       {children}

@@ -427,7 +427,7 @@ const buildRefHintTable = (
   return table;
 };
 
-const extractOpenApiManifest = (
+export const extractOpenApiManifest = (
   _sourceName: string,
   openApiSpec: unknown,
 ): OpenApiManifest => {

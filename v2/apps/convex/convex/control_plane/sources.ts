@@ -142,10 +142,21 @@ export const upsertSource = action({
     });
 
     if (shouldIngest && source.kind !== "internal") {
-      await ctx.runAction(runtimeInternal.control_plane.openapi_ingest.ingestSourceArtifact, {
-        workspaceId: source.workspaceId,
-        sourceId: source.id,
-      });
+      if (source.kind === "openapi") {
+        await ctx.runAction(runtimeInternal.control_plane.openapi_ingest.ingestSourceArtifact, {
+          workspaceId: source.workspaceId,
+          sourceId: source.id,
+        });
+      } else {
+        await ctx.scheduler.runAfter(
+          0,
+          runtimeInternal.control_plane.openapi_ingest.ingestSourceArtifact,
+          {
+            workspaceId: source.workspaceId,
+            sourceId: source.id,
+          },
+        );
+      }
     }
 
     return source;

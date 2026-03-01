@@ -2,7 +2,6 @@
 
 import { createHash } from "node:crypto";
 
-import { extractOpenApiManifest, fetchOpenApiDocument } from "@executor-v2/management-api";
 import { type Source } from "@executor-v2/schema";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { SSEClientTransport } from "@modelcontextprotocol/sdk/client/sse.js";
@@ -16,49 +15,9 @@ import { internalAction } from "../_generated/server";
 
 const runtimeInternal = internal as any;
 
-const openApiExtractorVersion = "openapi_v2";
 const graphqlExtractorVersion = "graphql_v1";
 const mcpExtractorVersion = "mcp_v1";
 const writeBatchSize = 500;
-const stagedArtifactBatchSize = 40;
-
-const maxRefHintBytes = 900_000;
-
-const safeRefHintTableJson = (
-  refHintTable: Record<string, unknown> | undefined,
-): string | null => {
-  if (!refHintTable) {
-    return null;
-  }
-
-  const serialized = JSON.stringify(refHintTable);
-  const bytes = new TextEncoder().encode(serialized).length;
-  return bytes <= maxRefHintBytes ? serialized : null;
-};
-
-const refHintEntries = (
-  refHintTable: Record<string, unknown> | undefined,
-): Array<{ refKey: string; schemaJson: string }> => {
-  if (!refHintTable) {
-    return [];
-  }
-
-  return Object.entries(refHintTable)
-    .map(([refKey, value]) => {
-      if (typeof value === "string") {
-        return {
-          refKey,
-          schemaJson: value,
-        };
-      }
-
-      return {
-        refKey,
-        schemaJson: JSON.stringify(value),
-      };
-    })
-    .sort((left, right) => left.refKey.localeCompare(right.refKey));
-};
 
 const graphqlSchemaRootsQuery = `query SchemaRoots {
   __schema {
@@ -975,34 +934,18 @@ type OpenApiParserIngestedPayload = {
   error?: string;
 };
 
-type OpenApiParserParsedPayload = {
-  ok?: boolean;
-  mode?: string;
-  openApiSpec?: unknown;
-  error?: string;
-};
-
-type OpenApiFetchResult =
-  | {
-      mode: "parsed";
-      openApiSpec: unknown;
-    }
-  | {
-      mode: "ingested";
-      artifactId: string;
-      sourceHash: string;
-      toolCount: number;
-      namespace: string;
-      refHintTableJson: string | null;
-      artifactBatchCount: number;
-    };
-
-const fetchOpenApiDocumentForIngest = async (source: Source): Promise<OpenApiFetchResult> => {
+const fetchOpenApiDocumentForIngest = async (
+  source: Source,
+): Promise<{
+  artifactId: string;
+  sourceHash: string;
+  toolCount: number;
+  namespace: string;
+  refHintTableJson: string | null;
+  artifactBatchCount: number;
+}> => {
   if (openApiParserUrl.length === 0) {
-    return {
-      mode: "parsed",
-      openApiSpec: await fetchOpenApiDocument(source.endpoint),
-    };
+    throw new Error("OPENAPI_PARSE_API_URL is required for OpenAPI ingestion");
   }
 
   const response = await fetch(openApiParserUrl, {
@@ -1031,7 +974,7 @@ const fetchOpenApiDocumentForIngest = async (source: Source): Promise<OpenApiFet
     );
   }
 
-  const payload = (await response.json()) as OpenApiParserIngestedPayload & OpenApiParserParsedPayload;
+  const payload = (await response.json()) as OpenApiParserIngestedPayload;
 
   if (payload.ok !== true) {
     throw new Error(
@@ -1041,36 +984,32 @@ const fetchOpenApiDocumentForIngest = async (source: Source): Promise<OpenApiFet
     );
   }
 
-  if (payload.mode === "ingested") {
-    const artifactId = normalizeString(payload.artifactId);
-    const sourceHash = normalizeString(payload.sourceHash);
-    const namespace = normalizeString(payload.namespace);
-    const toolCount = Number.isFinite(payload.toolCount)
-      ? Math.max(0, Math.floor(payload.toolCount ?? 0))
-      : null;
-    const artifactBatchCount = Number.isFinite(payload.artifactBatchCount)
-      ? Math.max(0, Math.floor(payload.artifactBatchCount ?? 0))
-      : 0;
+  if (payload.mode !== "ingested") {
+    throw new Error("Parser endpoint must return mode='ingested' for OpenAPI ingestion");
+  }
 
-    if (!artifactId || !sourceHash || !namespace || toolCount === null) {
-      throw new Error("Parser endpoint returned an invalid ingested payload");
-    }
+  const artifactId = normalizeString(payload.artifactId);
+  const sourceHash = normalizeString(payload.sourceHash);
+  const namespace = normalizeString(payload.namespace);
+  const toolCount = Number.isFinite(payload.toolCount)
+    ? Math.max(0, Math.floor(payload.toolCount ?? 0))
+    : null;
+  const artifactBatchCount = Number.isFinite(payload.artifactBatchCount)
+    ? Math.max(0, Math.floor(payload.artifactBatchCount ?? 0))
+    : 0;
 
-    return {
-      mode: "ingested",
-      artifactId,
-      sourceHash,
-      toolCount,
-      namespace,
-      refHintTableJson:
-        typeof payload.refHintTableJson === "string" ? payload.refHintTableJson : null,
-      artifactBatchCount,
-    };
+  if (!artifactId || !sourceHash || !namespace || toolCount === null) {
+    throw new Error("Parser endpoint returned an invalid ingested payload");
   }
 
   return {
-    mode: "parsed",
-    openApiSpec: payload.openApiSpec,
+    artifactId,
+    sourceHash,
+    toolCount,
+    namespace,
+    refHintTableJson:
+      typeof payload.refHintTableJson === "string" ? payload.refHintTableJson : null,
+    artifactBatchCount,
   };
 };
 
@@ -1082,218 +1021,21 @@ type IngestOptions = {
 const ingestOpenApiSource = (
   ctx: any,
   source: Source,
-  options: IngestOptions,
 ): Effect.Effect<SourceIngestPrepared, SourceIngestError> =>
   Effect.gen(function* () {
-    const openApiFetchResult = yield* trySourceIngestPromise(
+    const ingested = yield* trySourceIngestPromise(
       () => fetchOpenApiDocumentForIngest(source),
       "Failed to fetch OpenAPI document",
     );
 
-    if (openApiFetchResult.mode === "ingested") {
-      return {
-        protocol: "openapi",
-        artifactId: openApiFetchResult.artifactId,
-        sourceHash: openApiFetchResult.sourceHash,
-        toolCount: openApiFetchResult.toolCount,
-        namespace: openApiFetchResult.namespace,
-        refHintTableJson: openApiFetchResult.refHintTableJson,
-        artifactBatchCount: openApiFetchResult.artifactBatchCount,
-      };
-    }
-
-    const openApiDocument = openApiFetchResult.openApiSpec;
-
-    const manifest = yield* extractOpenApiManifest(source.name, openApiDocument).pipe(
-      Effect.mapError((cause) =>
-        SourceIngestError.make({
-          status: "error",
-          message: formatError(cause),
-        }),
-      ),
-    );
-
-    const artifactMeta = yield* trySourceIngestPromise<{
-      artifactId: string;
-      created: boolean;
-    }>(
-      () =>
-        ctx.runMutation(runtimeInternal.control_plane.tool_registry.upsertArtifactMeta, {
-          protocol: "openapi",
-          contentHash: manifest.sourceHash,
-          extractorVersion: openApiExtractorVersion,
-          toolCount: manifest.tools.length,
-          refHintTableJson: safeRefHintTableJson(manifest.refHintTable),
-        }),
-      "Failed to upsert OpenAPI artifact metadata",
-    );
-
-    const artifactRefEntries = refHintEntries(manifest.refHintTable);
-
-    if (artifactRefEntries.length > 0) {
-      let shouldPersistArtifactRefs = artifactMeta.created;
-
-      if (!shouldPersistArtifactRefs) {
-        const existingRefCount = yield* trySourceIngestPromise<number>(
-          () =>
-            ctx.runQuery(runtimeInternal.control_plane.tool_registry.countArtifactSchemaRefs, {
-              artifactId: artifactMeta.artifactId,
-            }),
-          "Failed to read OpenAPI artifact schema ref count",
-        );
-
-        shouldPersistArtifactRefs = existingRefCount !== artifactRefEntries.length;
-      }
-
-      if (shouldPersistArtifactRefs) {
-        yield* trySourceIngestPromise(
-          () =>
-            ctx.runMutation(runtimeInternal.control_plane.tool_registry.clearArtifactSchemaRefs, {
-              artifactId: artifactMeta.artifactId,
-            }),
-          "Failed to clear OpenAPI artifact schema refs",
-        );
-
-        for (let index = 0; index < artifactRefEntries.length; index += writeBatchSize) {
-          const batch = artifactRefEntries.slice(index, index + writeBatchSize);
-          yield* trySourceIngestPromise(
-            () =>
-              ctx.runMutation(runtimeInternal.control_plane.tool_registry.putArtifactSchemaRefsBatch, {
-                artifactId: artifactMeta.artifactId,
-                refs: batch,
-              }),
-            "Failed to write OpenAPI artifact schema refs",
-          );
-        }
-      }
-    }
-
-    if (artifactMeta.created) {
-      const allTools = manifest.tools.map((tool) => ({
-        toolId: tool.toolId,
-        name: tool.name,
-        description: tool.description,
-        method: tool.method,
-        path: tool.path,
-        operationHash: tool.operationHash,
-        invocationJson: JSON.stringify(tool.invocation),
-        inputSchemaJson: tool.typing?.inputSchemaJson ?? null,
-        outputSchemaJson: tool.typing?.outputSchemaJson ?? null,
-      }));
-
-      const artifactRows = allTools.map((tool) => ({
-        toolId: tool.toolId,
-        name: tool.name,
-        description: tool.description,
-        canonicalPath: `${tool.method.toUpperCase()} ${tool.path}`,
-        operationHash: tool.operationHash,
-        invocationJson: tool.invocationJson,
-        inputSchemaJson: tool.inputSchemaJson,
-        outputSchemaJson: tool.outputSchemaJson,
-        metadataJson: safeJsonStringify({
-          method: tool.method,
-          path: tool.path,
-        }),
-      }));
-
-      if (options.stageArtifactWrites) {
-        const serializedBatches = chunkArray(artifactRows, stagedArtifactBatchSize).map((batch) =>
-          JSON.stringify(batch),
-        );
-
-        yield* trySourceIngestPromise(
-          () =>
-            ctx.runMutation(
-              runtimeInternal.control_plane.tool_registry.replaceSourceIngestArtifactBatches,
-              {
-                workspaceId: source.workspaceId,
-                sourceId: source.id,
-                artifactId: artifactMeta.artifactId,
-                protocol: "openapi",
-                batches: serializedBatches,
-              },
-            ),
-          "Failed to stage OpenAPI artifact tool batches",
-        );
-      } else {
-        for (let index = 0; index < artifactRows.length; index += writeBatchSize) {
-          const batch = artifactRows.slice(index, index + writeBatchSize);
-          yield* trySourceIngestPromise(
-            () =>
-              ctx.runMutation(runtimeInternal.control_plane.tool_registry.putArtifactToolsBatch, {
-                artifactId: artifactMeta.artifactId,
-                protocol: "openapi",
-                insertOnly: true,
-                tools: batch,
-              }),
-            "Failed to write OpenAPI artifact tools",
-          );
-        }
-      }
-    }
-
-    yield* trySourceIngestPromise(
-      () =>
-        ctx.runMutation(runtimeInternal.control_plane.tool_registry.bindSourceToArtifact, {
-          workspaceId: source.workspaceId,
-          sourceId: source.id,
-          artifactId: artifactMeta.artifactId,
-        }),
-      "Failed to bind source to OpenAPI artifact",
-    );
-
-    const namespace = sourceNamespace(source);
-    const refHintTableJson = safeRefHintTableJson(manifest.refHintTable);
-    const indexRows = manifest.tools.map((tool) => ({
-      toolId: tool.toolId,
-      protocol: "openapi",
-      method: tool.method,
-      path: sourceToolPath(source, tool.toolId),
-      operationPath: tool.path,
-      name: tool.name,
-      description: tool.description,
-      searchText: normalizedSearchText(
-        source.name,
-        source.endpoint,
-        namespace,
-        tool.toolId,
-        tool.name,
-        tool.description,
-        tool.path,
-        tool.method,
-      ),
-      operationHash: tool.operationHash,
-      approvalMode: "auto",
-      status: source.enabled ? "active" : "disabled",
-    }));
-
-    if (options.rebuildIndex) {
-      yield* trySourceIngestPromise(
-        () =>
-          ctx.runMutation(runtimeInternal.control_plane.tool_registry.replaceWorkspaceSourceToolIndex, {
-            workspaceId: source.workspaceId,
-            sourceId: source.id,
-            sourceName: source.name,
-            sourceKind: source.kind,
-            artifactId: artifactMeta.artifactId,
-            namespace,
-            refHintTableJson,
-            rows: indexRows,
-          }),
-        "Failed to rebuild workspace tool index for OpenAPI source",
-      );
-    }
-
     return {
       protocol: "openapi",
-      artifactId: artifactMeta.artifactId,
-      sourceHash: manifest.sourceHash,
-      toolCount: manifest.tools.length,
-      namespace,
-      refHintTableJson,
-      artifactBatchCount: artifactMeta.created && options.stageArtifactWrites
-        ? Math.ceil(manifest.tools.length / stagedArtifactBatchSize)
-        : 0,
+      artifactId: ingested.artifactId,
+      sourceHash: ingested.sourceHash,
+      toolCount: ingested.toolCount,
+      namespace: ingested.namespace,
+      refHintTableJson: ingested.refHintTableJson,
+      artifactBatchCount: ingested.artifactBatchCount,
     };
   });
 
@@ -1650,10 +1392,7 @@ export const ingestSourceArtifact = internalAction({
     });
 
     const ingestEffect = source.kind === "openapi"
-      ? ingestOpenApiSource(ctx, source, {
-          rebuildIndex: true,
-          stageArtifactWrites: false,
-        })
+      ? ingestOpenApiSource(ctx, source)
       : source.kind === "graphql"
         ? ingestGraphqlSource(ctx, source, {
             rebuildIndex: true,
@@ -1694,288 +1433,5 @@ export const ingestSourceArtifact = internalAction({
       sourceHash: result.sourceHash,
       lastError: result.lastError,
     });
-  },
-});
-
-export const prepareSourceArtifactIngest = internalAction({
-  args: {
-    workspaceId: v.string(),
-    sourceId: v.string(),
-  },
-  handler: async (ctx, args) => {
-    const source = await ctx.runQuery(runtimeInternal.control_plane.sources.getSourceForIngest, {
-      sourceId: args.sourceId,
-    });
-
-    if (!source || source.workspaceId !== args.workspaceId) {
-      return {
-        ok: false as const,
-        status: "error" as const,
-        message: "Source not found for workspace",
-      };
-    }
-
-    const ingestEffect = source.kind === "openapi"
-      ? ingestOpenApiSource(ctx, source, {
-          rebuildIndex: false,
-          stageArtifactWrites: true,
-        })
-      : source.kind === "graphql"
-        ? ingestGraphqlSource(ctx, source, {
-            rebuildIndex: false,
-            stageArtifactWrites: true,
-          })
-        : source.kind === "mcp"
-          ? ingestMcpSource(ctx, source, {
-              rebuildIndex: false,
-              stageArtifactWrites: true,
-            })
-          : Effect.fail(
-              SourceIngestError.make({
-                status: "error",
-                message: `Source ingest for kind '${source.kind}' is not implemented yet`,
-              }),
-            );
-
-    const result = await Effect.runPromise(
-      ingestEffect.pipe(
-        Effect.match({
-          onFailure: (error) => ({
-            ok: false as const,
-            status: error.status,
-            message: error.message,
-          }),
-          onSuccess: (prepared) => ({
-            ok: true as const,
-            workspaceId: source.workspaceId,
-            sourceId: source.id,
-            sourceName: source.name,
-            sourceKind: source.kind,
-            sourceEndpoint: source.endpoint,
-            sourceEnabled: source.enabled,
-            artifactId: prepared.artifactId,
-            protocol: prepared.protocol,
-            sourceHash: prepared.sourceHash,
-            toolCount: prepared.toolCount,
-            namespace: prepared.namespace,
-            refHintTableJson: prepared.refHintTableJson,
-            artifactBatchCount: prepared.artifactBatchCount,
-          }),
-        }),
-      ),
-    );
-
-    if (result.ok && result.artifactBatchCount === 0) {
-      await ctx.runMutation(runtimeInternal.control_plane.tool_registry.clearSourceIngestArtifactBatches, {
-        workspaceId: source.workspaceId,
-        sourceId: source.id,
-      });
-    }
-
-    return result;
-  },
-});
-
-export const writeArtifactToolBatchFromStaging = internalAction({
-  args: {
-    workspaceId: v.string(),
-    sourceId: v.string(),
-    artifactId: v.string(),
-    protocol: v.string(),
-    batchIndex: v.number(),
-  },
-  handler: async (ctx, args) => {
-    const staged = await ctx.runQuery(runtimeInternal.control_plane.tool_registry.getSourceIngestArtifactBatch, {
-      workspaceId: args.workspaceId,
-      sourceId: args.sourceId,
-      artifactId: args.artifactId,
-      batchIndex: args.batchIndex,
-    });
-
-    if (!staged || typeof staged.toolsJson !== "string") {
-      return { written: 0 };
-    }
-
-    let tools: Array<Record<string, unknown>> = [];
-    try {
-      const parsed = JSON.parse(staged.toolsJson) as unknown;
-      if (Array.isArray(parsed)) {
-        tools = parsed.filter((entry): entry is Record<string, unknown> => isUnknownRecord(entry));
-      }
-    } catch {
-      tools = [];
-    }
-
-    if (tools.length === 0) {
-      return { written: 0 };
-    }
-
-    await ctx.runMutation(runtimeInternal.control_plane.tool_registry.putArtifactToolsBatch, {
-      artifactId: args.artifactId,
-      protocol: args.protocol,
-      insertOnly: true,
-      tools: tools.map((tool) => ({
-        toolId: String(tool.toolId ?? ""),
-        name: String(tool.name ?? ""),
-        description: typeof tool.description === "string" ? tool.description : null,
-        canonicalPath: String(tool.canonicalPath ?? ""),
-        operationHash: String(tool.operationHash ?? ""),
-        invocationJson: String(tool.invocationJson ?? "{}"),
-        inputSchemaJson: typeof tool.inputSchemaJson === "string" ? tool.inputSchemaJson : null,
-        outputSchemaJson: typeof tool.outputSchemaJson === "string" ? tool.outputSchemaJson : null,
-        metadataJson: typeof tool.metadataJson === "string" ? tool.metadataJson : null,
-      })),
-    });
-
-    return { written: tools.length };
-  },
-});
-
-export const appendWorkspaceToolIndexChunk = internalAction({
-  args: {
-    workspaceId: v.string(),
-    sourceId: v.string(),
-    sourceName: v.string(),
-    sourceKind: v.string(),
-    sourceEndpoint: v.string(),
-    sourceEnabled: v.boolean(),
-    artifactId: v.string(),
-    namespace: v.string(),
-    refHintTableJson: v.optional(v.union(v.string(), v.null())),
-    chunkIndex: v.number(),
-    chunkSize: v.number(),
-  },
-  handler: async (ctx, args) => {
-    const chunkIndex = Math.max(0, Math.floor(args.chunkIndex));
-    const chunkSize = Math.max(1, Math.floor(args.chunkSize));
-    const offset = chunkIndex * chunkSize;
-
-    const tools = await ctx.runQuery(runtimeInternal.control_plane.tool_registry.listArtifactToolIndexSlice, {
-      artifactId: args.artifactId,
-      offset,
-      limit: chunkSize,
-    });
-
-    if (!tools || tools.length === 0) {
-      return { written: 0 };
-    }
-
-    const rows = tools.map((tool: any) => ({
-      toolId: tool.toolId,
-      protocol: tool.protocol,
-      method: toWorkspaceToolMethod(tool.protocol, tool.metadataJson ?? null),
-      path: `${args.namespace}.${tool.toolId}`,
-      operationPath: tool.protocol === "openapi"
-        ? (typeof tool.canonicalPath === "string" ? tool.canonicalPath : null)
-        : null,
-      name: tool.name,
-      description: tool.description ?? null,
-      searchText: normalizedSearchText(
-        args.sourceName,
-        args.sourceEndpoint,
-        args.namespace,
-        tool.toolId,
-        tool.name,
-        tool.description,
-        ...metadataSearchTerms(tool.metadataJson ?? null),
-      ),
-      operationHash: tool.operationHash,
-      approvalMode: "auto",
-      status: args.sourceEnabled ? "active" : "disabled",
-    }));
-
-    const writeResult = await ctx.runMutation(
-      runtimeInternal.control_plane.tool_registry.appendWorkspaceSourceToolIndexChunk,
-      {
-        workspaceId: args.workspaceId,
-        sourceId: args.sourceId,
-        sourceName: args.sourceName,
-        sourceKind: args.sourceKind,
-        artifactId: args.artifactId,
-        namespace: args.namespace,
-        refHintTableJson: args.refHintTableJson ?? null,
-        rows,
-      },
-    );
-
-    return {
-      written: (writeResult.insertedCount ?? 0) + (writeResult.updatedCount ?? 0),
-    };
-  },
-});
-
-export const rebuildWorkspaceToolIndexFromArtifact = internalAction({
-  args: {
-    workspaceId: v.string(),
-    sourceId: v.string(),
-    sourceName: v.string(),
-    sourceKind: v.string(),
-    sourceEndpoint: v.string(),
-    sourceEnabled: v.boolean(),
-    artifactId: v.string(),
-    namespace: v.string(),
-    refHintTableJson: v.optional(v.union(v.string(), v.null())),
-    chunkSize: v.optional(v.number()),
-  },
-  handler: async (ctx, args) => {
-    const chunkSize = Math.max(1, Math.floor(args.chunkSize ?? 1000));
-
-    const tools = await ctx.runQuery(runtimeInternal.control_plane.tool_registry.listArtifactTools, {
-      artifactId: args.artifactId,
-    });
-
-    if (!tools || tools.length === 0) {
-      return { written: 0, chunks: 0 };
-    }
-
-    const rows = tools.map((tool: any) => ({
-      toolId: String(tool.toolId ?? ""),
-      protocol: String(tool.protocol ?? "openapi"),
-      method: toWorkspaceToolMethod(String(tool.protocol ?? "openapi"), tool.metadataJson ?? null),
-      path: `${args.namespace}.${String(tool.toolId ?? "")}`,
-      operationPath: typeof tool.canonicalPath === "string" ? tool.canonicalPath : null,
-      name: String(tool.name ?? ""),
-      description: typeof tool.description === "string" ? tool.description : null,
-      searchText: normalizedSearchText(
-        args.sourceName,
-        args.sourceEndpoint,
-        args.namespace,
-        String(tool.toolId ?? ""),
-        String(tool.name ?? ""),
-        typeof tool.description === "string" ? tool.description : null,
-        ...metadataSearchTerms(typeof tool.metadataJson === "string" ? tool.metadataJson : null),
-      ),
-      operationHash: String(tool.operationHash ?? ""),
-      approvalMode: "auto",
-      status: args.sourceEnabled ? "active" : "disabled",
-    }));
-
-    const chunks = chunkArray(rows, chunkSize);
-    const results = await Promise.all(
-      chunks.map((batch) =>
-        ctx.runMutation(
-          runtimeInternal.control_plane.tool_registry.appendWorkspaceSourceToolIndexChunk,
-          {
-            workspaceId: args.workspaceId,
-            sourceId: args.sourceId,
-            sourceName: args.sourceName,
-            sourceKind: args.sourceKind,
-            artifactId: args.artifactId,
-            namespace: args.namespace,
-            refHintTableJson: args.refHintTableJson ?? null,
-            insertOnly: true,
-            rows: batch,
-          },
-        ),
-      ),
-    );
-
-    const written = results.reduce(
-      (sum: number, result: any) =>
-        sum + (result.insertedCount ?? 0) + (result.updatedCount ?? 0),
-      0,
-    );
-
-    return { written, chunks: chunks.length };
   },
 });
