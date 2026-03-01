@@ -3,16 +3,7 @@ import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 
-import type { Source } from "@executor-v2/schema";
-
-import type { CanonicalToolDescriptor } from "./tool-providers";
-
 export type RuntimeAdapterKind = string;
-
-export type RuntimeRunnableTool = {
-  descriptor: CanonicalToolDescriptor;
-  source: Source | null;
-};
 
 export type RuntimeToolCallService = {
   callTool: (input: {

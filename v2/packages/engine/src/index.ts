@@ -9,18 +9,29 @@ export {
   type RuntimeAdapterRegistry,
   type RuntimeExecuteError,
   type RuntimeExecuteInput,
-  type RuntimeRunnableTool,
   type RuntimeToolCallService,
 } from "./runtime-adapters";
 
 export {
-  createInMemoryRuntimeRunClient,
   createRuntimeRunClient,
-  type CreateInMemoryRuntimeRunClientOptions,
   type CreateRuntimeRunClientOptions,
+} from "./run-client";
+
+export {
+  createRuntimeToolCallService,
+  createStaticToolRegistry,
   type InMemorySandboxTool,
   type InMemorySandboxToolMap,
-} from "./run-client";
+  type ToolRegistry,
+  type ToolRegistryCallInput,
+  type ToolRegistryCatalogNamespacesInput,
+  type ToolRegistryCatalogNamespacesOutput,
+  type ToolRegistryCatalogToolsInput,
+  type ToolRegistryCatalogToolsOutput,
+  type ToolRegistryDiscoverInput,
+  type ToolRegistryDiscoverOutput,
+  type ToolRegistryToolSummary,
+} from "./tool-registry";
 
 export {
   makeOpenApiToolProvider,

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "@effect/vitest";
 import {
-  createInMemoryRuntimeRunClient,
   createRuntimeRunClient,
+  createStaticToolRegistry,
 } from "@executor-v2/engine";
 import { makeDenoSubprocessRuntimeAdapter } from "@executor-v2/runtime-deno-subprocess";
 import { makeLocalInProcessRuntimeAdapter } from "@executor-v2/runtime-local-inproc";
@@ -92,11 +92,14 @@ describe("toAiSdkTools", () => {
         },
       });
 
-      const runClient = createInMemoryRuntimeRunClient({
-        runtimeAdapter: makeLocalInProcessRuntimeAdapter(),
-        tools: {
-          search_docs: searchDocsTool,
-        },
+      const runtimeAdapter = makeLocalInProcessRuntimeAdapter();
+      const runClient = createRuntimeRunClient({
+        runtimeAdapter,
+        toolRegistry: createStaticToolRegistry({
+          tools: {
+            search_docs: searchDocsTool,
+          },
+        }),
         defaults: {
           timeoutMs: 30_000,
         },
@@ -133,6 +136,9 @@ describe("toAiSdkTools", () => {
 
       const runClient = createRuntimeRunClient({
         runtimeAdapter,
+        toolRegistry: createStaticToolRegistry({
+          tools: {},
+        }),
       });
 
       const tools = toAiSdkTools({
