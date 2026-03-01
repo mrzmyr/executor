@@ -1,18 +1,21 @@
 "use client";
 
 import type { ChangeEvent, FormEvent } from "react";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useAtomSet, useAtomValue } from "@effect-atom/atom-react";
-import type { SourceId } from "@executor-v2/schema";
+import type { SourceCredentialBinding, SourceId } from "@executor-v2/schema";
 
 import { useWorkspace } from "../../lib/hooks/use-workspace";
 import {
+  credentialBindingsByWorkspace,
   optimisticRemoveSources,
   optimisticSourcesByWorkspace,
   optimisticUpsertSources,
   removeSource,
   sourcesByWorkspace,
   sourcesPendingByWorkspace,
+  toCredentialBindingUpsertPayload,
+  upsertCredentialBinding,
   upsertSource,
 } from "../../lib/control-plane/atoms";
 import {
@@ -22,6 +25,10 @@ import {
   type LegacySourceFormState,
   type LegacySourceType,
 } from "../../lib/control-plane/legacy-source";
+import {
+  startMcpOAuthPopup,
+  type McpOAuthPopupSuccess,
+} from "../../lib/mcp/oauth-popup";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import {
@@ -177,6 +184,20 @@ const defaultFormState = (): LegacySourceFormState => ({
   enabled: true,
 });
 
+type McpOAuthDetectionState = {
+  status: "idle" | "checking" | "oauth" | "none" | "error";
+  detail: string;
+  authorizationServers: ReadonlyArray<string>;
+};
+
+const defaultMcpOAuthDetectionState = (): McpOAuthDetectionState => ({
+  status: "idle",
+  detail: "",
+  authorizationServers: [],
+});
+
+const normalizeEndpoint = (value: string): string => value.trim();
+
 const statusBadgeVariant = (
   status: string,
 ): "outline" | "pending" | "approved" | "denied" => {
@@ -197,14 +218,25 @@ export default function SourcesView() {
 
   const sources = useAtomValue(sourcesByWorkspace(workspaceId));
   const sourcesPending = useAtomValue(sourcesPendingByWorkspace(workspaceId));
+  const credentialBindings = useAtomValue(credentialBindingsByWorkspace(workspaceId));
   const setOptimisticSources = useAtomSet(optimisticSourcesByWorkspace(workspaceId));
   const runUpsertSource = useAtomSet(upsertSource, { mode: "promise" });
+  const runUpsertCredentialBinding = useAtomSet(upsertCredentialBinding, {
+    mode: "promise",
+  });
   const runRemoveSource = useAtomSet(removeSource, { mode: "promise" });
 
   const [formState, setFormState] = useState<LegacySourceFormState>(() => defaultFormState());
   const [searchQuery, setSearchQuery] = useState("");
   const [templateQuery, setTemplateQuery] = useState("");
   const [statusText, setStatusText] = useState<string | null>(null);
+  const [mcpOAuthDetection, setMcpOAuthDetection] = useState<McpOAuthDetectionState>(
+    () => defaultMcpOAuthDetectionState(),
+  );
+  const [mcpOAuthBusy, setMcpOAuthBusy] = useState(false);
+  const [mcpOAuthSession, setMcpOAuthSession] = useState<McpOAuthPopupSuccess | null>(
+    null,
+  );
 
   const sourceItems = useMemo(
     () => sources.items.map(sourceToLegacyRecord),
@@ -246,6 +278,33 @@ export default function SourcesView() {
 
   const isEditing = Boolean(formState.id);
 
+  const existingMcpOAuthCredential = useMemo(() => {
+    if (!formState.id) {
+      return null;
+    }
+
+    const sourceKey = `source:${formState.id}`;
+    return (
+      credentialBindings.items.find(
+        (binding) =>
+          binding.sourceKey === sourceKey && binding.provider === "oauth2",
+      ) ?? null
+    );
+  }, [credentialBindings.items, formState.id]);
+
+  const mcpOAuthSessionMatchesEndpoint = Boolean(
+    mcpOAuthSession
+      && normalizeEndpoint(mcpOAuthSession.sourceUrl)
+        === normalizeEndpoint(formState.endpoint),
+  );
+
+  const mcpOAuthConnected =
+    formState.type === "mcp"
+    && (mcpOAuthSessionMatchesEndpoint || Boolean(existingMcpOAuthCredential));
+
+  const mcpOAuthCanConnect =
+    formState.type === "mcp" && mcpOAuthDetection.status === "oauth";
+
   const setFormField = <K extends keyof LegacySourceFormState>(
     key: K,
     value: LegacySourceFormState[K],
@@ -258,9 +317,122 @@ export default function SourcesView() {
 
   const resetForm = () => {
     setFormState(defaultFormState());
+    setMcpOAuthDetection(defaultMcpOAuthDetectionState());
+    setMcpOAuthSession(null);
+    setMcpOAuthBusy(false);
+  };
+
+  useEffect(() => {
+    const endpoint = normalizeEndpoint(formState.endpoint);
+
+    if (formState.type !== "mcp" || endpoint.length === 0) {
+      setMcpOAuthDetection(defaultMcpOAuthDetectionState());
+      return;
+    }
+
+    const controller = new AbortController();
+    setMcpOAuthDetection({
+      status: "checking",
+      detail: "Checking for OAuth support...",
+      authorizationServers: [],
+    });
+
+    void fetch(`/mcp/oauth/detect?sourceUrl=${encodeURIComponent(endpoint)}`, {
+      signal: controller.signal,
+      cache: "no-store",
+    })
+      .then(async (response) => {
+        const payload = (await response.json().catch(() => null)) as
+          | {
+              oauth?: unknown;
+              authorizationServers?: unknown;
+              detail?: unknown;
+            }
+          | null;
+
+        if (controller.signal.aborted) {
+          return;
+        }
+
+        const oauth = payload?.oauth === true;
+        const authorizationServers = Array.isArray(payload?.authorizationServers)
+          ? payload.authorizationServers
+            .filter((entry): entry is string => typeof entry === "string")
+            .map((entry) => entry.trim())
+            .filter((entry) => entry.length > 0)
+          : [];
+        const detail = typeof payload?.detail === "string" ? payload.detail.trim() : "";
+
+        if (!response.ok) {
+          setMcpOAuthDetection({
+            status: "error",
+            detail: detail || `OAuth detection failed (${response.status})`,
+            authorizationServers,
+          });
+          return;
+        }
+
+        setMcpOAuthDetection({
+          status: oauth ? "oauth" : "none",
+          detail,
+          authorizationServers,
+        });
+      })
+      .catch((error) => {
+        if (controller.signal.aborted) {
+          return;
+        }
+
+        setMcpOAuthDetection({
+          status: "error",
+          detail: error instanceof Error ? error.message : "OAuth detection failed",
+          authorizationServers: [],
+        });
+      });
+
+    return () => {
+      controller.abort();
+    };
+  }, [formState.endpoint, formState.type]);
+
+  useEffect(() => {
+    if (
+      mcpOAuthSession
+      && normalizeEndpoint(mcpOAuthSession.sourceUrl)
+        !== normalizeEndpoint(formState.endpoint)
+    ) {
+      setMcpOAuthSession(null);
+    }
+  }, [formState.endpoint, mcpOAuthSession]);
+
+  const handleMcpOAuthConnect = () => {
+    const endpoint = normalizeEndpoint(formState.endpoint);
+    if (endpoint.length === 0 || mcpOAuthBusy) {
+      return;
+    }
+
+    setMcpOAuthBusy(true);
+
+    void startMcpOAuthPopup(endpoint)
+      .then((result) => {
+        setMcpOAuthSession(result);
+        setFormField("authType", "bearer");
+        setFormField("authMode", "workspace");
+        setStatusText("OAuth connected. Save source to persist credentials.");
+      })
+      .catch((error) => {
+        setStatusText(
+          error instanceof Error ? error.message : "OAuth connection failed.",
+        );
+      })
+      .finally(() => {
+        setMcpOAuthBusy(false);
+      });
   };
 
   const handleTemplateUse = (template: CatalogTemplate) => {
+    setMcpOAuthSession(null);
+    setMcpOAuthBusy(false);
     setFormState((current) => ({
       ...current,
       id: undefined,
@@ -279,6 +451,8 @@ export default function SourcesView() {
       return;
     }
 
+    setMcpOAuthSession(null);
+    setMcpOAuthBusy(false);
     setFormState(formStateFromSource(source));
     setStatusText(`Editing ${source.name}.`);
   };
@@ -305,6 +479,14 @@ export default function SourcesView() {
     const previousSources = sources.items;
     const optimistic = optimisticUpsertSources(previousSources, workspaceId, payload);
 
+    const endpoint = normalizeEndpoint(formState.endpoint);
+    const oauthSessionForEndpoint =
+      formState.type === "mcp"
+      && mcpOAuthSession
+      && normalizeEndpoint(mcpOAuthSession.sourceUrl) === endpoint
+        ? mcpOAuthSession
+        : null;
+
     setOptimisticSources({
       items: optimistic.items,
       pendingAck: {
@@ -314,8 +496,74 @@ export default function SourcesView() {
     });
 
     void runUpsertSource({ path: { workspaceId }, payload })
-      .then(() => {
-        setStatusText(isEditing ? `Updated ${formState.name.trim()}.` : `Saved ${formState.name.trim()}.`);
+      .then(async () => {
+        let oauthLinked = false;
+        let oauthLinkNote: string | null = null;
+
+        if (formState.type === "mcp" && oauthSessionForEndpoint) {
+          const sourceKey = `source:${sourceId}`;
+          const existingBindingForSource =
+            credentialBindings.items.find(
+              (binding) =>
+                binding.sourceKey === sourceKey && binding.provider === "oauth2",
+            ) ?? null;
+
+          const scopeType =
+            formState.authMode === "organization"
+              ? "organization"
+              : "workspace";
+
+          if (formState.authMode === "account") {
+            oauthLinkNote =
+              "Account scope is not supported from this flow; OAuth credential was saved as workspace scope.";
+          }
+
+          try {
+            await runUpsertCredentialBinding({
+              path: { workspaceId },
+              payload: toCredentialBindingUpsertPayload({
+                ...(existingBindingForSource
+                  ? { id: existingBindingForSource.id }
+                  : {}),
+                credentialId: (
+                  existingBindingForSource?.credentialId
+                  ?? createLocalId("cred_")
+                ) as SourceCredentialBinding["credentialId"],
+                scopeType,
+                sourceKey,
+                provider: "oauth2",
+                secretRef: oauthSessionForEndpoint.accessToken,
+                accountId: null,
+                additionalHeadersJson: null,
+                boundAuthFingerprint: null,
+              }),
+            });
+
+            oauthLinked = true;
+            setMcpOAuthSession(null);
+          } catch {
+            oauthLinkNote = "Source saved, but OAuth credential linking failed.";
+          }
+        }
+
+        if (oauthLinked) {
+          setStatusText(
+            `${isEditing ? "Updated" : "Saved"} ${formState.name.trim()} and linked OAuth credentials.${oauthLinkNote ? ` ${oauthLinkNote}` : ""}`,
+          );
+        } else if (oauthLinkNote) {
+          setStatusText(
+            oauthLinkNote.startsWith("Source saved")
+              ? oauthLinkNote
+              : `${isEditing ? "Updated" : "Saved"} ${formState.name.trim()}. ${oauthLinkNote}`,
+          );
+        } else {
+          setStatusText(
+            isEditing
+              ? `Updated ${formState.name.trim()}.`
+              : `Saved ${formState.name.trim()}.`,
+          );
+        }
+
         resetForm();
       })
       .catch(() => {
@@ -495,6 +743,61 @@ export default function SourcesView() {
                     <option value="streamable-http">streamable-http</option>
                     <option value="sse">sse</option>
                   </Select>
+                </div>
+              ) : null}
+
+              {formState.type === "mcp" ? (
+                <div className="space-y-2 rounded-md border border-border/70 bg-muted/20 p-3">
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="space-y-1">
+                      <div className="flex items-center gap-2">
+                        <p className="text-xs font-medium text-foreground">MCP OAuth</p>
+                        {mcpOAuthConnected ? (
+                          <Badge variant="approved" className="text-[10px] uppercase tracking-wide">
+                            connected
+                          </Badge>
+                        ) : null}
+                      </div>
+                      <p className="text-[11px] text-muted-foreground">
+                        {mcpOAuthDetection.status === "checking"
+                          ? "Checking endpoint for OAuth support..."
+                          : mcpOAuthDetection.status === "oauth"
+                            ? "OAuth is supported for this MCP endpoint."
+                            : mcpOAuthDetection.status === "none"
+                              ? "OAuth was not detected for this endpoint."
+                              : mcpOAuthDetection.status === "error"
+                                ? "OAuth detection failed."
+                                : "Set an MCP endpoint to detect OAuth support."}
+                      </p>
+                      {mcpOAuthDetection.detail.length > 0 ? (
+                        <p className="text-[11px] text-muted-foreground">
+                          {mcpOAuthDetection.detail}
+                        </p>
+                      ) : null}
+                      {mcpOAuthDetection.authorizationServers.length > 0 ? (
+                        <p className="text-[11px] text-muted-foreground">
+                          Auth servers: {mcpOAuthDetection.authorizationServers.join(", ")}
+                        </p>
+                      ) : null}
+                    </div>
+
+                    {mcpOAuthCanConnect ? (
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="outline"
+                        className="shrink-0"
+                        onClick={handleMcpOAuthConnect}
+                        disabled={mcpOAuthBusy}
+                      >
+                        {mcpOAuthBusy
+                          ? "Connecting..."
+                          : mcpOAuthConnected
+                            ? "Reconnect OAuth"
+                            : "Connect OAuth"}
+                      </Button>
+                    ) : null}
+                  </div>
                 </div>
               ) : null}
 

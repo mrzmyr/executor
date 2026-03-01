@@ -3,8 +3,13 @@ import { createExecutorRunClient } from "@executor-v2/sdk";
 import * as Effect from "effect/Effect";
 
 import { internal } from "./_generated/api";
-import { httpAction } from "./_generated/server";
+import { httpAction, type ActionCtx } from "./_generated/server";
 import { executeRunImpl } from "./executor";
+import {
+  getMcpAuthConfig,
+  unauthorizedMcpResponse,
+  verifyMcpToken,
+} from "./mcp_auth";
 import { createConvexSourceToolRegistry } from "./source_tool_registry";
 
 const readConfiguredWorkspaceId = (value: string | undefined): string => {
@@ -12,10 +17,96 @@ const readConfiguredWorkspaceId = (value: string | undefined): string => {
   return normalized && normalized.length > 0 ? normalized : "ws_local";
 };
 
-const workspaceId = readConfiguredWorkspaceId(process.env.CONVEX_WORKSPACE_ID);
+const readWorkspaceIdFromRequest = (request: Request): string | null => {
+  const value = new URL(request.url).searchParams.get("workspaceId")?.trim();
+  return value && value.length > 0 ? value : null;
+};
+
+const readRequestedWorkspaceId = (request: Request, fallbackWorkspaceId: string): string =>
+  readWorkspaceIdFromRequest(request) ?? fallbackWorkspaceId;
+
+const hasWorkspaceAccess = async (
+  ctx: ActionCtx,
+  workspaceId: string,
+  accountId: string,
+): Promise<boolean> => {
+  try {
+    const workspace = (await ctx.runQuery(
+      runtimeInternal.control_plane.actor.getWorkspaceForActor,
+      { workspaceId },
+    )) as {
+      organizationId: string | null;
+      createdByAccountId: string | null;
+    } | null;
+
+    if (!workspace) {
+      return false;
+    }
+
+    if (workspace.createdByAccountId === accountId) {
+      return true;
+    }
+
+    if (!workspace.organizationId) {
+      return false;
+    }
+
+    const memberships = (await ctx.runQuery(
+      runtimeInternal.control_plane.actor.listOrganizationMembershipsForActor,
+      { accountId },
+    )) as Array<{
+      organizationId: string;
+    }>;
+
+    return memberships.some((membership) => membership.organizationId === workspace.organizationId);
+  } catch {
+    return false;
+  }
+};
+
+const fallbackWorkspaceId = readConfiguredWorkspaceId(process.env.CONVEX_WORKSPACE_ID);
 const runtimeInternal = internal as any;
 
 export const mcpHandler = httpAction(async (ctx, request) => {
+  const mcpAuthConfig = getMcpAuthConfig();
+  const requestWorkspaceId = readWorkspaceIdFromRequest(request);
+  const workspaceId = readRequestedWorkspaceId(request, fallbackWorkspaceId);
+
+  if (!mcpAuthConfig.enabled) {
+    if (mcpAuthConfig.required) {
+      return Response.json(
+        {
+          error: "MCP OAuth must be configured for cloud deployments",
+        },
+        { status: 503 },
+      );
+    }
+  } else {
+    const auth = await verifyMcpToken(request, mcpAuthConfig);
+    if (!auth) {
+      return unauthorizedMcpResponse(request, "No valid bearer token provided.");
+    }
+
+    if (!requestWorkspaceId) {
+      return Response.json(
+        {
+          error: "workspaceId query parameter is required when MCP OAuth is enabled",
+        },
+        { status: 400 },
+      );
+    }
+
+    const authorized = await hasWorkspaceAccess(ctx, requestWorkspaceId, auth.subject);
+    if (!authorized) {
+      return Response.json(
+        {
+          error: "Workspace authorization failed",
+        },
+        { status: 403 },
+      );
+    }
+  }
+
   const toolRegistry = createConvexSourceToolRegistry(ctx, workspaceId);
 
   const runClient = createExecutorRunClient(async (input) => {

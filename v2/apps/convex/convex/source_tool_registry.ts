@@ -266,6 +266,139 @@ const safeJsonParse = (value: string): unknown => {
   }
 };
 
+const normalizeHeaderString = (value: unknown): string | null => {
+  if (typeof value !== "string") {
+    return null;
+  }
+
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : null;
+};
+
+const parseSourceConfig = (source: Source): Record<string, unknown> =>
+  jsonObjectFromUnknown(safeJsonParse(source.configJson));
+
+const collectConfiguredHeadersFromSourceConfig = (
+  config: Record<string, unknown>,
+): Record<string, string> => {
+  const headers = jsonObjectFromUnknown(config.headers);
+  const nextHeaders: Record<string, string> = {};
+
+  for (const [rawKey, rawValue] of Object.entries(headers)) {
+    const key = normalizeHeaderString(rawKey);
+    const value = normalizeHeaderString(rawValue);
+    if (key && value) {
+      nextHeaders[key] = value;
+    }
+  }
+
+  return nextHeaders;
+};
+
+const collectAuthHeadersFromSourceConfig = (
+  config: Record<string, unknown>,
+): Record<string, string> => {
+  const auth = jsonObjectFromUnknown(config.auth);
+  const authType = normalizeHeaderString(auth.type)?.toLowerCase();
+  const nextHeaders: Record<string, string> = {};
+
+  if (authType === "bearer") {
+    const token = normalizeHeaderString(auth.token) ?? normalizeHeaderString(auth.value);
+    if (token) {
+      nextHeaders.Authorization = `Bearer ${token}`;
+    }
+  }
+
+  if (authType === "apikey" || authType === "api_key") {
+    const token = normalizeHeaderString(auth.value) ?? normalizeHeaderString(auth.token);
+    if (token) {
+      const headerName = normalizeHeaderString(auth.header) ?? "Authorization";
+      nextHeaders[headerName] = token;
+    }
+  }
+
+  if (authType === "basic") {
+    const username = normalizeHeaderString(auth.username);
+    const password = normalizeHeaderString(auth.password);
+    if (username && password && typeof btoa === "function") {
+      nextHeaders.Authorization = `Basic ${btoa(`${username}:${password}`)}`;
+    }
+  }
+
+  return nextHeaders;
+};
+
+const mergeHeaders = (...sets: ReadonlyArray<Record<string, string>>): Record<string, string> => {
+  const merged: Record<string, string> = {};
+  const keyByLower = new Map<string, string>();
+
+  for (const headers of sets) {
+    for (const [rawKey, rawValue] of Object.entries(headers)) {
+      const key = rawKey.trim();
+      const value = rawValue.trim();
+      if (key.length === 0 || value.length === 0) {
+        continue;
+      }
+
+      const normalizedKey = key.toLowerCase();
+      const existingKey = keyByLower.get(normalizedKey);
+      if (existingKey && existingKey !== key) {
+        delete merged[existingKey];
+      }
+
+      keyByLower.set(normalizedKey, key);
+      merged[key] = value;
+    }
+  }
+
+  return merged;
+};
+
+const resolveSourceCredentialHeadersForInvocation = async (
+  ctx: ActionCtx,
+  source: Source,
+): Promise<Record<string, string>> => {
+  try {
+    const resolved = (await ctx.runQuery(
+      runtimeInternal.control_plane.credentials.resolveSourceCredentialHeadersForIngest,
+      {
+        workspaceId: source.workspaceId,
+        sourceId: source.id,
+        sourceName: source.name,
+        sourceEndpoint: source.endpoint,
+      },
+    )) as { headers?: unknown };
+
+    const headers = jsonObjectFromUnknown(resolved.headers);
+    const normalized: Record<string, string> = {};
+
+    for (const [rawKey, rawValue] of Object.entries(headers)) {
+      const key = normalizeHeaderString(rawKey);
+      const value = normalizeHeaderString(rawValue);
+      if (key && value) {
+        normalized[key] = value;
+      }
+    }
+
+    return normalized;
+  } catch {
+    return {};
+  }
+};
+
+const resolveSourceHeadersForInvocation = async (
+  ctx: ActionCtx,
+  source: Source,
+): Promise<Record<string, string>> => {
+  const config = parseSourceConfig(source);
+
+  return mergeHeaders(
+    collectConfiguredHeadersFromSourceConfig(config),
+    collectAuthHeadersFromSourceConfig(config),
+    await resolveSourceCredentialHeadersForInvocation(ctx, source),
+  );
+};
+
 const headersToRecord = (headers: Headers): Record<string, string> => {
   const record: Record<string, string> = {};
   headers.forEach((value, key) => {
@@ -829,11 +962,16 @@ const createConvexGraphqlToolProvider = (ctx: ActionCtx): ToolProvider => ({
           operationName = payload.fieldName;
         }
 
+        const sourceHeaders = await resolveSourceHeadersForInvocation(ctx, input.source);
+
         const response = await fetch(payload.endpoint, {
           method: "POST",
-          headers: {
-            "content-type": "application/json",
-          },
+          headers: mergeHeaders(
+            {
+              "content-type": "application/json",
+            },
+            sourceHeaders,
+          ),
           body: JSON.stringify({
             query,
             variables,
@@ -878,11 +1016,16 @@ const postMcpJsonRpc = async (
   endpoint: URL,
   body: unknown,
   sessionId: string | null,
+  sourceHeaders: Record<string, string>,
 ): Promise<Response> => {
   const headers = new Headers({
     "content-type": "application/json",
     accept: "application/json, text/event-stream",
   });
+
+  for (const [key, value] of Object.entries(sourceHeaders)) {
+    headers.set(key, value);
+  }
 
   if (sessionId && sessionId.trim().length > 0) {
     headers.set("mcp-session-id", sessionId);
@@ -934,8 +1077,13 @@ const createConvexMcpToolProvider = (ctx: ActionCtx): ToolProvider => ({
   invoke: (input) =>
     Effect.tryPromise({
       try: async () => {
+        if (!input.source) {
+          throw new Error("MCP provider requires a source");
+        }
+
         const payload = decodeMcpInvocationPayload(input.tool.providerPayload);
         const args = normalizeGraphqlInvokeInput(input.args);
+        const sourceHeaders = await resolveSourceHeadersForInvocation(ctx, input.source);
 
         if (payload.transport !== "streamable-http") {
           throw new Error(
@@ -960,6 +1108,7 @@ const createConvexMcpToolProvider = (ctx: ActionCtx): ToolProvider => ({
             },
           },
           null,
+          sourceHeaders,
         );
         const initializeBody = await decodeMcpJsonResponse(initializeResponse);
 
@@ -984,6 +1133,7 @@ const createConvexMcpToolProvider = (ctx: ActionCtx): ToolProvider => ({
             params: {},
           },
           sessionId,
+          sourceHeaders,
         );
 
         const callResponse = await postMcpJsonRpc(
@@ -998,6 +1148,7 @@ const createConvexMcpToolProvider = (ctx: ActionCtx): ToolProvider => ({
             },
           },
           sessionId,
+          sourceHeaders,
         );
         const callBody = await decodeMcpJsonResponse(callResponse);
 
