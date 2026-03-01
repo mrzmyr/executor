@@ -87,6 +87,7 @@ const PmToolInvocationDependenciesLive = ToolInvocationServiceLive.pipe(
 const PmAppLive = Layer.mergeAll(
   PmConfigLive,
   PmMcpHandlerLive.pipe(Layer.provide(PmRunExecutionLive)),
+  PmStateStoreLive,
   PmToolInvocationDependenciesLive,
   PmControlPlaneDependenciesLive,
 );

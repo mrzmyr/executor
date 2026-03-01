@@ -2,7 +2,12 @@ import { HttpApiEndpoint, HttpApiGroup, HttpApiSchema } from "@effect/platform";
 import { SourceIdSchema, SourceSchema, WorkspaceIdSchema } from "@executor-v2/schema";
 import * as Schema from "effect/Schema";
 
-import { ControlPlaneBadRequestError, ControlPlaneStorageError } from "../errors";
+import {
+  ControlPlaneBadRequestError,
+  ControlPlaneForbiddenError,
+  ControlPlaneStorageError,
+  ControlPlaneUnauthorizedError,
+} from "../errors";
 
 const RequiredUpsertSourcePayloadSchema = SourceSchema.pipe(
   Schema.pick("name", "kind", "endpoint"),
@@ -33,6 +38,8 @@ export class SourcesApi extends HttpApiGroup.make("sources")
     HttpApiEndpoint.get("list")`/workspaces/${workspaceIdParam}/sources`
       .addSuccess(Schema.Array(SourceSchema))
       .addError(ControlPlaneBadRequestError)
+      .addError(ControlPlaneUnauthorizedError)
+      .addError(ControlPlaneForbiddenError)
       .addError(ControlPlaneStorageError),
   )
   .add(
@@ -40,12 +47,16 @@ export class SourcesApi extends HttpApiGroup.make("sources")
       .setPayload(UpsertSourcePayloadSchema)
       .addSuccess(SourceSchema)
       .addError(ControlPlaneBadRequestError)
+      .addError(ControlPlaneUnauthorizedError)
+      .addError(ControlPlaneForbiddenError)
       .addError(ControlPlaneStorageError),
   )
   .add(
     HttpApiEndpoint.del("remove")`/workspaces/${workspaceIdParam}/sources/${sourceIdParam}`
       .addSuccess(RemoveSourceResultSchema)
       .addError(ControlPlaneBadRequestError)
+      .addError(ControlPlaneUnauthorizedError)
+      .addError(ControlPlaneForbiddenError)
       .addError(ControlPlaneStorageError),
   )
   .prefix("/v1") {}

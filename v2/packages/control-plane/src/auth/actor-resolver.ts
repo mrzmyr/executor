@@ -1,0 +1,23 @@
+import {
+  ActorUnauthenticatedError,
+  type ActorShape,
+} from "@executor-v2/domain";
+import { type WorkspaceId } from "@executor-v2/schema";
+import * as PlatformHeaders from "@effect/platform/Headers";
+import * as Context from "effect/Context";
+import * as Effect from "effect/Effect";
+
+export type ResolveWorkspaceActorInput = {
+  workspaceId: WorkspaceId;
+  headers: PlatformHeaders.Headers;
+};
+
+export type ControlPlaneActorResolverShape = {
+  resolveWorkspaceActor: (
+    input: ResolveWorkspaceActorInput,
+  ) => Effect.Effect<ActorShape, ActorUnauthenticatedError>;
+};
+
+export class ControlPlaneActorResolver extends Context.Tag(
+  "@executor-v2/control-plane/ControlPlaneActorResolver",
+)<ControlPlaneActorResolver, ControlPlaneActorResolverShape>() {}

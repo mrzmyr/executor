@@ -1,0 +1,182 @@
+import {
+  ControlPlaneActorResolverLive,
+  deriveWorkspaceMembershipsForPrincipal,
+  requirePrincipalFromHeaders,
+} from "@executor-v2/control-plane";
+import { ActorUnauthenticatedError, makeActor } from "@executor-v2/domain";
+import {
+  OrganizationMembershipSchema,
+  WorkspaceSchema,
+  type OrganizationMembership,
+  type Workspace,
+} from "@executor-v2/schema";
+import { v } from "convex/values";
+import * as Effect from "effect/Effect";
+import * as Schema from "effect/Schema";
+
+import { internal } from "../_generated/api";
+import {
+  internalMutation,
+  internalQuery,
+  type ActionCtx,
+} from "../_generated/server";
+
+const decodeWorkspace = Schema.decodeUnknownSync(WorkspaceSchema);
+const decodeOrganizationMembership = Schema.decodeUnknownSync(
+  OrganizationMembershipSchema,
+);
+
+const stripConvexSystemFields = (
+  value: Record<string, unknown>,
+): Record<string, unknown> => {
+  const { _id: _ignoredId, _creationTime: _ignoredCreationTime, ...rest } = value;
+  return rest;
+};
+
+export const getWorkspaceForActor = internalQuery({
+  args: {
+    workspaceId: v.string(),
+  },
+  handler: async (ctx, args): Promise<Workspace | null> => {
+    const row = await ctx.db
+      .query("workspaces")
+      .withIndex("by_domainId", (q) => q.eq("id", args.workspaceId))
+      .first();
+
+    if (row === null) {
+      return null;
+    }
+
+    return decodeWorkspace(
+      stripConvexSystemFields(row as unknown as Record<string, unknown>),
+    );
+  },
+});
+
+export const listOrganizationMembershipsForActor = internalQuery({
+  args: {
+    accountId: v.string(),
+  },
+  handler: async (ctx, args): Promise<ReadonlyArray<OrganizationMembership>> => {
+    const rows = await ctx.db
+      .query("organizationMemberships")
+      .withIndex("by_accountId", (q) => q.eq("accountId", args.accountId))
+      .collect();
+
+    return rows.map((row) =>
+      decodeOrganizationMembership(
+        stripConvexSystemFields(row as unknown as Record<string, unknown>),
+      ),
+    );
+  },
+});
+
+export const ensureWorkspaceForActor = internalMutation({
+  args: {
+    workspaceId: v.string(),
+    accountId: v.string(),
+  },
+  handler: async (ctx, args): Promise<Workspace> => {
+    const now = Date.now();
+
+    const existing = await ctx.db
+      .query("workspaces")
+      .withIndex("by_domainId", (q) => q.eq("id", args.workspaceId))
+      .first();
+
+    if (existing !== null) {
+      const existingWorkspace = decodeWorkspace(
+        stripConvexSystemFields(existing as unknown as Record<string, unknown>),
+      );
+
+      if (existingWorkspace.createdByAccountId !== null) {
+        return existingWorkspace;
+      }
+
+      await ctx.db.patch(existing._id, {
+        createdByAccountId: args.accountId,
+        updatedAt: now,
+      });
+
+      return decodeWorkspace({
+        ...existingWorkspace,
+        createdByAccountId: args.accountId,
+        updatedAt: now,
+      });
+    }
+
+    await ctx.db.insert("workspaces", {
+      id: args.workspaceId,
+      organizationId: null,
+      name: args.workspaceId,
+      createdByAccountId: args.accountId,
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    return decodeWorkspace({
+      id: args.workspaceId,
+      organizationId: null,
+      name: args.workspaceId,
+      createdByAccountId: args.accountId,
+      createdAt: now,
+      updatedAt: now,
+    });
+  },
+});
+
+const runQueryEffect = <A>(
+  operation: string,
+  run: () => Promise<A>,
+): Effect.Effect<A, ActorUnauthenticatedError> =>
+  Effect.tryPromise({
+    try: run,
+    catch: (cause) =>
+      new ActorUnauthenticatedError({
+        message: `Failed resolving actor (${operation}): ${String(cause)}`,
+      }),
+  });
+
+export const ConvexControlPlaneActorLive = (ctx: ActionCtx) =>
+  ControlPlaneActorResolverLive({
+    resolveWorkspaceActor: (input) =>
+      Effect.gen(function* () {
+        const principal = yield* requirePrincipalFromHeaders(input.headers);
+
+        let workspace = yield* runQueryEffect("workspace.read", () =>
+          ctx.runQuery(internal.control_plane.actor.getWorkspaceForActor, {
+            workspaceId: input.workspaceId,
+          }),
+        );
+
+        if (workspace === null || workspace.createdByAccountId === null) {
+          workspace = yield* runQueryEffect("workspace.ensure", () =>
+            ctx.runMutation(internal.control_plane.actor.ensureWorkspaceForActor, {
+              workspaceId: input.workspaceId,
+              accountId: principal.accountId,
+            }),
+          );
+        }
+
+        const organizationMemberships = yield* runQueryEffect(
+          "organizationMembership.list",
+          () =>
+            ctx.runQuery(internal.control_plane.actor.listOrganizationMembershipsForActor, {
+              accountId: principal.accountId,
+            }),
+        );
+
+        const workspaceMemberships = deriveWorkspaceMembershipsForPrincipal({
+          principalAccountId: principal.accountId,
+          workspaceId: input.workspaceId,
+          workspace,
+          organizationMemberships,
+        });
+
+        return yield* makeActor({
+          principal,
+          workspaceMemberships,
+          organizationMemberships,
+        });
+      }),
+  });

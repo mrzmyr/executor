@@ -11,6 +11,7 @@
   "dependencies": {
     "@effect-atom/atom": "^0.4.11",
     "@effect/platform": "catalog:",
+    "@executor-v2/domain": "workspace:*",
     "@executor-v2/persistence-ports": "workspace:*",
     "@executor-v2/schema": "workspace:*",
     "@executor-v2/source-manager": "workspace:*",

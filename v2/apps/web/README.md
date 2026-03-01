@@ -11,5 +11,15 @@ Run:
 - `bun run --cwd apps/web dev`
 - Open `http://127.0.0.1:3000`
 
-By default, proxy target is `http://127.0.0.1:8787`.
+By default, control-plane proxy target is `http://127.0.0.1:8787`.
 Override with `CONTROL_PLANE_UPSTREAM_URL`.
+
+WorkOS auth setup (optional but recommended):
+
+- `WORKOS_CLIENT_ID`
+- `WORKOS_API_KEY`
+- `WORKOS_COOKIE_PASSWORD` (32+ chars)
+- `WORKOS_REDIRECT_URI` or `NEXT_PUBLIC_WORKOS_REDIRECT_URI` (for example `http://localhost:4312/callback`)
+
+When WorkOS is configured, the app requires sign-in and forwards the authenticated WorkOS user id to control-plane as `x-executor-account-id`.
+For local non-WorkOS testing, you can still set `NEXT_PUBLIC_CONTROL_PLANE_ACCOUNT_ID` to send a static account id.

@@ -9,7 +9,9 @@ export {
 
 export {
   ControlPlaneBadRequestError,
+  ControlPlaneForbiddenError,
   ControlPlaneStorageError,
+  ControlPlaneUnauthorizedError,
 } from "./errors";
 
 export {
@@ -21,8 +23,23 @@ export {
 
 export {
   ControlPlaneApiLive,
+  ControlPlaneActorResolverLive,
   makeControlPlaneWebHandler,
 } from "./http";
+
+export {
+  ControlPlaneActorResolver,
+  type ControlPlaneActorResolverShape,
+  type ResolveWorkspaceActorInput,
+} from "./auth/actor-resolver";
+
+export {
+  ControlPlaneAuthHeaders,
+  readPrincipalFromHeaders,
+  requirePrincipalFromHeaders,
+} from "./auth/principal";
+
+export { deriveWorkspaceMembershipsForPrincipal } from "./auth/workspace-membership";
 
 export {
   ControlPlaneSourcesLive,

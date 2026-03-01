@@ -17,9 +17,6 @@
   },
   "devDependencies": {
     "@effect/vitest": "catalog:",
-    "@executor-v2/runtime-cloudflare-worker-loader": "workspace:*",
-    "@executor-v2/runtime-deno-subprocess": "workspace:*",
-    "@executor-v2/runtime-local-inproc": "workspace:*",
     "@executor-v2/source-manager": "workspace:*",
     "vitest": "catalog:"
   }

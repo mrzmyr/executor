@@ -4,7 +4,9 @@ import { SourcesApi } from "./sources/api";
 
 export {
   ControlPlaneBadRequestError,
+  ControlPlaneForbiddenError,
   ControlPlaneStorageError,
+  ControlPlaneUnauthorizedError,
 } from "./errors";
 
 export {

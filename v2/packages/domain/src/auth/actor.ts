@@ -207,6 +207,16 @@ const toActorShape = (input: {
   };
 };
 
+export const makeAllowAllActor = (principal: Principal): ActorShape => ({
+  principal,
+  workspaceMemberships: [],
+  organizationMemberships: [],
+  hasPermission: () => true,
+  requirePermission: () => Effect.void,
+  hasWorkspaceAccess: () => true,
+  requireWorkspaceAccess: () => Effect.void,
+});
+
 export const makeActor = (
   input: MakeActorInput,
 ): Effect.Effect<ActorShape, ActorUnauthenticatedError> =>

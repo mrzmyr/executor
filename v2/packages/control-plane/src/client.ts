@@ -3,30 +3,46 @@ import {
   FetchHttpClient,
   HttpApiClient,
   HttpApiError,
+  HttpClient,
   HttpClientError,
+  HttpClientRequest,
 } from "@effect/platform";
 import * as ParseResult from "effect/ParseResult";
 
 import {
   ControlPlaneApi,
   type ControlPlaneBadRequestError,
+  type ControlPlaneForbiddenError,
   type ControlPlaneStorageError,
+  type ControlPlaneUnauthorizedError,
 } from "./api";
 
 export type ControlPlaneClientOptions = {
   baseUrl: string;
+  headers?: Readonly<Record<string, string>>;
 };
 
 export type ControlPlaneClientError =
   | ControlPlaneBadRequestError
+  | ControlPlaneUnauthorizedError
+  | ControlPlaneForbiddenError
   | ControlPlaneStorageError
   | HttpApiError.HttpApiDecodeError
   | HttpClientError.HttpClientError
   | ParseResult.ParseError;
 
+const makeTransformClient = (headers: ControlPlaneClientOptions["headers"]) =>
+  headers === undefined
+    ? undefined
+    : (client: HttpClient.HttpClient) =>
+        HttpClient.mapRequest(client, (request) =>
+          HttpClientRequest.setHeaders(request, headers),
+        );
+
 export const makeControlPlaneClient = (options: ControlPlaneClientOptions) =>
   HttpApiClient.make(ControlPlaneApi, {
     baseUrl: options.baseUrl,
+    transformClient: makeTransformClient(options.headers),
   });
 
 export const createControlPlaneAtomClient = (options: ControlPlaneClientOptions) =>
@@ -34,6 +50,7 @@ export const createControlPlaneAtomClient = (options: ControlPlaneClientOptions)
     api: ControlPlaneApi,
     httpClient: FetchHttpClient.layer,
     baseUrl: options.baseUrl,
+    transformClient: makeTransformClient(options.headers),
   });
 
 export type ControlPlaneAtomClient = ReturnType<typeof createControlPlaneAtomClient>;

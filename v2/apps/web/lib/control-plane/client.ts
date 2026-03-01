@@ -1,12 +1,25 @@
-import { createControlPlaneAtomClient } from "@executor-v2/control-plane";
+import {
+  ControlPlaneAuthHeaders,
+  createControlPlaneAtomClient,
+} from "@executor-v2/control-plane";
 
 const controlPlaneBaseUrl =
   typeof window === "undefined"
     ? process.env.CONTROL_PLANE_SERVER_BASE_URL ??
       process.env.NEXT_PUBLIC_CONTROL_PLANE_BASE_URL ??
-      "http://127.0.0.1:3000/api/control-plane"
+      "http://127.0.0.1:4312/api/control-plane"
     : process.env.NEXT_PUBLIC_CONTROL_PLANE_BASE_URL ?? "/api/control-plane";
+
+const controlPlaneAccountId = process.env.NEXT_PUBLIC_CONTROL_PLANE_ACCOUNT_ID;
+
+const controlPlaneHeaders =
+  controlPlaneAccountId === undefined || controlPlaneAccountId.trim().length === 0
+    ? undefined
+    : {
+        [ControlPlaneAuthHeaders.accountId]: controlPlaneAccountId,
+      };
 
 export const controlPlaneClient = createControlPlaneAtomClient({
   baseUrl: controlPlaneBaseUrl,
+  headers: controlPlaneHeaders,
 });

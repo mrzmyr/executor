@@ -23,8 +23,13 @@ const kindOptions: ReadonlyArray<SourceKind> = [
   "internal",
 ];
 
-const Page = () => {
-  const [workspaceIdInput, setWorkspaceIdInput] = useState("ws_demo");
+type PageProps = {
+  authEnabled: boolean;
+  initialWorkspaceId: string;
+};
+
+const Page = ({ authEnabled, initialWorkspaceId }: PageProps) => {
+  const [workspaceIdInput, setWorkspaceIdInput] = useState(initialWorkspaceId);
   const [name, setName] = useState("Weather API");
   const [kind, setKind] = useState<SourceKind>("openapi");
   const [endpoint, setEndpoint] = useState("https://example.com/openapi.json");
@@ -126,7 +131,14 @@ const Page = () => {
     <main>
       <section className="shell">
         <header className="hero">
-          <h1>Executor v2 Control Plane</h1>
+          <div className="hero-top-row">
+            <h1>Executor v2 Control Plane</h1>
+            {authEnabled ? (
+              <a className="sign-out-link" href="/sign-out">
+                Sign out
+              </a>
+            ) : null}
+          </div>
           <p>
             Basic Next.js frontend wired to the shared Effect HttpApi client via
             Effect Atom.

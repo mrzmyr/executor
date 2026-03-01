@@ -3,10 +3,18 @@ export {
   ActorForbiddenError,
   ActorLive,
   ActorUnauthenticatedError,
+  all,
+  any,
   makeActor,
+  makeAllowAllActor,
+  policy,
+  requirePermission,
+  requireWorkspaceAccess,
+  withPolicy,
   type ActorShape,
   type MakeActorInput,
   type PermissionRequest,
+  type Policy,
 } from "./auth";
 
 export {

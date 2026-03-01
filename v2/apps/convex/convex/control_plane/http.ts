@@ -7,6 +7,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 
 import { httpAction, type ActionCtx } from "../_generated/server";
+import { ConvexControlPlaneActorLive } from "./actor";
 import {
   controlPlaneErrorResponse,
   normalizeControlPlaneErrorResponse,
@@ -29,6 +30,7 @@ const handleControlPlaneRequest = (
 
       const webHandler = makeControlPlaneWebHandler(
         Layer.succeed(ControlPlaneService, makeConvexControlPlaneService(ctx)),
+        ConvexControlPlaneActorLive(ctx),
       );
 
       yield* Effect.addFinalizer(() =>

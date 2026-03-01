@@ -10,9 +10,11 @@ import {
   controlPlaneOpenApiSpec,
   makeControlPlaneWebHandler,
 } from "@executor-v2/control-plane";
+import { LocalStateStoreService } from "@executor-v2/persistence-local";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 
+import { PmActorLive } from "./actor";
 import { PmConfig } from "./config";
 import { PmMcpHandler } from "./mcp-handler";
 import { handleToolCallHttp } from "./tool-call-handler";
@@ -31,9 +33,11 @@ export const startPmHttpServer = Effect.fn("@executor-v2/app-pm/http.start")(fun
   const { port } = yield* PmConfig;
   const { handleMcp } = yield* PmMcpHandler;
   const controlPlaneService = yield* ControlPlaneService;
+  const localStateStore = yield* LocalStateStoreService;
   const controlPlaneWebHandler = yield* Effect.sync(() =>
     makeControlPlaneWebHandler(
       Layer.succeed(ControlPlaneService, controlPlaneService),
+      PmActorLive(localStateStore),
     ),
   );
 

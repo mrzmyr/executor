@@ -2,6 +2,8 @@ import { SourceStoreError } from "@executor-v2/persistence-ports";
 
 type ControlPlaneErrorCode =
   | "bad_request"
+  | "unauthorized"
+  | "forbidden"
   | "not_found"
   | "method_not_allowed"
   | "internal";
@@ -33,6 +35,10 @@ const toErrorCode = (status: number): ControlPlaneErrorCode => {
   switch (status) {
     case 400:
       return "bad_request";
+    case 401:
+      return "unauthorized";
+    case 403:
+      return "forbidden";
     case 404:
       return "not_found";
     case 405:

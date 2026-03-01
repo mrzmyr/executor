@@ -9,6 +9,7 @@
  */
 
 import type * as controlPlane from "../controlPlane.js";
+import type * as control_plane_actor from "../control_plane/actor.js";
 import type * as control_plane_errors from "../control_plane/errors.js";
 import type * as control_plane_http from "../control_plane/http.js";
 import type * as control_plane_service from "../control_plane/service.js";
@@ -20,6 +21,7 @@ import type * as mcp from "../mcp.js";
 import type * as run_executor from "../run_executor.js";
 import type * as runtimeCallbacks from "../runtimeCallbacks.js";
 import type * as runtime_adapter from "../runtime_adapter.js";
+import type * as runtime_execution_port from "../runtime_execution_port.js";
 
 import type {
   ApiFromModules,
@@ -29,6 +31,7 @@ import type {
 
 declare const fullApi: ApiFromModules<{
   controlPlane: typeof controlPlane;
+  "control_plane/actor": typeof control_plane_actor;
   "control_plane/errors": typeof control_plane_errors;
   "control_plane/http": typeof control_plane_http;
   "control_plane/service": typeof control_plane_service;
@@ -40,6 +43,7 @@ declare const fullApi: ApiFromModules<{
   run_executor: typeof run_executor;
   runtimeCallbacks: typeof runtimeCallbacks;
   runtime_adapter: typeof runtime_adapter;
+  runtime_execution_port: typeof runtime_execution_port;
 }>;
 
 /**

@@ -1,12 +1,33 @@
-"use client";
+import { withAuth } from "@workos-inc/authkit-nextjs";
+import { redirect } from "next/navigation";
 
-import dynamic from "next/dynamic";
+import ControlPlanePageContent from "./page-content";
+import { isWorkosEnabled } from "../lib/workos";
 
-const ControlPlanePageContent = dynamic(() => import("./page-content"), {
-  ssr: false,
-  loading: () => null,
-});
+const Page = async () => {
+  const authEnabled = isWorkosEnabled();
 
-const Page = () => <ControlPlanePageContent />;
+  if (authEnabled) {
+    const { user } = await withAuth();
+
+    if (!user) {
+      redirect("/sign-in");
+    }
+
+    return (
+      <ControlPlanePageContent
+        authEnabled
+        initialWorkspaceId={`ws_${user.id}`}
+      />
+    );
+  }
+
+  return (
+    <ControlPlanePageContent
+      authEnabled={false}
+      initialWorkspaceId="ws_demo"
+    />
+  );
+};
 
 export default Page;
