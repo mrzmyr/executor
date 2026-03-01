@@ -18,11 +18,18 @@ export {
 } from "./run-client";
 
 export {
+  createInMemoryToolApprovalPolicy,
   createRuntimeToolCallResultHandler,
   createRuntimeToolCallService,
   createStaticToolRegistry,
+  invokeRuntimeToolCallResult,
+  type CreateInMemoryToolApprovalPolicyOptions,
   type InMemorySandboxTool,
   type InMemorySandboxToolMap,
+  type ToolApprovalDecision,
+  type ToolApprovalMode,
+  type ToolApprovalPolicy,
+  type ToolApprovalRequest,
   type ToolRegistry,
   type ToolRegistryCallInput,
   type ToolRegistryCatalogNamespacesInput,

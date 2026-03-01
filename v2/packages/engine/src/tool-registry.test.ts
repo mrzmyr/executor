@@ -1,9 +1,12 @@
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as Either from "effect/Either";
 
 import {
+  createInMemoryToolApprovalPolicy,
   createRuntimeToolCallService,
   createStaticToolRegistry,
+  invokeRuntimeToolCallResult,
 } from "./tool-registry";
 
 describe("tool registry", () => {
@@ -134,6 +137,115 @@ describe("tool registry", () => {
 
       expect(toolResult).toBe("pong");
       expect(calls).toEqual(["ping"]);
+    }),
+  );
+
+  it.effect("supports in-memory approval callbacks for required tools", () =>
+    Effect.gen(function* () {
+      let executionCount = 0;
+
+      const registry = createStaticToolRegistry({
+        workspaceId: "ws_local",
+        approvalPolicy: createInMemoryToolApprovalPolicy({
+          decide: (input) => {
+            if (input.defaultMode !== "required") {
+              return { kind: "approved" };
+            }
+
+            if (input.input?.confirm === "yes") {
+              return { kind: "approved" };
+            }
+
+            return {
+              kind: "denied",
+              error: "Confirmation required",
+            };
+          },
+        }),
+        tools: {
+          "admin.delete": {
+            approval: "required",
+            execute: () => {
+              executionCount += 1;
+              return "deleted";
+            },
+          },
+        },
+      });
+
+      const denied = yield* registry.callTool({
+        runId: "run_approve_1",
+        callId: "call_approve_1",
+        toolPath: "admin.delete",
+        input: { confirm: "no" },
+      });
+
+      expect(denied).toEqual({
+        ok: false,
+        kind: "denied",
+        error: "Confirmation required",
+      });
+      expect(executionCount).toBe(0);
+
+      const approved = yield* registry.callTool({
+        runId: "run_approve_1",
+        callId: "call_approve_2",
+        toolPath: "admin.delete",
+        input: { confirm: "yes" },
+      });
+
+      expect(approved).toEqual({
+        ok: true,
+        value: "deleted",
+      });
+      expect(executionCount).toBe(1);
+    }),
+  );
+
+  it.effect("preserves pending approval results before runtime mapping", () =>
+    Effect.gen(function* () {
+      const registry = createStaticToolRegistry({
+        approvalPolicy: createInMemoryToolApprovalPolicy({
+          decide: () => ({
+            kind: "pending",
+            approvalId: "approval_123",
+          }),
+        }),
+        tools: {
+          "admin.delete": {
+            approval: "required",
+            execute: () => "deleted",
+          },
+        },
+      });
+
+      const pendingResult = yield* invokeRuntimeToolCallResult(registry, {
+        runId: "run_pending_1",
+        callId: "call_pending_1",
+        toolPath: "admin.delete",
+      });
+
+      expect(pendingResult).toEqual({
+        ok: false,
+        kind: "pending",
+        approvalId: "approval_123",
+        retryAfterMs: 1000,
+        error: undefined,
+      });
+
+      const runtimeToolCallService = createRuntimeToolCallService(registry);
+      const mapped = yield* Effect.either(
+        runtimeToolCallService.callTool({
+          runId: "run_pending_1",
+          callId: "call_pending_1",
+          toolPath: "admin.delete",
+        }),
+      );
+
+      expect(Either.isLeft(mapped)).toBe(true);
+      if (Either.isLeft(mapped)) {
+        expect(mapped.left.message).toContain("Tool call requires approval");
+      }
     }),
   );
 });

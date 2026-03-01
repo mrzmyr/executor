@@ -10,8 +10,8 @@ import {
 import {
   RuntimeAdapterError,
   createRunExecutor,
-  createRuntimeToolCallService,
   createSourceToolRegistry,
+  invokeRuntimeToolCallResult,
   makeOpenApiToolProvider,
   makeRuntimeAdapterRegistry,
   makeToolProviderRegistry,
@@ -148,8 +148,6 @@ const toolRegistry = createSourceToolRegistry({
   toolArtifactStore,
   toolProviderRegistry,
 });
-const runtimeToolCallService = createRuntimeToolCallService(toolRegistry);
-
 const executeRuntimeRun = createPmExecuteRuntimeRun({
   defaultRuntimeKind,
   runtimeAdapters,
@@ -161,11 +159,7 @@ const handleMcp = createPmMcpHandler(runExecutor.executeRun);
 
 const handleToolCallHttp = createPmToolCallHttpHandler((input) =>
   Effect.runPromise(
-    runtimeToolCallService.callTool(input).pipe(
-      Effect.map((value): RuntimeToolCallResult => ({
-        ok: true,
-        value,
-      })),
+    invokeRuntimeToolCallResult(toolRegistry, input).pipe(
       Effect.catchTag("RuntimeAdapterError", (error) =>
         Effect.succeed<RuntimeToolCallResult>({
           ok: false,

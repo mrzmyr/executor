@@ -83,8 +83,48 @@ export type ToolRegistry = {
   ) => Effect.Effect<ToolRegistryCatalogToolsOutput, RuntimeAdapterError>;
 };
 
+export type ToolApprovalMode = "auto" | "required";
+
+export type ToolApprovalRequest = {
+  runId: string;
+  callId: string;
+  toolPath: string;
+  input?: Record<string, unknown>;
+  workspaceId?: string;
+  source?: string;
+  defaultMode: ToolApprovalMode;
+};
+
+export type ToolApprovalDecision =
+  | {
+      kind: "approved";
+    }
+  | {
+      kind: "pending";
+      approvalId: string;
+      retryAfterMs?: number;
+      error?: string;
+    }
+  | {
+      kind: "denied";
+      error: string;
+    };
+
+export type ToolApprovalPolicy = {
+  evaluate: (
+    input: ToolApprovalRequest,
+  ) => ToolApprovalDecision | Promise<ToolApprovalDecision>;
+};
+
+export type CreateInMemoryToolApprovalPolicyOptions = {
+  decide: (
+    input: ToolApprovalRequest,
+  ) => ToolApprovalDecision | Promise<ToolApprovalDecision>;
+};
+
 export type InMemorySandboxTool = {
   description?: string | null;
+  approval?: ToolApprovalMode;
   execute?: (...args: Array<any>) => Promise<any> | any;
   typing?: DiscoveryTypingPayload;
 };
@@ -94,6 +134,8 @@ export type InMemorySandboxToolMap = Record<string, InMemorySandboxTool>;
 type StaticToolRegistryOptions = {
   tools: InMemorySandboxToolMap;
   refHintTable?: Record<string, string>;
+  workspaceId?: string;
+  approvalPolicy?: ToolApprovalPolicy;
 };
 
 const staticToolRegistryRuntimeKind = "static-tool-registry";
@@ -110,6 +152,85 @@ const toRuntimeAdapterError = (
     message,
     details,
   });
+
+const defaultPendingRetryAfterMs = 1_000;
+
+const normalizePendingRetryAfterMs = (value: number | undefined): number => {
+  if (typeof value !== "number" || !Number.isFinite(value) || value < 0) {
+    return defaultPendingRetryAfterMs;
+  }
+
+  return Math.round(value);
+};
+
+const normalizeDeniedError = (value: string | undefined, toolPath: string): string => {
+  const normalized = value?.trim();
+  if (normalized && normalized.length > 0) {
+    return normalized;
+  }
+
+  return `Tool call denied: ${toolPath}`;
+};
+
+const evaluateToolApproval = (
+  request: ToolApprovalRequest,
+  policy: ToolApprovalPolicy | undefined,
+): Effect.Effect<ToolApprovalDecision, RuntimeAdapterError> => {
+  if (!policy) {
+    if (request.defaultMode === "required") {
+      return Effect.succeed({
+        kind: "denied",
+        error: `Tool requires approval but no approval policy is configured: ${request.toolPath}`,
+      });
+    }
+
+    return Effect.succeed({ kind: "approved" });
+  }
+
+  return Effect.tryPromise({
+    try: () => Promise.resolve(policy.evaluate(request)),
+    catch: (cause) =>
+      toRuntimeAdapterError(
+        "evaluate_approval",
+        `Tool approval evaluation failed: ${request.toolPath}`,
+        String(cause),
+      ),
+  });
+};
+
+const toToolCallResultFromDecision = (
+  decision: ToolApprovalDecision,
+  request: ToolApprovalRequest,
+): RuntimeToolCallResult => {
+  if (decision.kind === "approved") {
+    return {
+      ok: true,
+      value: undefined,
+    };
+  }
+
+  if (decision.kind === "pending") {
+    return {
+      ok: false,
+      kind: "pending",
+      approvalId: decision.approvalId,
+      retryAfterMs: normalizePendingRetryAfterMs(decision.retryAfterMs),
+      error: decision.error,
+    };
+  }
+
+  return {
+    ok: false,
+    kind: "denied",
+    error: normalizeDeniedError(decision.error, request.toolPath),
+  };
+};
+
+export const createInMemoryToolApprovalPolicy = (
+  options: CreateInMemoryToolApprovalPolicyOptions,
+): ToolApprovalPolicy => ({
+  evaluate: (input) => options.decide(input),
+});
 
 const normalizeObjectInput = (input: unknown): Record<string, unknown> => {
   if (!input || typeof input !== "object" || Array.isArray(input)) {
@@ -448,21 +569,39 @@ export const createStaticToolRegistry = (
       });
     }
 
-    return Effect.tryPromise({
-      try: () => Promise.resolve(implementation.execute!(input.input ?? {}, undefined)),
-      catch: (cause) =>
-        toRuntimeAdapterError(
-          "call_tool",
-          `In-memory tool invocation failed: ${input.toolPath}`,
-          String(cause),
-        ),
-    }).pipe(
-      Effect.map(
-        (value): RuntimeToolCallResult => ({
-          ok: true,
-          value,
-        }),
-      ),
+    const approvalRequest: ToolApprovalRequest = {
+      runId: input.runId,
+      callId: input.callId,
+      toolPath: input.toolPath,
+      input: input.input,
+      workspaceId: options.workspaceId,
+      source: "in-memory",
+      defaultMode: implementation.approval ?? "auto",
+    };
+
+    return evaluateToolApproval(approvalRequest, options.approvalPolicy).pipe(
+      Effect.flatMap((decision) => {
+        if (decision.kind !== "approved") {
+          return Effect.succeed(toToolCallResultFromDecision(decision, approvalRequest));
+        }
+
+        return Effect.tryPromise({
+          try: () => Promise.resolve(implementation.execute!(input.input ?? {}, undefined)),
+          catch: (cause) =>
+            toRuntimeAdapterError(
+              "call_tool",
+              `In-memory tool invocation failed: ${input.toolPath}`,
+              String(cause),
+            ),
+        }).pipe(
+          Effect.map(
+            (value): RuntimeToolCallResult => ({
+              ok: true,
+              value,
+            }),
+          ),
+        );
+      }),
     );
   },
   discover: (input) =>
@@ -513,26 +652,53 @@ export const createRuntimeToolCallResultHandler = (
   );
 };
 
+export const invokeRuntimeToolCallResult = (
+  toolRegistry: ToolRegistry,
+  input: RuntimeToolCallRequest,
+): Effect.Effect<RuntimeToolCallResult, RuntimeAdapterError> => {
+  if (input.toolPath === "discover") {
+    return toolRegistry.discover(normalizeDiscoverInput(input.input)).pipe(
+      Effect.map(
+        (value): RuntimeToolCallResult => ({
+          ok: true,
+          value,
+        }),
+      ),
+    );
+  }
+
+  if (input.toolPath === "catalog.namespaces") {
+    return toolRegistry
+      .catalogNamespaces(normalizeCatalogNamespacesInput(input.input))
+      .pipe(
+        Effect.map(
+          (value): RuntimeToolCallResult => ({
+            ok: true,
+            value,
+          }),
+        ),
+      );
+  }
+
+  if (input.toolPath === "catalog.tools") {
+    return toolRegistry.catalogTools(normalizeCatalogToolsInput(input.input)).pipe(
+      Effect.map(
+        (value): RuntimeToolCallResult => ({
+          ok: true,
+          value,
+        }),
+      ),
+    );
+  }
+
+  return toolRegistry.callTool(input);
+};
+
 export const createRuntimeToolCallService = (
   toolRegistry: ToolRegistry,
 ): RuntimeToolCallService => ({
-  callTool: (input) => {
-    if (input.toolPath === "discover") {
-      return toolRegistry.discover(normalizeDiscoverInput(input.input));
-    }
-
-    if (input.toolPath === "catalog.namespaces") {
-      return toolRegistry.catalogNamespaces(
-        normalizeCatalogNamespacesInput(input.input),
-      );
-    }
-
-    if (input.toolPath === "catalog.tools") {
-      return toolRegistry.catalogTools(normalizeCatalogToolsInput(input.input));
-    }
-
-    return toolRegistry
-      .callTool(input)
-      .pipe(Effect.flatMap((result) => createRuntimeToolCallResultHandler(input, result)));
-  },
+  callTool: (input) =>
+    invokeRuntimeToolCallResult(toolRegistry, input).pipe(
+      Effect.flatMap((result) => createRuntimeToolCallResultHandler(input, result)),
+    ),
 });

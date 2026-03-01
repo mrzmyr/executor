@@ -22,6 +22,7 @@ import * as Schema from "effect/Schema";
 import { makeOpenApiToolProvider } from "./openapi-provider";
 import { makeToolProviderRegistry } from "./tool-providers";
 import { createSourceToolRegistry } from "./source-tool-registry";
+import { createInMemoryToolApprovalPolicy } from "./tool-registry";
 
 const decodeSource = Schema.decodeUnknownSync(SourceSchema);
 
@@ -285,6 +286,100 @@ describe("source tool registry", () => {
 
       expect(catalog.results.length).toBeGreaterThan(0);
       expect(server.requests).toEqual(["/repos/octocat/hello-world"]);
+    }),
+  );
+
+  it.scoped("supports approval policy callbacks without persistence", () =>
+    Effect.gen(function* () {
+      const server = yield* makeTestServer;
+
+      const source: Source = decodeSource({
+        id: "src_github",
+        workspaceId: "ws_local",
+        name: "github",
+        kind: "openapi",
+        endpoint: server.baseUrl,
+        status: "connected",
+        enabled: true,
+        configJson: "{}",
+        sourceHash: null,
+        lastError: null,
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      });
+
+      const sources: Array<Source> = [source];
+      const sourceStore: SourceStore = {
+        getById: (workspaceId, sourceId) =>
+          Effect.succeed(
+            Option.fromNullable(
+              sources.find(
+                (candidate) =>
+                  candidate.workspaceId === workspaceId && candidate.id === sourceId,
+              ),
+            ),
+          ),
+        listByWorkspace: (workspaceId) =>
+          Effect.succeed(
+            sources.filter((candidate) => candidate.workspaceId === workspaceId),
+          ),
+        upsert: () => Effect.void,
+        removeById: () => Effect.succeed(false),
+      };
+
+      const artifactsByKey = new Map<string, ToolArtifact>();
+      const toolArtifactStore: ToolArtifactStore = {
+        getBySource: (workspaceId, sourceId) =>
+          Effect.succeed(
+            Option.fromNullable(artifactsByKey.get(`${workspaceId}:${sourceId}`)),
+          ),
+        upsert: (artifact) =>
+          Effect.sync(() => {
+            artifactsByKey.set(`${artifact.workspaceId}:${artifact.sourceId}`, artifact);
+          }),
+      };
+
+      const sourceManager = makeSourceManagerService(toolArtifactStore);
+      yield* sourceManager.refreshOpenApiArtifact({
+        source,
+        openApiSpec: githubOpenApiSpec,
+      });
+
+      const toolProviderRegistry = makeToolProviderRegistry([makeOpenApiToolProvider()]);
+      const toolRegistry = createSourceToolRegistry({
+        workspaceId: source.workspaceId,
+        sourceStore,
+        toolArtifactStore,
+        toolProviderRegistry,
+        approvalPolicy: createInMemoryToolApprovalPolicy({
+          decide: () => ({
+            kind: "pending",
+            approvalId: "approval_source_1",
+            retryAfterMs: 250,
+          }),
+        }),
+      });
+
+      const discovered = yield* toolRegistry.discover({ query: "repo" });
+      const bestPath = discovered.bestPath;
+      if (!bestPath) {
+        throw new Error("expected discover to return bestPath");
+      }
+
+      const pending = yield* toolRegistry.callTool({
+        runId: "run_source_pending_1",
+        callId: "call_source_pending_1",
+        toolPath: bestPath,
+      });
+
+      expect(pending).toEqual({
+        ok: false,
+        kind: "pending",
+        approvalId: "approval_source_1",
+        retryAfterMs: 250,
+        error: undefined,
+      });
+      expect(server.requests).toEqual([]);
     }),
   );
 });

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "@effect/vitest";
 import {
+  createInMemoryToolApprovalPolicy,
   createRuntimeRunClient,
   createStaticToolRegistry,
 } from "@executor-v2/engine";
@@ -124,6 +125,69 @@ describe("toAiSdkTools", () => {
         {
           query: "codemode adapter integration",
         },
+      ]);
+    }),
+  );
+
+  it.effect("supports in-memory approval callbacks in local runtime usage", () =>
+    Effect.gen(function* () {
+      const runtimeAdapter = makeLocalInProcessRuntimeAdapter();
+      const approvals: Array<{ toolPath: string; confirm?: unknown }> = [];
+
+      const runClient = createRuntimeRunClient({
+        runtimeAdapter,
+        toolRegistry: createStaticToolRegistry({
+          approvalPolicy: createInMemoryToolApprovalPolicy({
+            decide: (input) => {
+              approvals.push({
+                toolPath: input.toolPath,
+                confirm: input.input?.confirm,
+              });
+
+              if (input.input?.confirm === "yes") {
+                return { kind: "approved" };
+              }
+
+              return {
+                kind: "denied",
+                error: "Confirmation required",
+              };
+            },
+          }),
+          tools: {
+            "admin.delete": {
+              approval: "required",
+              execute: () => ({ ok: true }),
+            },
+          },
+        }),
+      });
+
+      const tools = toAiSdkTools({
+        runClient,
+        makeTool: (def) => def,
+      });
+
+      const denied = yield* Effect.tryPromise(() =>
+        tools.execute.execute({
+          code: "return await tools.admin.delete({ confirm: 'no' });",
+        }),
+      );
+
+      expect(denied.status).toBe("failed");
+      expect(denied.error).toContain("Confirmation required");
+
+      const approved = yield* Effect.tryPromise(() =>
+        tools.execute.execute({
+          code: "return await tools.admin.delete({ confirm: 'yes' });",
+        }),
+      );
+
+      expect(approved.status).toBe("completed");
+      expect(approved.result).toEqual({ ok: true });
+      expect(approvals).toEqual([
+        { toolPath: "admin.delete", confirm: "no" },
+        { toolPath: "admin.delete", confirm: "yes" },
       ]);
     }),
   );

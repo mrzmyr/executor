@@ -1,6 +1,6 @@
 import {
   RuntimeAdapterError,
-  createRuntimeToolCallService,
+  invokeRuntimeToolCallResult,
 } from "@executor-v2/engine";
 import type {
   RuntimeToolCallRequest,
@@ -101,15 +101,8 @@ const handleToolCallHttpEffect = (
       input.credentialContext?.workspaceId?.trim() || fallbackWorkspaceId;
 
     const toolRegistry = createConvexSourceToolRegistry(ctx, workspaceId);
-    const runtimeToolCallService = createRuntimeToolCallService(toolRegistry);
 
-    const result = yield* runtimeToolCallService.callTool(input).pipe(
-      Effect.map(
-        (value): RuntimeToolCallResult => ({
-          ok: true,
-          value,
-        }),
-      ),
+    const result = yield* invokeRuntimeToolCallResult(toolRegistry, input).pipe(
       Effect.catchTag("RuntimeAdapterError", (error) =>
         Effect.succeed<RuntimeToolCallResult>({
           ok: false,

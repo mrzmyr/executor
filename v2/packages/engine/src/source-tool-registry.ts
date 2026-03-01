@@ -27,6 +27,9 @@ import type {
   ToolProviderRegistryError,
 } from "./tool-providers";
 import type {
+  ToolApprovalDecision,
+  ToolApprovalPolicy,
+  ToolApprovalRequest,
   ToolRegistry,
   ToolRegistryCatalogNamespacesInput,
   ToolRegistryCatalogNamespacesOutput,
@@ -45,6 +48,7 @@ type SourceToolRegistryOptions = {
   sourceStore: SourceStore;
   toolArtifactStore: ToolArtifactStore;
   toolProviderRegistry: ToolProviderRegistry;
+  approvalPolicy?: ToolApprovalPolicy;
 };
 
 type SourceToolEntry = {
@@ -75,6 +79,72 @@ const toRuntimeAdapterError = (
     message,
     details,
   });
+
+const defaultPendingRetryAfterMs = 1_000;
+
+const normalizePendingRetryAfterMs = (value: number | undefined): number => {
+  if (typeof value !== "number" || !Number.isFinite(value) || value < 0) {
+    return defaultPendingRetryAfterMs;
+  }
+
+  return Math.round(value);
+};
+
+const normalizeDeniedError = (value: string | undefined, toolPath: string): string => {
+  const normalized = value?.trim();
+  if (normalized && normalized.length > 0) {
+    return normalized;
+  }
+
+  return `Tool call denied: ${toolPath}`;
+};
+
+const evaluateToolApproval = (
+  request: ToolApprovalRequest,
+  policy: ToolApprovalPolicy | undefined,
+): Effect.Effect<ToolApprovalDecision, RuntimeAdapterError> => {
+  if (!policy) {
+    return Effect.succeed({ kind: "approved" });
+  }
+
+  return Effect.tryPromise({
+    try: () => Promise.resolve(policy.evaluate(request)),
+    catch: (cause) =>
+      toRuntimeAdapterError(
+        "evaluate_approval",
+        `Tool approval evaluation failed: ${request.toolPath}`,
+        String(cause),
+      ),
+  });
+};
+
+const toToolCallResultFromDecision = (
+  decision: ToolApprovalDecision,
+  request: ToolApprovalRequest,
+): RuntimeToolCallResult => {
+  if (decision.kind === "approved") {
+    return {
+      ok: true,
+      value: undefined,
+    };
+  }
+
+  if (decision.kind === "pending") {
+    return {
+      ok: false,
+      kind: "pending",
+      approvalId: decision.approvalId,
+      retryAfterMs: normalizePendingRetryAfterMs(decision.retryAfterMs),
+      error: decision.error,
+    };
+  }
+
+  return {
+    ok: false,
+    kind: "denied",
+    error: normalizeDeniedError(decision.error, request.toolPath),
+  };
+};
 
 const sourceStoreErrorToRuntimeAdapterError = (
   operation: string,
@@ -526,11 +596,30 @@ export const createSourceToolRegistry = (
         } satisfies RuntimeToolCallResult;
       }
 
+      const approvalRequest: ToolApprovalRequest = {
+        runId: input.runId,
+        callId: input.callId,
+        toolPath: input.toolPath,
+        input: normalizeToolCallInput(input.input),
+        workspaceId: options.workspaceId,
+        source: entry.source.name,
+        defaultMode: "auto",
+      };
+
+      const approvalDecision = yield* evaluateToolApproval(
+        approvalRequest,
+        options.approvalPolicy,
+      );
+
+      if (approvalDecision.kind !== "approved") {
+        return toToolCallResultFromDecision(approvalDecision, approvalRequest);
+      }
+
       const invocation = yield* options.toolProviderRegistry
         .invoke({
           source: entry.source,
           tool: entry.descriptor,
-          args: normalizeToolCallInput(input.input),
+          args: approvalRequest.input ?? {},
         })
         .pipe(
           Effect.mapError((cause) =>
