@@ -10,6 +10,9 @@
 **/.dev.vars
 
 # Local package manager caches and test outputs
+**/node_modules/
 node_modules/.bun/
 apps/convex/node_modules/.vite/
 apps/convex/node_modules/@convex-dev/action-cache
+*.tsbuildinfo
+tsconfig.tsbuildinfo
