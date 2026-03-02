@@ -25,6 +25,8 @@ export {
   removeSource,
   optimisticUpsertSources,
   optimisticRemoveSources,
+  toUpsertSourceRequest,
+  toRemoveSourceRequest,
 } from "./sources";
 
 export {
@@ -40,6 +42,7 @@ export {
   approvalPendingByWorkspace,
   resolveApproval,
   optimisticResolveApproval,
+  toResolveApprovalRequest,
 } from "./approvals";
 
 export {
@@ -50,6 +53,8 @@ export {
   optimisticUpsertPolicy,
   optimisticRemovePolicy,
   toPolicyUpsertPayload,
+  toPolicyUpsertRequest,
+  toPolicyRemoveRequest,
   toPolicyRemoveResult,
 } from "./policies";
 
@@ -59,6 +64,8 @@ export {
   upsertCredentialBinding,
   removeCredentialBinding,
   toCredentialBindingUpsertPayload,
+  toCredentialBindingUpsertRequest,
+  toCredentialBindingRemoveRequest,
   toCredentialBindingRemoveResult,
 } from "./credentials";
 
@@ -73,6 +80,9 @@ export {
   listStorageKv,
   queryStorageSql,
   toOpenStoragePayload,
+  toOpenStorageRequest,
+  toCloseStorageRequest,
+  toRemoveStorageRequest,
   toStorageRemoveResult,
   toListStorageDirectoryPayload,
   toReadStorageFilePayload,
@@ -101,8 +111,10 @@ export {
   organizationsState,
   upsertOrganization,
   toOrganizationUpsertPayload,
+  toUpsertOrganizationRequest,
   workspacesResult,
   workspacesState,
   upsertWorkspace,
   toWorkspaceUpsertPayload,
+  toUpsertWorkspaceRequest,
 } from "./settings";

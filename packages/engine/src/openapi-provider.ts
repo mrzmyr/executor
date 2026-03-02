@@ -12,6 +12,7 @@ import { pipe } from "effect/Function";
 import * as ParseResult from "effect/ParseResult";
 import * as Schema from "effect/Schema";
 
+import { collectSourceHeaders } from "./source-config";
 import { ToolProviderError, type ToolProvider } from "./tool-providers";
 
 const OpenApiToolArgsSchema = Schema.Record({
@@ -175,8 +176,9 @@ const buildFetchRequest = (
     const resolvedPath = yield* replacePathTemplate(payload.pathTemplate, args, payload);
     const baseUrl = yield* resolveBaseUrl(source);
     const url = new URL(resolvedPath, baseUrl);
+    const config = parseSourceConfig(source);
 
-    const headers = new Headers();
+    const headers = new Headers(collectSourceHeaders(config));
     const cookieParts: Array<string> = [];
 
     for (const parameter of payload.parameters) {

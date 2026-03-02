@@ -105,39 +105,5 @@ export const readMcpTransportFromConfig = (
 export const collectSourceHeaders = (
   config: SourceConfig,
 ): Record<string, string> => {
-  const configuredHeaders = readStringRecord(config.headers);
-  const auth = asRecord(config.auth);
-  const authType = normalizeString(auth.type)?.toLowerCase();
-  const authHeaders: Record<string, string> = {};
-
-  if (authType === "bearer") {
-    const token = normalizeString(auth.token) ?? normalizeString(auth.value);
-    if (token) {
-      authHeaders.Authorization = `Bearer ${token}`;
-    }
-  }
-
-  if (authType === "apikey" || authType === "api_key" || authType === "apiKey") {
-    const headerName = normalizeString(auth.header) ?? "Authorization";
-    const apiKey = normalizeString(auth.value);
-    if (apiKey) {
-      authHeaders[headerName] = apiKey;
-    }
-  }
-
-  if (authType === "basic") {
-    const username = normalizeString(auth.username);
-    const password = normalizeString(auth.password);
-    if (username && password) {
-      authHeaders.Authorization = `Basic ${Buffer.from(
-        `${username}:${password}`,
-        "utf8",
-      ).toString("base64")}`;
-    }
-  }
-
-  return {
-    ...configuredHeaders,
-    ...authHeaders,
-  };
+  return readStringRecord(config.headers);
 };

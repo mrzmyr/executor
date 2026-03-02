@@ -14,7 +14,10 @@ import {
   removeSource,
   sourcesByWorkspace,
   sourcesPendingByWorkspace,
+  toCredentialBindingUpsertRequest,
   toCredentialBindingUpsertPayload,
+  toRemoveSourceRequest,
+  toUpsertSourceRequest,
   upsertCredentialBinding,
   upsertSource,
 } from "../../lib/control-plane/atoms";
@@ -468,7 +471,7 @@ export function SourceManagementPanel({ editSource, onDone }: SourceManagementPa
 
     setOptimisticSources({ items: optimistic.items, pendingAck: { kind: "upsert", sourceId: optimistic.sourceId } });
 
-    void runUpsertSource({ path: { workspaceId }, payload })
+    void runUpsertSource(toUpsertSourceRequest({ workspaceId, payload }))
       .then(async () => {
         let oauthLinked = false;
         let oauthLinkNote: string | null = null;
@@ -482,21 +485,37 @@ export function SourceManagementPanel({ editSource, onDone }: SourceManagementPa
           if (formState.authMode === "account") {
             oauthLinkNote = "Account scope is not supported from this flow; OAuth credential was saved as workspace scope.";
           }
+          const oauthExpiresAt =
+            typeof oauthSessionForEndpoint.expiresIn === "number"
+              ? Date.now() + Math.max(0, Math.floor(oauthSessionForEndpoint.expiresIn)) * 1000
+              : null;
+          const oauthAuthorizationServer =
+            mcpOAuthDetection.authorizationServers[0] ?? null;
           try {
-            await runUpsertCredentialBinding({
-              path: { workspaceId },
-              payload: toCredentialBindingUpsertPayload({
-                ...(existingBinding ? { id: existingBinding.id } : {}),
-                credentialId: (existingBinding?.credentialId ?? createLocalId("cred_")) as SourceCredentialBinding["credentialId"],
-                scopeType,
-                sourceKey,
-                provider: "oauth2",
-                secretRef: oauthSessionForEndpoint.accessToken,
-                accountId: null,
-                additionalHeadersJson: null,
-                boundAuthFingerprint: null,
+            await runUpsertCredentialBinding(
+              toCredentialBindingUpsertRequest({
+                workspaceId,
+                payload: toCredentialBindingUpsertPayload({
+                  ...(existingBinding ? { id: existingBinding.id } : {}),
+                  credentialId: (existingBinding?.credentialId ?? createLocalId("cred_")) as SourceCredentialBinding["credentialId"],
+                  scopeType,
+                  sourceKey,
+                  provider: "oauth2",
+                  secretRef: oauthSessionForEndpoint.accessToken,
+                  accountId: null,
+                  additionalHeadersJson: null,
+                  boundAuthFingerprint: null,
+                  oauthRefreshToken: oauthSessionForEndpoint.refreshToken ?? null,
+                  oauthExpiresAt,
+                  oauthScope: oauthSessionForEndpoint.scope ?? null,
+                  oauthAuthorizationServer,
+                  oauthClientId: oauthSessionForEndpoint.clientId ?? null,
+                  oauthSourceUrl: oauthSessionForEndpoint.sourceUrl,
+                  oauthClientInformationJson:
+                    oauthSessionForEndpoint.clientInformationJson ?? null,
+                }),
               }),
-            });
+            );
             oauthLinked = true;
             setMcpOAuthSession(null);
           } catch {
@@ -526,7 +545,7 @@ export function SourceManagementPanel({ editSource, onDone }: SourceManagementPa
     const optimistic = optimisticRemoveSources(previousSources, sourceId);
     setOptimisticSources({ items: optimistic.items, pendingAck: { kind: "remove", sourceId: optimistic.sourceId } });
 
-    void runRemoveSource({ path: { workspaceId, sourceId } })
+    void runRemoveSource(toRemoveSourceRequest({ workspaceId, sourceId }))
       .then(() => {
         setStatusText("Source removed.");
         resetForm();

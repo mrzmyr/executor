@@ -11,8 +11,9 @@ import {
   optimisticUpsertPolicy,
   policiesByWorkspace,
   removePolicy,
+  toPolicyRemoveRequest,
   toPolicyRemoveResult,
-  toPolicyUpsertPayload,
+  toPolicyUpsertRequest,
   upsertPolicy,
 } from "../../lib/control-plane/atoms";
 import { Badge } from "../ui/badge";
@@ -107,14 +108,12 @@ export function PoliciesView() {
     setPolicyBusyId(policyId);
     setOptimisticPolicies(nextPolicies);
 
-    void runUpsertPolicy({
-      path: { workspaceId },
-      payload: toPolicyUpsertPayload({
-        id: policyEditingId ?? undefined,
-        toolPathPattern,
-        decision: policyDecision,
-      }),
-    })
+    void runUpsertPolicy(toPolicyUpsertRequest({
+      workspaceId,
+      id: policyEditingId ?? undefined,
+      toolPathPattern,
+      decision: policyDecision,
+    }))
       .then(() => {
         setStatus(policyEditingId ? `Updated policy ${toolPathPattern}.` : `Added policy ${toolPathPattern}.`);
         clearPolicyForm();
@@ -136,7 +135,7 @@ export function PoliciesView() {
     setPolicyBusyId(policyId);
     setOptimisticPolicies(nextPolicies);
 
-    void runRemovePolicy({ path: { workspaceId, policyId } })
+    void runRemovePolicy(toPolicyRemoveRequest({ workspaceId, policyId }))
       .then((result) => {
         const removed = toPolicyRemoveResult(result);
         setStatus(removed ? "Policy removed." : "Policy not found.");

@@ -7,6 +7,8 @@ import type { Organization, Workspace } from "@executor-v2/schema";
 import { useWorkspace } from "../../lib/hooks/use-workspace";
 import {
   organizationsState,
+  toUpsertOrganizationRequest,
+  toUpsertWorkspaceRequest,
   upsertOrganization,
   upsertWorkspace,
   toOrganizationUpsertPayload,
@@ -168,7 +170,7 @@ export default function SettingsView() {
       status: organizationForm.status,
     });
 
-    void runUpsertOrganization({ payload })
+    void runUpsertOrganization(toUpsertOrganizationRequest({ payload }))
       .then((organization) => {
         setOrganizationStatusText(`Saved organization ${organization.slug}.`);
         setOrganizationForm({
@@ -209,7 +211,7 @@ export default function SettingsView() {
       organizationId: organizationId as Workspace["organizationId"],
     });
 
-    void runUpsertWorkspace({ payload })
+    void runUpsertWorkspace(toUpsertWorkspaceRequest({ payload }))
       .then((workspace) => {
         setWorkspaceStatusText(`Saved workspace ${workspace.name}.`);
         setWorkspaceForm({

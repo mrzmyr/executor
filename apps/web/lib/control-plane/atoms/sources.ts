@@ -5,7 +5,7 @@ import * as Option from "effect/Option";
 
 import { controlPlaneClient } from "../client";
 import { stateFromResult, type EntityState } from "./entity";
-import { sourcesKeys } from "./keys";
+import { sourceMutationKeys, sourcesKeys } from "./keys";
 
 // ---------------------------------------------------------------------------
 // Query atoms
@@ -15,7 +15,7 @@ export const sourcesResultByWorkspace = Atom.family(
   (workspaceId: WorkspaceId) =>
     controlPlaneClient.query("sources", "list", {
       path: { workspaceId },
-      reactivityKeys: sourcesKeys,
+      reactivityKeys: sourcesKeys(workspaceId),
     }),
 );
 
@@ -96,6 +96,26 @@ export const sourcesByWorkspace = Atom.family((workspaceId: WorkspaceId) =>
 
 export const upsertSource = controlPlaneClient.mutation("sources", "upsert");
 export const removeSource = controlPlaneClient.mutation("sources", "remove");
+
+export const toUpsertSourceRequest = (input: {
+  workspaceId: WorkspaceId;
+  payload: UpsertSourcePayload;
+}) => ({
+  path: { workspaceId: input.workspaceId },
+  payload: input.payload,
+  reactivityKeys: sourceMutationKeys(input.workspaceId),
+});
+
+export const toRemoveSourceRequest = (input: {
+  workspaceId: WorkspaceId;
+  sourceId: SourceId;
+}) => ({
+  path: {
+    workspaceId: input.workspaceId,
+    sourceId: input.sourceId,
+  },
+  reactivityKeys: sourceMutationKeys(input.workspaceId),
+});
 
 // ---------------------------------------------------------------------------
 // Optimistic helpers

@@ -17,6 +17,8 @@ type PopupMessage =
         refreshToken?: string;
         scope?: string;
         expiresIn?: number;
+        clientId?: string;
+        clientInformationJson?: string;
       };
     }
   | {
@@ -61,6 +63,10 @@ const toPopupMessage = (result: McpOAuthPopupResult | null): PopupMessage => {
       ...(result.scope ? { scope: result.scope } : {}),
       ...(typeof result.expiresIn === "number"
         ? { expiresIn: result.expiresIn }
+        : {}),
+      ...(result.clientId ? { clientId: result.clientId } : {}),
+      ...(result.clientInformationJson
+        ? { clientInformationJson: result.clientInformationJson }
         : {}),
     },
   };

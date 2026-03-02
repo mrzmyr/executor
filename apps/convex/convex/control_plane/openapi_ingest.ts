@@ -313,42 +313,6 @@ const parseSourceConfig = (configJson: string): Record<string, unknown> => {
   }
 };
 
-const collectAuthHeadersFromSourceConfig = (config: Record<string, unknown>): Record<string, string> => {
-  const headers: Record<string, string> = {};
-
-  const auth = config.auth;
-  if (!isUnknownRecord(auth)) {
-    return headers;
-  }
-
-  const authType = normalizeString(auth.type)?.toLowerCase();
-
-  if (authType === "bearer") {
-    const token = normalizeString(auth.token) ?? normalizeString(auth.value);
-    if (token) {
-      headers.Authorization = `Bearer ${token}`;
-    }
-  }
-
-  if (authType === "apikey" || authType === "api_key") {
-    const value = normalizeString(auth.value) ?? normalizeString(auth.token);
-    if (value) {
-      const headerName = normalizeString(auth.header) ?? "Authorization";
-      headers[headerName] = value;
-    }
-  }
-
-  if (authType === "basic") {
-    const username = normalizeString(auth.username);
-    const password = normalizeString(auth.password);
-    if (username && password) {
-      headers.Authorization = `Basic ${Buffer.from(`${username}:${password}`).toString("base64")}`;
-    }
-  }
-
-  return headers;
-};
-
 const collectConfiguredHeadersFromSourceConfig = (config: Record<string, unknown>): Record<string, string> => {
   const headers: Record<string, string> = {};
   const configuredHeaders = config.headers;
@@ -373,7 +337,6 @@ const collectGraphqlHeadersFromSourceConfig = (source: Source): Record<string, s
   return {
     "content-type": "application/json",
     ...collectConfiguredHeadersFromSourceConfig(config),
-    ...collectAuthHeadersFromSourceConfig(config),
   };
 };
 
@@ -381,7 +344,6 @@ const collectMcpHeadersFromSourceConfig = (source: Source): Record<string, strin
   const config = parseSourceConfig(source.configJson);
   return {
     ...collectConfiguredHeadersFromSourceConfig(config),
-    ...collectAuthHeadersFromSourceConfig(config),
   };
 };
 

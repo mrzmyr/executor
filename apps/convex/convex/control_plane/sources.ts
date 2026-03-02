@@ -32,6 +32,36 @@ const parseConfigJson = (configJson: string | undefined): Record<string, unknown
   }
 };
 
+const protectedHeaderNames = new Set([
+  "authorization",
+  "proxy-authorization",
+  "x-api-key",
+]);
+
+const validateSourceConfigSecurity = (config: Record<string, unknown>): void => {
+  if (Object.prototype.hasOwnProperty.call(config, "auth")) {
+    throw new Error("Source config must not include auth; configure credentials via connections");
+  }
+
+  if (Object.prototype.hasOwnProperty.call(config, "useCredentialedFetch")) {
+    throw new Error("Source config must not include useCredentialedFetch");
+  }
+
+  const headers = config.headers;
+  if (!isRecord(headers)) {
+    return;
+  }
+
+  for (const headerName of Object.keys(headers)) {
+    const normalized = headerName.trim().toLowerCase();
+    if (protectedHeaderNames.has(normalized)) {
+      throw new Error(
+        `Source config headers must not include '${headerName}'; use credential connections instead`,
+      );
+    }
+  }
+};
+
 const normalizeHttpUrl = (value: string): string | null => {
   const trimmed = value.trim();
   if (trimmed.length === 0) {
@@ -158,16 +188,25 @@ export const upsertSourceRecord = internalMutation({
     const payload = args.payload as UpsertSourcePayload;
 
     const configJson = (() => {
+      const parsedConfig = parseConfigJson(payload.configJson);
+      validateSourceConfigSecurity(parsedConfig);
+
       if (payload.kind !== "openapi") {
-        return payload.configJson ?? "{}";
+        return JSON.stringify(parsedConfig);
       }
 
       const configuredBaseUrl = requireHttpUrl(
-        parseConfigJson(payload.configJson).baseUrl,
+        parsedConfig.baseUrl,
         "OpenAPI source requires configJson.baseUrl",
       );
 
-      return buildOpenApiConfigJson(payload, configuredBaseUrl);
+      return buildOpenApiConfigJson(
+        {
+          ...payload,
+          configJson: JSON.stringify(parsedConfig),
+        },
+        configuredBaseUrl,
+      );
     })();
 
     const source = decodeSource({
@@ -216,6 +255,7 @@ export const upsertSource = internalAction({
 
     if (payload.kind === "openapi") {
       const config = parseConfigJson(payload.configJson);
+      validateSourceConfigSecurity(config);
       let resolvedBaseUrl = typeof config.baseUrl === "string"
         ? normalizeHttpUrl(config.baseUrl)
         : null;
@@ -241,6 +281,8 @@ export const upsertSource = internalAction({
         ...payload,
         configJson: buildOpenApiConfigJson(payload, baseUrl),
       };
+    } else {
+      validateSourceConfigSecurity(parseConfigJson(payload.configJson));
     }
 
     const source = await ctx.runMutation(runtimeInternal.control_plane.sources.upsertSourceRecord, {
@@ -339,6 +381,10 @@ export const removeSource = internalMutation({
 
     await ctx.runMutation(runtimeInternal.control_plane.tool_registry.removeSourceBindingsAndIndex, {
       workspaceId: args.workspaceId,
+      sourceId: args.sourceId,
+    });
+
+    await ctx.runMutation(runtimeInternal.control_plane.credentials.removeSourceAuthBindings, {
       sourceId: args.sourceId,
     });
 

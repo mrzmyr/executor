@@ -20,7 +20,7 @@ import type {
 
 import { controlPlaneClient } from "../client";
 import { workspaceEntity, type EntityState } from "./entity";
-import { storageKeys } from "./keys";
+import { storageKeys, storageMutationKeys } from "./keys";
 
 // ---------------------------------------------------------------------------
 // Query atoms
@@ -30,7 +30,7 @@ export const storageResultByWorkspace = Atom.family(
   (workspaceId: WorkspaceId) =>
     controlPlaneClient.query("storage", "list", {
       path: { workspaceId },
-      reactivityKeys: storageKeys,
+      reactivityKeys: storageKeys(workspaceId),
     }),
 );
 
@@ -80,6 +80,37 @@ export const toOpenStoragePayload = (input: {
   ...(input.ttlHours !== undefined ? { ttlHours: input.ttlHours } : {}),
   ...(input.accountId !== undefined ? { accountId: input.accountId } : {}),
   ...(input.sessionId !== undefined ? { sessionId: input.sessionId } : {}),
+});
+
+export const toOpenStorageRequest = (input: {
+  workspaceId: WorkspaceId;
+  payload: OpenStorageInstancePayload;
+}) => ({
+  path: { workspaceId: input.workspaceId },
+  payload: input.payload,
+  reactivityKeys: storageMutationKeys(input.workspaceId),
+});
+
+export const toCloseStorageRequest = (input: {
+  workspaceId: WorkspaceId;
+  storageInstanceId: StorageInstance["id"];
+}) => ({
+  path: {
+    workspaceId: input.workspaceId,
+    storageInstanceId: input.storageInstanceId,
+  },
+  reactivityKeys: storageMutationKeys(input.workspaceId),
+});
+
+export const toRemoveStorageRequest = (input: {
+  workspaceId: WorkspaceId;
+  storageInstanceId: StorageInstance["id"];
+}) => ({
+  path: {
+    workspaceId: input.workspaceId,
+    storageInstanceId: input.storageInstanceId,
+  },
+  reactivityKeys: storageMutationKeys(input.workspaceId),
 });
 
 export const toStorageRemoveResult = (result: RemoveStorageInstanceResult): boolean =>

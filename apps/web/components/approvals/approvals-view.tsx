@@ -9,6 +9,7 @@ import {
   approvalsByWorkspace,
   optimisticResolveApproval,
   resolveApproval,
+  toResolveApprovalRequest,
 } from "../../lib/control-plane/atoms";
 import { Button } from "../ui/button";
 import {
@@ -137,16 +138,14 @@ export function ApprovalsView() {
 
     setOptimisticApprovals(nextOptimistic);
 
-    void runResolveApproval({
-      path: {
-        workspaceId,
-        approvalId,
-      },
+    void runResolveApproval(toResolveApprovalRequest({
+      workspaceId,
+      approvalId,
       payload: {
         status,
         reason: null,
       },
-    })
+    }))
       .then(() => {
         setStatus(status === "approved" ? "Approval granted." : "Approval denied.");
         setOptimisticApprovals(null);

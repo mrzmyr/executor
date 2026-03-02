@@ -12,6 +12,8 @@ type PopupMessage =
         refreshToken?: string;
         scope?: string;
         expiresIn?: number;
+        clientId?: string;
+        clientInformationJson?: string;
       };
     }
   | {

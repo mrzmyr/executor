@@ -43,6 +43,13 @@ export const toOrganizationUpsertPayload = (input: {
   ...(input.status !== undefined ? { status: input.status } : {}),
 });
 
+export const toUpsertOrganizationRequest = (input: {
+  payload: UpsertOrganizationPayload;
+}) => ({
+  payload: input.payload,
+  reactivityKeys: organizationsKeys,
+});
+
 // ---------------------------------------------------------------------------
 // Workspaces
 // ---------------------------------------------------------------------------
@@ -72,6 +79,13 @@ export const toWorkspaceUpsertPayload = (input: {
   ...(input.id ? { id: input.id } : {}),
   organizationId: input.organizationId,
   name: input.name,
+});
+
+export const toUpsertWorkspaceRequest = (input: {
+  payload: UpsertWorkspacePayload;
+}) => ({
+  payload: input.payload,
+  reactivityKeys: workspacesKeys,
 });
 
 export type OrganizationsState = EntityState<Organization>;

@@ -8,6 +8,11 @@ export * from "./models/source";
 export * from "./models/tool-artifact";
 export * from "./models/oauth-token";
 export * from "./models/source-credential-binding";
+export * from "./models/auth-connection";
+export * from "./models/source-auth-binding";
+export * from "./models/auth-material";
+export * from "./models/oauth-state";
+export * from "./models/auth-audit-event";
 export * from "./models/policy";
 export * from "./models/approval";
 export * from "./models/task-run";
@@ -16,4 +21,3 @@ export * from "./models/storage-instance";
 export * from "./models/event-envelope";
 export * from "./models/runtime-tool";
 export * from "./models/auth";
-

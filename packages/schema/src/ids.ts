@@ -11,6 +11,19 @@ export const CredentialBindingIdSchema = Schema.String.pipe(
 );
 export const CredentialIdSchema = Schema.String.pipe(Schema.brand("CredentialId"));
 export const OAuthTokenIdSchema = Schema.String.pipe(Schema.brand("OAuthTokenId"));
+export const AuthConnectionIdSchema = Schema.String.pipe(
+  Schema.brand("AuthConnectionId"),
+);
+export const SourceAuthBindingIdSchema = Schema.String.pipe(
+  Schema.brand("SourceAuthBindingId"),
+);
+export const AuthMaterialIdSchema = Schema.String.pipe(
+  Schema.brand("AuthMaterialId"),
+);
+export const OAuthStateIdSchema = Schema.String.pipe(Schema.brand("OAuthStateId"));
+export const AuthAuditEventIdSchema = Schema.String.pipe(
+  Schema.brand("AuthAuditEventId"),
+);
 export const OrganizationMemberIdSchema = Schema.String.pipe(
   Schema.brand("OrganizationMemberId"),
 );
@@ -32,6 +45,11 @@ export type ToolArtifactId = typeof ToolArtifactIdSchema.Type;
 export type CredentialBindingId = typeof CredentialBindingIdSchema.Type;
 export type CredentialId = typeof CredentialIdSchema.Type;
 export type OAuthTokenId = typeof OAuthTokenIdSchema.Type;
+export type AuthConnectionId = typeof AuthConnectionIdSchema.Type;
+export type SourceAuthBindingId = typeof SourceAuthBindingIdSchema.Type;
+export type AuthMaterialId = typeof AuthMaterialIdSchema.Type;
+export type OAuthStateId = typeof OAuthStateIdSchema.Type;
+export type AuthAuditEventId = typeof AuthAuditEventIdSchema.Type;
 export type OrganizationMemberId = typeof OrganizationMemberIdSchema.Type;
 export type PolicyId = typeof PolicyIdSchema.Type;
 export type ApprovalId = typeof ApprovalIdSchema.Type;

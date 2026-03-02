@@ -1,22 +1,65 @@
+import type { WorkspaceId } from "@executor-v2/schema";
+
 // ---------------------------------------------------------------------------
 // Reactivity keys
 //
 // Queries subscribe to keys; mutations invalidate keys.
-// When a mutation shares keys with a query, the query auto-refetches.
+// Matching keys trigger auto-refetches.
 //
-// Following the opencode-control pattern: each domain declares its own keys
-// and spreads a shared workspace key so that switching workspace invalidates
-// all workspace-scoped data.
+// Workspace-scoped keys include the concrete workspace id so invalidation stays
+// precise instead of refreshing unrelated workspace queries.
 // ---------------------------------------------------------------------------
 
-export const workspaceKeys = { workspace: ["selected"] } as const;
+const workspaceScope = (workspaceId: WorkspaceId) => ({
+  workspace: [workspaceId],
+} as const);
 
-export const sourcesKeys = { ...workspaceKeys, sources: ["list"] } as const;
-export const toolsKeys = { ...workspaceKeys, tools: ["list"] } as const;
-export const toolDetailKeys = { ...workspaceKeys, toolDetail: ["single"] } as const;
-export const approvalsKeys = { ...workspaceKeys, approvals: ["list"] } as const;
-export const policiesKeys = { ...workspaceKeys, policies: ["list"] } as const;
-export const credentialsKeys = { ...workspaceKeys, credentials: ["list"] } as const;
-export const storageKeys = { ...workspaceKeys, storage: ["list"] } as const;
+export const sourcesKeys = (workspaceId: WorkspaceId) => ({
+  ...workspaceScope(workspaceId),
+  sources: ["list"],
+} as const);
+
+export const toolsKeys = (workspaceId: WorkspaceId) => ({
+  ...workspaceScope(workspaceId),
+  tools: ["list"],
+} as const);
+
+export const toolDetailKeys = (workspaceId: WorkspaceId) => ({
+  ...workspaceScope(workspaceId),
+  toolDetail: ["single"],
+} as const);
+
+export const approvalsKeys = (workspaceId: WorkspaceId) => ({
+  ...workspaceScope(workspaceId),
+  approvals: ["list"],
+} as const);
+
+export const policiesKeys = (workspaceId: WorkspaceId) => ({
+  ...workspaceScope(workspaceId),
+  policies: ["list"],
+} as const);
+
+export const credentialsKeys = (workspaceId: WorkspaceId) => ({
+  ...workspaceScope(workspaceId),
+  credentials: ["list"],
+} as const);
+
+export const storageKeys = (workspaceId: WorkspaceId) => ({
+  ...workspaceScope(workspaceId),
+  storage: ["list"],
+} as const);
+
+export const sourceMutationKeys = (workspaceId: WorkspaceId) => ({
+  ...workspaceScope(workspaceId),
+  sources: ["list"],
+  tools: ["list"],
+  toolDetail: ["single"],
+} as const);
+
+export const approvalsMutationKeys = approvalsKeys;
+export const policiesMutationKeys = policiesKeys;
+export const credentialsMutationKeys = credentialsKeys;
+export const storageMutationKeys = storageKeys;
+
 export const organizationsKeys = { organizations: ["list"] } as const;
 export const workspacesKeys = { workspaces: ["list"] } as const;

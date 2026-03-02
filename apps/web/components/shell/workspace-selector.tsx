@@ -6,6 +6,8 @@ import type { Organization, Workspace } from "@executor-v2/schema";
 
 import {
   organizationsState,
+  toUpsertOrganizationRequest,
+  toUpsertWorkspaceRequest,
   toOrganizationUpsertPayload,
   toWorkspaceUpsertPayload,
   upsertOrganization,
@@ -278,13 +280,15 @@ export function WorkspaceSelector() {
 
     setCreatingWorkspace(true);
 
-    void runUpsertWorkspace({
-      payload: toWorkspaceUpsertPayload({
-        id: createWorkspaceId(),
-        name,
-        organizationId: organizationId as Workspace["organizationId"],
+    void runUpsertWorkspace(
+      toUpsertWorkspaceRequest({
+        payload: toWorkspaceUpsertPayload({
+          id: createWorkspaceId(),
+          name,
+          organizationId: organizationId as Workspace["organizationId"],
+        }),
       }),
-    })
+    )
       .then((workspace) => {
         setWorkspaceId(workspace.id);
         setWorkspaceName("");
@@ -334,23 +338,27 @@ export function WorkspaceSelector() {
 
     const organizationId = createOrganizationId();
 
-    void runUpsertOrganization({
-      payload: toOrganizationUpsertPayload({
-        id: organizationId,
-        name,
-        slug,
-        status: "active",
+    void runUpsertOrganization(
+      toUpsertOrganizationRequest({
+        payload: toOrganizationUpsertPayload({
+          id: organizationId,
+          name,
+          slug,
+          status: "active",
+        }),
       }),
-    })
+    )
       .then(async (organization) => {
         try {
-          const workspace = await runUpsertWorkspace({
-            payload: toWorkspaceUpsertPayload({
-              id: createWorkspaceId(),
-              name,
-              organizationId: organization.id as Workspace["organizationId"],
+          const workspace = await runUpsertWorkspace(
+            toUpsertWorkspaceRequest({
+              payload: toWorkspaceUpsertPayload({
+                id: createWorkspaceId(),
+                name,
+                organizationId: organization.id as Workspace["organizationId"],
+              }),
             }),
-          });
+          );
 
           setWorkspaceId(workspace.id);
           setWorkspaceOrganizationId(organization.id);

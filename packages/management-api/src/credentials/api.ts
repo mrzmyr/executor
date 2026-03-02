@@ -28,9 +28,23 @@ const OptionalUpsertCredentialBindingPayloadSchema = SourceCredentialBindingSche
   Schema.partialWith({ exact: true }),
 );
 
+const OptionalOAuthUpsertFieldsSchema = Schema.Struct({
+  oauthRefreshToken: Schema.NullOr(Schema.String),
+  oauthExpiresAt: Schema.NullOr(Schema.Number),
+  oauthScope: Schema.NullOr(Schema.String),
+  oauthIssuer: Schema.NullOr(Schema.String),
+  oauthTokenEndpoint: Schema.NullOr(Schema.String),
+  oauthAuthorizationServer: Schema.NullOr(Schema.String),
+  oauthClientId: Schema.NullOr(Schema.String),
+  oauthClientSecret: Schema.NullOr(Schema.String),
+  oauthSourceUrl: Schema.NullOr(Schema.String),
+  oauthClientInformationJson: Schema.NullOr(Schema.String),
+}).pipe(Schema.partialWith({ exact: true }));
+
 export const UpsertCredentialBindingPayloadSchema =
   RequiredUpsertCredentialBindingPayloadSchema.pipe(
     Schema.extend(OptionalUpsertCredentialBindingPayloadSchema),
+    Schema.extend(OptionalOAuthUpsertFieldsSchema),
   );
 
 export type UpsertCredentialBindingPayload =

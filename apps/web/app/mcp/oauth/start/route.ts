@@ -110,6 +110,14 @@ export async function GET(request: NextRequest): Promise<Response> {
 
   if (authResult === "AUTHORIZED") {
     const tokens = provider.getTokens();
+    const clientInformation = provider.clientInformation();
+    const clientId =
+      clientInformation && typeof clientInformation.client_id === "string"
+        ? clientInformation.client_id.trim() || undefined
+        : undefined;
+    const clientInformationJson = clientInformation
+      ? JSON.stringify(clientInformation)
+      : undefined;
     const accessToken = tokens?.access_token?.trim() ?? "";
     if (accessToken.length === 0) {
       return badPopupResponse(
@@ -126,6 +134,8 @@ export async function GET(request: NextRequest): Promise<Response> {
       scope: tokens?.scope,
       expiresIn:
         typeof tokens?.expires_in === "number" ? tokens.expires_in : undefined,
+      clientId,
+      clientInformationJson,
     });
   }
 

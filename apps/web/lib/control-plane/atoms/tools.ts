@@ -15,7 +15,7 @@ export const workspaceToolsResultByWorkspace = Atom.family(
   (workspaceId: WorkspaceId) =>
     controlPlaneClient.query("tools", "listWorkspaceTools", {
       path: { workspaceId },
-      reactivityKeys: toolsKeys,
+      reactivityKeys: toolsKeys(workspaceId),
     }),
 );
 
@@ -23,7 +23,7 @@ export const sourceToolsResultBySource = Atom.family(
   (input: { workspaceId: WorkspaceId; sourceId: SourceId }) =>
     controlPlaneClient.query("tools", "listSourceTools", {
       path: { workspaceId: input.workspaceId, sourceId: input.sourceId },
-      reactivityKeys: toolsKeys,
+      reactivityKeys: toolsKeys(input.workspaceId),
     }),
 );
 
@@ -35,7 +35,7 @@ export const toolDetailResult = Atom.family(
         sourceId: input.sourceId,
         operationHash: input.operationHash,
       },
-      reactivityKeys: toolDetailKeys,
+      reactivityKeys: toolDetailKeys(input.workspaceId),
     }),
 );
 

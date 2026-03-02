@@ -11,6 +11,7 @@ export const CredentialProviderSchema = Schema.Literal(
   "api_key",
   "bearer",
   "oauth2",
+  "basic",
   "custom",
 );
 export const CredentialSecretProviderSchema = Schema.Literal(
@@ -21,6 +22,49 @@ export const CredentialScopeTypeSchema = Schema.Literal(
   "organization",
   "account",
 );
+export const AuthConnectionStrategySchema = Schema.Literal(
+  "oauth2",
+  "api_key",
+  "bearer",
+  "basic",
+  "custom",
+);
+export const AuthConnectionStatusSchema = Schema.Literal(
+  "active",
+  "reauth_required",
+  "revoked",
+  "disabled",
+  "error",
+);
+export const AuthOwnerTypeSchema = Schema.Literal(
+  "organization",
+  "workspace",
+  "account",
+);
+export const AuthBindingScopeTypeSchema = Schema.Literal(
+  "workspace",
+  "organization",
+  "account",
+);
+export const OAuthStateStatusSchema = Schema.Literal(
+  "valid",
+  "expiring",
+  "refreshing",
+  "reauth_required",
+  "revoked",
+);
+export const AuthAuditEventTypeSchema = Schema.Literal(
+  "created",
+  "updated",
+  "bound",
+  "unbound",
+  "refresh_success",
+  "refresh_failed",
+  "reauth_required",
+  "revoked",
+  "deleted",
+);
+export const AuthActorTypeSchema = Schema.Literal("system", "account");
 export const StorageScopeTypeSchema = Schema.Literal(
   "scratch",
   "account",
@@ -49,6 +93,13 @@ export type CredentialMode = typeof CredentialModeSchema.Type;
 export type CredentialProvider = typeof CredentialProviderSchema.Type;
 export type CredentialSecretProvider = typeof CredentialSecretProviderSchema.Type;
 export type CredentialScopeType = typeof CredentialScopeTypeSchema.Type;
+export type AuthConnectionStrategy = typeof AuthConnectionStrategySchema.Type;
+export type AuthConnectionStatus = typeof AuthConnectionStatusSchema.Type;
+export type AuthOwnerType = typeof AuthOwnerTypeSchema.Type;
+export type AuthBindingScopeType = typeof AuthBindingScopeTypeSchema.Type;
+export type OAuthStateStatus = typeof OAuthStateStatusSchema.Type;
+export type AuthAuditEventType = typeof AuthAuditEventTypeSchema.Type;
+export type AuthActorType = typeof AuthActorTypeSchema.Type;
 export type StorageScopeType = typeof StorageScopeTypeSchema.Type;
 export type StorageDurability = typeof StorageDurabilitySchema.Type;
 export type StorageInstanceStatus = typeof StorageInstanceStatusSchema.Type;

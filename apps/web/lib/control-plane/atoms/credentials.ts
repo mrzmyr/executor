@@ -13,7 +13,7 @@ import type {
 
 import { controlPlaneClient } from "../client";
 import { workspaceEntity, type EntityState } from "./entity";
-import { credentialsKeys } from "./keys";
+import { credentialsKeys, credentialsMutationKeys } from "./keys";
 
 // ---------------------------------------------------------------------------
 // Query atoms
@@ -23,7 +23,7 @@ export const credentialBindingsResultByWorkspace = Atom.family(
   (workspaceId: WorkspaceId) =>
     controlPlaneClient.query("credentials", "list", {
       path: { workspaceId },
-      reactivityKeys: credentialsKeys,
+      reactivityKeys: credentialsKeys(workspaceId),
     }),
 );
 
@@ -64,6 +64,16 @@ export const toCredentialBindingUpsertPayload = (input: {
   accountId?: SourceCredentialBinding["accountId"];
   additionalHeadersJson?: SourceCredentialBinding["additionalHeadersJson"];
   boundAuthFingerprint?: SourceCredentialBinding["boundAuthFingerprint"];
+  oauthRefreshToken?: string | null;
+  oauthExpiresAt?: number | null;
+  oauthScope?: string | null;
+  oauthIssuer?: string | null;
+  oauthTokenEndpoint?: string | null;
+  oauthAuthorizationServer?: string | null;
+  oauthClientId?: string | null;
+  oauthClientSecret?: string | null;
+  oauthSourceUrl?: string | null;
+  oauthClientInformationJson?: string | null;
 }): UpsertCredentialBindingPayload => ({
   ...(input.id ? { id: input.id } : {}),
   credentialId: input.credentialId,
@@ -78,6 +88,52 @@ export const toCredentialBindingUpsertPayload = (input: {
   ...(input.boundAuthFingerprint !== undefined
     ? { boundAuthFingerprint: input.boundAuthFingerprint }
     : {}),
+  ...(input.oauthRefreshToken !== undefined
+    ? { oauthRefreshToken: input.oauthRefreshToken }
+    : {}),
+  ...(input.oauthExpiresAt !== undefined
+    ? { oauthExpiresAt: input.oauthExpiresAt }
+    : {}),
+  ...(input.oauthScope !== undefined ? { oauthScope: input.oauthScope } : {}),
+  ...(input.oauthIssuer !== undefined ? { oauthIssuer: input.oauthIssuer } : {}),
+  ...(input.oauthTokenEndpoint !== undefined
+    ? { oauthTokenEndpoint: input.oauthTokenEndpoint }
+    : {}),
+  ...(input.oauthAuthorizationServer !== undefined
+    ? { oauthAuthorizationServer: input.oauthAuthorizationServer }
+    : {}),
+  ...(input.oauthClientId !== undefined
+    ? { oauthClientId: input.oauthClientId }
+    : {}),
+  ...(input.oauthClientSecret !== undefined
+    ? { oauthClientSecret: input.oauthClientSecret }
+    : {}),
+  ...(input.oauthSourceUrl !== undefined
+    ? { oauthSourceUrl: input.oauthSourceUrl }
+    : {}),
+  ...(input.oauthClientInformationJson !== undefined
+    ? { oauthClientInformationJson: input.oauthClientInformationJson }
+    : {}),
+});
+
+export const toCredentialBindingUpsertRequest = (input: {
+  workspaceId: WorkspaceId;
+  payload: UpsertCredentialBindingPayload;
+}) => ({
+  path: { workspaceId: input.workspaceId },
+  payload: input.payload,
+  reactivityKeys: credentialsMutationKeys(input.workspaceId),
+});
+
+export const toCredentialBindingRemoveRequest = (input: {
+  workspaceId: WorkspaceId;
+  credentialBindingId: SourceCredentialBinding["id"];
+}) => ({
+  path: {
+    workspaceId: input.workspaceId,
+    credentialBindingId: input.credentialBindingId,
+  },
+  reactivityKeys: credentialsMutationKeys(input.workspaceId),
 });
 
 export const toCredentialBindingRemoveResult = (

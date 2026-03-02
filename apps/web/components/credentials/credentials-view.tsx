@@ -10,7 +10,9 @@ import { useWorkspace } from "../../lib/hooks/use-workspace";
 import {
   credentialBindingsByWorkspace,
   removeCredentialBinding,
+  toCredentialBindingRemoveRequest,
   toCredentialBindingRemoveResult,
+  toCredentialBindingUpsertRequest,
   toCredentialBindingUpsertPayload,
   upsertCredentialBinding,
 } from "../../lib/control-plane/atoms";
@@ -93,7 +95,6 @@ export function CredentialsView() {
         binding.provider.toLowerCase().includes(query) ||
         binding.scopeType.toLowerCase().includes(query) ||
         binding.credentialId.toLowerCase().includes(query) ||
-        binding.secretRef.toLowerCase().includes(query) ||
         (binding.accountId ?? "").toLowerCase().includes(query)
       );
     });
@@ -133,11 +134,11 @@ export function CredentialsView() {
     setCredentialProvider(binding.provider);
     setCredentialScopeType(binding.scopeType);
     setCredentialIdInput(binding.credentialId);
-    setCredentialSecretRef(binding.secretRef);
+    setCredentialSecretRef("");
     setCredentialAccountId(binding.accountId ?? "");
     setCredentialAdditionalHeadersJson(binding.additionalHeadersJson ?? "");
     setCredentialBoundAuthFingerprint(binding.boundAuthFingerprint ?? "");
-    setInfoStatus(`Loaded binding ${binding.sourceKey} for editing.`);
+    setInfoStatus(`Loaded binding ${binding.sourceKey} for editing. Enter a new secret to rotate credentials.`);
   };
 
   const handleCancelCredentialEdit = () => {
@@ -175,8 +176,8 @@ export function CredentialsView() {
 
     setCredentialBusyId(requestId);
 
-    void runUpsertCredentialBinding({
-      path: { workspaceId },
+    void runUpsertCredentialBinding(toCredentialBindingUpsertRequest({
+      workspaceId,
       payload: toCredentialBindingUpsertPayload({
         id: credentialEditingId ?? undefined,
         credentialId: credentialId as SourceCredentialBinding["credentialId"],
@@ -191,7 +192,7 @@ export function CredentialsView() {
         additionalHeadersJson: additionalHeadersJson.length > 0 ? additionalHeadersJson : null,
         boundAuthFingerprint: boundAuthFingerprint.length > 0 ? boundAuthFingerprint : null,
       }),
-    })
+    }))
       .then(() => {
         setInfoStatus(
           credentialEditingId
@@ -215,12 +216,9 @@ export function CredentialsView() {
 
     setCredentialBusyId(credentialBindingId);
 
-    void runRemoveCredentialBinding({
-      path: {
-        workspaceId,
-        credentialBindingId,
-      },
-    })
+    void runRemoveCredentialBinding(
+      toCredentialBindingRemoveRequest({ workspaceId, credentialBindingId }),
+    )
       .then((result) => {
         const removed = toCredentialBindingRemoveResult(result);
         setInfoStatus(
@@ -444,7 +442,7 @@ export function CredentialsView() {
               id="credential-search"
               value={credentialSearchQuery}
               onChange={(event) => setCredentialSearchQuery(event.target.value)}
-              placeholder="source key, provider, scope, credential id, secret"
+              placeholder="source key, provider, scope, credential id"
               disabled={credentialBindingsState.state === "loading"}
             />
           </div>

@@ -4,7 +4,7 @@ import type { Policy, PolicyDecision, PolicyId, WorkspaceId } from "@executor-v2
 
 import { controlPlaneClient } from "../client";
 import { workspaceEntity, type EntityState } from "./entity";
-import { policiesKeys } from "./keys";
+import { policiesKeys, policiesMutationKeys } from "./keys";
 
 // ---------------------------------------------------------------------------
 // Query atoms
@@ -14,7 +14,7 @@ export const policiesResultByWorkspace = Atom.family(
   (workspaceId: WorkspaceId) =>
     controlPlaneClient.query("policies", "list", {
       path: { workspaceId },
-      reactivityKeys: policiesKeys,
+      reactivityKeys: policiesKeys(workspaceId),
     }),
 );
 
@@ -85,6 +85,32 @@ export const toPolicyUpsertPayload = (input: {
   ...(input.id ? { id: input.id } : {}),
   toolPathPattern: input.toolPathPattern,
   decision: input.decision,
+});
+
+export const toPolicyUpsertRequest = (input: {
+  workspaceId: WorkspaceId;
+  id?: PolicyId;
+  toolPathPattern: string;
+  decision: PolicyDecision;
+}) => ({
+  path: { workspaceId: input.workspaceId },
+  payload: toPolicyUpsertPayload({
+    id: input.id,
+    toolPathPattern: input.toolPathPattern,
+    decision: input.decision,
+  }),
+  reactivityKeys: policiesMutationKeys(input.workspaceId),
+});
+
+export const toPolicyRemoveRequest = (input: {
+  workspaceId: WorkspaceId;
+  policyId: PolicyId;
+}) => ({
+  path: {
+    workspaceId: input.workspaceId,
+    policyId: input.policyId,
+  },
+  reactivityKeys: policiesMutationKeys(input.workspaceId),
 });
 
 export const toPolicyRemoveResult = (result: RemovePolicyResult): boolean => result.removed;

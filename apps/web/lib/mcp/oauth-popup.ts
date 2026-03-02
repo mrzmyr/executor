@@ -4,6 +4,8 @@ export type McpOAuthPopupSuccess = {
   refreshToken?: string;
   scope?: string;
   expiresIn?: number;
+  clientId?: string;
+  clientInformationJson?: string;
 };
 
 type McpOAuthPopupMessage =
@@ -16,6 +18,8 @@ type McpOAuthPopupMessage =
         refreshToken?: string;
         scope?: string;
         expiresIn?: number;
+        clientId?: string;
+        clientInformationJson?: string;
       };
     }
   | {
@@ -109,6 +113,10 @@ export const startMcpOAuthPopup = async (
         ...(data.payload.scope ? { scope: data.payload.scope } : {}),
         ...(typeof data.payload.expiresIn === "number"
           ? { expiresIn: data.payload.expiresIn }
+          : {}),
+        ...(data.payload.clientId ? { clientId: data.payload.clientId } : {}),
+        ...(data.payload.clientInformationJson
+          ? { clientInformationJson: data.payload.clientInformationJson }
           : {}),
       });
     };

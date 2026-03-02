@@ -4,7 +4,7 @@ import type { Approval, ApprovalId, WorkspaceId } from "@executor-v2/schema";
 
 import { controlPlaneClient } from "../client";
 import { workspaceEntity, type EntityState } from "./entity";
-import { approvalsKeys } from "./keys";
+import { approvalsKeys, approvalsMutationKeys } from "./keys";
 
 // ---------------------------------------------------------------------------
 // Query atoms
@@ -14,7 +14,7 @@ export const approvalsResultByWorkspace = Atom.family(
   (workspaceId: WorkspaceId) =>
     controlPlaneClient.query("approvals", "list", {
       path: { workspaceId },
-      reactivityKeys: approvalsKeys,
+      reactivityKeys: approvalsKeys(workspaceId),
     }),
 );
 
@@ -48,6 +48,19 @@ export const approvalPendingByWorkspace = Atom.family((workspaceId: WorkspaceId)
 // ---------------------------------------------------------------------------
 
 export const resolveApproval = controlPlaneClient.mutation("approvals", "resolve");
+
+export const toResolveApprovalRequest = (input: {
+  workspaceId: WorkspaceId;
+  approvalId: ApprovalId;
+  payload: ResolveApprovalPayload;
+}) => ({
+  path: {
+    workspaceId: input.workspaceId,
+    approvalId: input.approvalId,
+  },
+  payload: input.payload,
+  reactivityKeys: approvalsMutationKeys(input.workspaceId),
+});
 
 // ---------------------------------------------------------------------------
 // Optimistic helpers

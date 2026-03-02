@@ -24,11 +24,14 @@ import {
   readStorageFile,
   removeStorageInstance,
   storageByWorkspace,
+  toCloseStorageRequest,
   toListStorageDirectoryPayload,
   toListStorageKvPayload,
   toOpenStoragePayload,
+  toOpenStorageRequest,
   toQueryStorageSqlPayload,
   toReadStorageFilePayload,
+  toRemoveStorageRequest,
   toStorageRemoveResult,
 } from "../../lib/control-plane/atoms"
 import { Badge } from "../ui/badge"
@@ -216,20 +219,22 @@ export default function StorageView() {
 
     setStorageBusyId("create")
 
-    void runOpenStorageInstance({
-      path: { workspaceId },
-      payload: toOpenStoragePayload({
-        scopeType: storageScopeType,
-        durability: storageDurability,
-        provider: storageProvider,
-        purpose: purpose.length > 0 ? purpose : undefined,
-        ttlHours: storageDurability === "ephemeral" ? ttlHours : undefined,
-        accountId:
-          storageScopeType === "account"
-            ? (accountId as Exclude<StorageInstance["accountId"], null>)
-            : undefined,
+    void runOpenStorageInstance(
+      toOpenStorageRequest({
+        workspaceId,
+        payload: toOpenStoragePayload({
+          scopeType: storageScopeType,
+          durability: storageDurability,
+          provider: storageProvider,
+          purpose: purpose.length > 0 ? purpose : undefined,
+          ttlHours: storageDurability === "ephemeral" ? ttlHours : undefined,
+          accountId:
+            storageScopeType === "account"
+              ? (accountId as Exclude<StorageInstance["accountId"], null>)
+              : undefined,
+        }),
       }),
-    })
+    )
       .then((storageInstance) => {
         setStorageSelectedId(storageInstance.id)
         setStoragePurposeInput("")
@@ -253,9 +258,7 @@ export default function StorageView() {
 
     setStorageBusyId(storageInstanceId)
 
-    void runCloseStorageInstance({
-      path: { workspaceId, storageInstanceId },
-    })
+    void runCloseStorageInstance(toCloseStorageRequest({ workspaceId, storageInstanceId }))
       .then(() => {
         setInfoStatus("Storage instance closed.")
       })
@@ -274,9 +277,7 @@ export default function StorageView() {
 
     setStorageBusyId(storageInstanceId)
 
-    void runRemoveStorageInstance({
-      path: { workspaceId, storageInstanceId },
-    })
+    void runRemoveStorageInstance(toRemoveStorageRequest({ workspaceId, storageInstanceId }))
       .then((result) => {
         const removed = toStorageRemoveResult(result)
         setInfoStatus(

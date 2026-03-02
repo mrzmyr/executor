@@ -24,6 +24,8 @@ export type McpOAuthPopupResult = {
   refreshToken?: string;
   scope?: string;
   expiresIn?: number;
+  clientId?: string;
+  clientInformationJson?: string;
   error?: string;
 };
 
@@ -106,6 +108,8 @@ const decodePopupResult = (value: unknown): McpOAuthPopupResult | null => {
     refreshToken: readOptionalString(record, "refreshToken"),
     scope: readOptionalString(record, "scope"),
     expiresIn: readOptionalNumber(record, "expiresIn"),
+    clientId: readOptionalString(record, "clientId"),
+    clientInformationJson: readOptionalString(record, "clientInformationJson"),
     error: readOptionalString(record, "error"),
   };
 };

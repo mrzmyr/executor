@@ -52,6 +52,7 @@ describe("Convex executor and control-plane", () => {
         runUrl: process.env.CLOUDFLARE_SANDBOX_RUN_URL,
         authToken: process.env.CLOUDFLARE_SANDBOX_AUTH_TOKEN,
         callbackUrl: process.env.CLOUDFLARE_SANDBOX_CALLBACK_URL,
+        callbackSecret: process.env.CLOUDFLARE_SANDBOX_CALLBACK_SECRET,
       };
       const originalFetch = globalThis.fetch;
 
@@ -59,6 +60,7 @@ describe("Convex executor and control-plane", () => {
         process.env.CLOUDFLARE_SANDBOX_RUN_URL = "https://sandbox.local/run";
         process.env.CLOUDFLARE_SANDBOX_AUTH_TOKEN = "sandbox-token";
         process.env.CLOUDFLARE_SANDBOX_CALLBACK_URL = "https://convex.local/callback";
+        process.env.CLOUDFLARE_SANDBOX_CALLBACK_SECRET = "sandbox-callback-secret";
 
         globalThis.fetch = (async (
           input: RequestInfo | URL,
@@ -114,6 +116,12 @@ describe("Convex executor and control-plane", () => {
           delete process.env.CLOUDFLARE_SANDBOX_CALLBACK_URL;
         } else {
           process.env.CLOUDFLARE_SANDBOX_CALLBACK_URL = originalEnv.callbackUrl;
+        }
+
+        if (originalEnv.callbackSecret === undefined) {
+          delete process.env.CLOUDFLARE_SANDBOX_CALLBACK_SECRET;
+        } else {
+          process.env.CLOUDFLARE_SANDBOX_CALLBACK_SECRET = originalEnv.callbackSecret;
         }
       }
     }),
@@ -195,7 +203,7 @@ describe("Convex executor and control-plane", () => {
             id: "credential_binding_1",
             credentialId: "cred_1",
             scopeType: "workspace",
-            sourceKey: "github",
+            sourceKey: "source:github",
             provider: "bearer",
             secretRef: "secret://github/token",
             accountId: null,
@@ -1377,6 +1385,286 @@ describe("Convex executor and control-plane", () => {
         expect(sourceTools).toHaveLength(1);
         expect(sourceTools[0]?.sourceId).toBe("src_mcp_ingest_1");
         expect(sourceTools[0]?.path).toContain("deepwiki.mcp.search_docs");
+      } finally {
+        globalThis.fetch = originalFetch;
+      }
+    }),
+  );
+
+  it.effect("retries OpenAPI invocation once after oauth invalid_token", () =>
+    Effect.gen(function* () {
+      const t = setup();
+      const originalFetch = globalThis.fetch;
+
+      yield* Effect.tryPromise(() =>
+        ensureWorkspace(t, "ws_oauth_runtime", "org_oauth_runtime")
+      );
+
+      const observedAuthorizationHeaders: Array<string | null> = [];
+      let refreshCallCount = 0;
+
+      globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url =
+          typeof input === "string"
+            ? input
+            : input instanceof URL
+              ? input.toString()
+              : input.url;
+
+        if (url === "https://oauth.example.com/token") {
+          refreshCallCount += 1;
+          const bodyText = typeof init?.body === "string" ? init.body : "";
+          if (!bodyText.includes("grant_type=refresh_token")) {
+            return new Response(
+              JSON.stringify({ error: "invalid_request" }),
+              {
+                status: 400,
+                headers: {
+                  "content-type": "application/json",
+                },
+              },
+            );
+          }
+
+          return new Response(
+            JSON.stringify({
+              access_token: "fresh_token",
+              token_type: "Bearer",
+              expires_in: 3600,
+            }),
+            {
+              status: 200,
+              headers: {
+                "content-type": "application/json",
+              },
+            },
+          );
+        }
+
+        if (url === "https://api.example.com/weather") {
+          const authHeader = new Headers(init?.headers).get("authorization");
+          observedAuthorizationHeaders.push(authHeader);
+
+          if (authHeader === "Bearer stale_token") {
+            return new Response(
+              JSON.stringify({
+                error: "invalid_token",
+              }),
+              {
+                status: 401,
+                headers: {
+                  "content-type": "application/json",
+                  "www-authenticate": 'Bearer error="invalid_token"',
+                },
+              },
+            );
+          }
+
+          if (authHeader === "Bearer fresh_token") {
+            return new Response(
+              JSON.stringify({
+                temperature: 72,
+              }),
+              {
+                status: 200,
+                headers: {
+                  "content-type": "application/json",
+                },
+              },
+            );
+          }
+
+          return new Response(
+            JSON.stringify({
+              error: "unauthorized",
+            }),
+            {
+              status: 401,
+              headers: {
+                "content-type": "application/json",
+              },
+            },
+          );
+        }
+
+        throw new Error(`Unexpected URL: ${url}`);
+      }) as unknown as typeof fetch;
+
+      try {
+        const sourceId = "src_openapi_oauth_runtime_1";
+        const workspaceId = "ws_oauth_runtime";
+        const accountId = "acct_oauth_runtime";
+        const runId = "run_oauth_runtime_1";
+        const callId = "call_oauth_runtime_1";
+        const now = Date.now();
+
+        yield* Effect.tryPromise(() =>
+          t.run(async (ctx) => {
+            await ctx.db.insert("sources", {
+              id: sourceId,
+              workspaceId,
+              name: "Weather API",
+              kind: "openapi",
+              endpoint: "https://api.example.com/openapi.json",
+              enabled: true,
+              configJson: JSON.stringify({
+                baseUrl: "https://api.example.com",
+              }),
+              status: "draft",
+              sourceHash: null,
+              lastError: null,
+              createdAt: now,
+              updatedAt: now,
+            });
+          }),
+        );
+
+        const manifest = yield* extractOpenApiManifest("Weather API", {
+          openapi: "3.0.0",
+          info: {
+            title: "Weather API",
+            version: "1.0.0",
+          },
+          paths: {
+            "/weather": {
+              get: {
+                operationId: "getWeather",
+                responses: {
+                  "200": {
+                    description: "ok",
+                  },
+                },
+              },
+            },
+          },
+        });
+
+        const artifactMeta = (yield* Effect.tryPromise(() =>
+          t.mutation(runtimeInternal.control_plane.tool_registry.upsertArtifactMeta, {
+            protocol: "openapi",
+            contentHash: manifest.sourceHash,
+            extractorVersion: "openapi_v2",
+            toolCount: manifest.tools.length,
+            refHintTableJson: manifest.refHintTable ? JSON.stringify(manifest.refHintTable) : null,
+          }),
+        )) as {
+          artifactId: string;
+          created: boolean;
+        };
+
+        yield* Effect.tryPromise(() =>
+          t.mutation(runtimeInternal.control_plane.tool_registry.putArtifactToolsBatch, {
+            artifactId: artifactMeta.artifactId,
+            protocol: "openapi",
+            insertOnly: true,
+            tools: manifest.tools.map((tool) => ({
+              toolId: tool.toolId,
+              name: tool.name,
+              description: tool.description,
+              canonicalPath: `${tool.method.toUpperCase()} ${tool.path}`,
+              operationHash: tool.operationHash,
+              invocationJson: JSON.stringify(tool.invocation),
+              inputSchemaJson: tool.typing?.inputSchemaJson ?? null,
+              outputSchemaJson: tool.typing?.outputSchemaJson ?? null,
+              metadataJson: JSON.stringify({
+                method: tool.method,
+                path: tool.path,
+              }),
+            })),
+          }),
+        );
+
+        yield* Effect.tryPromise(() =>
+          t.mutation(runtimeInternal.control_plane.tool_registry.bindSourceToArtifact, {
+            workspaceId,
+            sourceId,
+            artifactId: artifactMeta.artifactId,
+          }),
+        );
+
+        const namespace = "weather_api_oauth_runtime_1";
+
+        yield* Effect.tryPromise(() =>
+          t.mutation(runtimeInternal.control_plane.tool_registry.replaceWorkspaceSourceToolIndex, {
+            workspaceId,
+            sourceId,
+            sourceName: "Weather API",
+            sourceKind: "openapi",
+            artifactId: artifactMeta.artifactId,
+            namespace,
+            refHintTableJson: manifest.refHintTable ? JSON.stringify(manifest.refHintTable) : null,
+            rows: manifest.tools.map((tool) => ({
+              toolId: tool.toolId,
+              protocol: "openapi",
+              method: tool.method,
+              path: `${namespace}.${tool.toolId}`,
+              name: tool.name,
+              description: tool.description,
+              searchText: `weather api ${tool.name.toLowerCase()} ${tool.path.toLowerCase()} ${tool.method.toLowerCase()}`,
+              operationHash: tool.operationHash,
+              approvalMode: "auto",
+              status: "active",
+            })),
+          }),
+        );
+
+        yield* Effect.tryPromise(() =>
+          t.action(api.controlPlane.upsertCredentialBinding, {
+            workspaceId,
+            payload: {
+              id: "credential_binding_oauth_runtime_1",
+              credentialId: "conn_oauth_runtime_1",
+              scopeType: "workspace",
+              sourceKey: `source:${sourceId}`,
+              provider: "oauth2",
+              secretRef: "stale_token",
+              oauthRefreshToken: "refresh_token_1",
+              oauthTokenEndpoint: "https://oauth.example.com/token",
+              oauthClientId: "client_oauth_runtime_1",
+              accountId: null,
+              additionalHeadersJson: null,
+              boundAuthFingerprint: null,
+            },
+          }),
+        );
+
+        yield* Effect.tryPromise(() =>
+          t.mutation(runtimeInternal.task_runs.startTaskRun, {
+            workspaceId,
+            runId,
+            accountId,
+          }),
+        );
+
+        const callResult = (yield* Effect.tryPromise(() =>
+          t.action(runtimeInternal.source_tool_registry.invokeWorkspaceTool, {
+            workspaceId,
+            accountId,
+            runId,
+            callId,
+            toolPath: `${namespace}.${manifest.tools[0]!.toolId}`,
+            input: {},
+          }),
+        )) as {
+          ok: boolean;
+          value?: {
+            status?: number;
+            body?: unknown;
+          };
+          error?: string;
+        };
+
+        expect(callResult.ok).toBe(true);
+        expect(callResult.value?.status).toBe(200);
+        expect(callResult.value?.body).toEqual({
+          temperature: 72,
+        });
+
+        expect(refreshCallCount).toBe(1);
+        expect(observedAuthorizationHeaders).toEqual([
+          "Bearer stale_token",
+          "Bearer fresh_token",
+        ]);
       } finally {
         globalThis.fetch = originalFetch;
       }

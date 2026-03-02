@@ -33,7 +33,7 @@ import * as ParseResult from "effect/ParseResult";
 import * as Schema from "effect/Schema";
 
 import { internal } from "./_generated/api";
-import { internalMutation, type ActionCtx } from "./_generated/server";
+import { internalAction, internalMutation, type ActionCtx } from "./_generated/server";
 
 const runtimeInternal = internal as any;
 
@@ -186,6 +186,20 @@ const normalizeHeaderString = (value: unknown): string | null => {
   return trimmed.length > 0 ? trimmed : null;
 };
 
+const toStringRecord = (value: Record<string, unknown>): Record<string, string> => {
+  const normalized: Record<string, string> = {};
+
+  for (const [rawKey, rawValue] of Object.entries(value)) {
+    const key = normalizeHeaderString(rawKey);
+    const headerValue = normalizeHeaderString(rawValue);
+    if (key && headerValue) {
+      normalized[key] = headerValue;
+    }
+  }
+
+  return normalized;
+};
+
 const parseSourceConfig = (source: Source): Record<string, unknown> =>
   jsonObjectFromUnknown(safeJsonParse(source.configJson));
 
@@ -200,39 +214,6 @@ const collectConfiguredHeadersFromSourceConfig = (
     const value = normalizeHeaderString(rawValue);
     if (key && value) {
       nextHeaders[key] = value;
-    }
-  }
-
-  return nextHeaders;
-};
-
-const collectAuthHeadersFromSourceConfig = (
-  config: Record<string, unknown>,
-): Record<string, string> => {
-  const auth = jsonObjectFromUnknown(config.auth);
-  const authType = normalizeHeaderString(auth.type)?.toLowerCase();
-  const nextHeaders: Record<string, string> = {};
-
-  if (authType === "bearer") {
-    const token = normalizeHeaderString(auth.token) ?? normalizeHeaderString(auth.value);
-    if (token) {
-      nextHeaders.Authorization = `Bearer ${token}`;
-    }
-  }
-
-  if (authType === "apikey" || authType === "api_key") {
-    const token = normalizeHeaderString(auth.value) ?? normalizeHeaderString(auth.token);
-    if (token) {
-      const headerName = normalizeHeaderString(auth.header) ?? "Authorization";
-      nextHeaders[headerName] = token;
-    }
-  }
-
-  if (authType === "basic") {
-    const username = normalizeHeaderString(auth.username);
-    const password = normalizeHeaderString(auth.password);
-    if (username && password && typeof btoa === "function") {
-      nextHeaders.Authorization = `Basic ${btoa(`${username}:${password}`)}`;
     }
   }
 
@@ -269,7 +250,13 @@ const resolveSourceCredentialHeadersForInvocation = async (
   ctx: ActionCtx,
   source: Source,
   accountId: string,
-): Promise<Record<string, string>> => {
+  options?: {
+    forceRefresh?: boolean;
+  },
+): Promise<{
+  headers: Record<string, string>;
+  oauthConnectionId: string | null;
+}> => {
   try {
     const resolved = (await ctx.runAction(
       runtimeInternal.control_plane.credentials.resolveSourceCredentialHeaders,
@@ -277,8 +264,9 @@ const resolveSourceCredentialHeadersForInvocation = async (
         workspaceId: source.workspaceId,
         sourceId: source.id,
         accountId,
+        ...(options?.forceRefresh === true ? { forceRefresh: true } : {}),
       },
-    )) as { headers?: unknown };
+    )) as { headers?: unknown; oauthConnectionId?: unknown };
 
     const headers = jsonObjectFromUnknown(resolved.headers);
     const normalized: Record<string, string> = {};
@@ -291,9 +279,18 @@ const resolveSourceCredentialHeadersForInvocation = async (
       }
     }
 
-    return normalized;
+    return {
+      headers: normalized,
+      oauthConnectionId:
+        typeof resolved.oauthConnectionId === "string" && resolved.oauthConnectionId.trim().length > 0
+          ? resolved.oauthConnectionId
+          : null,
+    };
   } catch {
-    return {};
+    return {
+      headers: {},
+      oauthConnectionId: null,
+    };
   }
 };
 
@@ -301,14 +298,167 @@ const resolveSourceHeadersForInvocation = async (
   ctx: ActionCtx,
   source: Source,
   accountId: string,
-): Promise<Record<string, string>> => {
+  options?: {
+    forceRefresh?: boolean;
+  },
+): Promise<{
+  headers: Record<string, string>;
+  oauthConnectionId: string | null;
+}> => {
   const config = parseSourceConfig(source);
-
-  return mergeHeaders(
-    collectConfiguredHeadersFromSourceConfig(config),
-    collectAuthHeadersFromSourceConfig(config),
-    await resolveSourceCredentialHeadersForInvocation(ctx, source, accountId),
+  const credentialResolved = await resolveSourceCredentialHeadersForInvocation(
+    ctx,
+    source,
+    accountId,
+    options,
   );
+
+  return {
+    headers: mergeHeaders(
+      collectConfiguredHeadersFromSourceConfig(config),
+      credentialResolved.headers,
+    ),
+    oauthConnectionId: credentialResolved.oauthConnectionId,
+  };
+};
+
+const sourceWithInvocationHeaders = (
+  source: Source,
+  invocationHeaders: Record<string, string>,
+): Source => {
+  const config = parseSourceConfig(source);
+  const mergedHeaders = mergeHeaders(
+    collectConfiguredHeadersFromSourceConfig(config),
+    invocationHeaders,
+  );
+
+  const nextConfig: Record<string, unknown> = {
+    ...config,
+  };
+
+  if (Object.keys(mergedHeaders).length > 0) {
+    nextConfig.headers = mergedHeaders;
+  } else {
+    delete nextConfig.headers;
+  }
+
+  return {
+    ...source,
+    configJson: JSON.stringify(nextConfig),
+  };
+};
+
+const readHeaderCaseInsensitive = (
+  headers: Record<string, string>,
+  name: string,
+): string | null => {
+  const target = name.toLowerCase();
+
+  for (const [key, value] of Object.entries(headers)) {
+    if (key.toLowerCase() === target) {
+      return value;
+    }
+  }
+
+  return null;
+};
+
+const textHasInvalidTokenMarker = (value: string): boolean => {
+  const normalized = value.toLowerCase();
+  return normalized.includes("invalid_token") || normalized.includes("invalid token");
+};
+
+const valueHasInvalidTokenMarker = (value: unknown): boolean => {
+  if (typeof value === "string") {
+    return textHasInvalidTokenMarker(value);
+  }
+
+  if (Array.isArray(value)) {
+    return value.some((entry) => valueHasInvalidTokenMarker(entry));
+  }
+
+  if (!value || typeof value !== "object") {
+    return false;
+  }
+
+  const record = value as Record<string, unknown>;
+  if (valueHasInvalidTokenMarker(record.error)) {
+    return true;
+  }
+
+  if (valueHasInvalidTokenMarker(record.error_description)) {
+    return true;
+  }
+
+  if (valueHasInvalidTokenMarker(record.message)) {
+    return true;
+  }
+
+  if (valueHasInvalidTokenMarker(record.code)) {
+    return true;
+  }
+
+  if (Array.isArray(record.errors) && record.errors.some((entry) => valueHasInvalidTokenMarker(entry))) {
+    return true;
+  }
+
+  return Object.values(record).some((entry) => valueHasInvalidTokenMarker(entry));
+};
+
+type HttpInvocationEnvelope = {
+  status: number | null;
+  headers: Record<string, string>;
+  body: unknown;
+};
+
+const toHttpInvocationEnvelope = (output: unknown): HttpInvocationEnvelope => {
+  if (!output || typeof output !== "object" || Array.isArray(output)) {
+    return {
+      status: null,
+      headers: {},
+      body: null,
+    };
+  }
+
+  const record = output as Record<string, unknown>;
+  const rawStatus = record.status;
+  const rawHeaders = record.headers;
+
+  return {
+    status:
+      typeof rawStatus === "number" && Number.isFinite(rawStatus)
+        ? Math.floor(rawStatus)
+        : null,
+    headers:
+      rawHeaders && typeof rawHeaders === "object" && !Array.isArray(rawHeaders)
+        ? toStringRecord(rawHeaders as Record<string, unknown>)
+        : {},
+    body: record.body,
+  };
+};
+
+const responseHasInvalidTokenSignal = (envelope: HttpInvocationEnvelope): boolean => {
+  if (envelope.status !== 401) {
+    return false;
+  }
+
+  const wwwAuthenticate = readHeaderCaseInsensitive(envelope.headers, "www-authenticate");
+  if (wwwAuthenticate && textHasInvalidTokenMarker(wwwAuthenticate)) {
+    return true;
+  }
+
+  return valueHasInvalidTokenMarker(envelope.body);
+};
+
+const shouldRetryOAuthAfterUnauthorized = (
+  oauthConnectionId: string | null,
+  output: unknown,
+): boolean => {
+  if (!oauthConnectionId) {
+    return false;
+  }
+
+  return responseHasInvalidTokenSignal(toHttpInvocationEnvelope(output));
 };
 
 const headersToRecord = (headers: Headers): Record<string, string> => {
@@ -1044,7 +1194,58 @@ const invokeToolWithRegistry = (
   accountId: string,
 ): Effect.Effect<{ output: unknown; isError: boolean }, RuntimeAdapterError> =>
   Effect.gen(function* () {
-    const openApiProvider = makeOpenApiToolProvider();
+    const baseOpenApiProvider = makeOpenApiToolProvider();
+
+    const openApiProvider = {
+      kind: "openapi" as const,
+      invoke: (input: { source: Source | null; tool: CanonicalToolDescriptor; args: unknown }) =>
+        Effect.gen(function* () {
+          const sourceForInvoke = input.source;
+          if (!sourceForInvoke) {
+            return yield* toToolProviderError(
+              "openapi",
+              "invoke_tool",
+              `OpenAPI invocation failed for tool: ${input.tool.toolId}`,
+              "OpenAPI provider requires a source",
+            );
+          }
+
+          const resolveHeaders = (forceRefresh: boolean) =>
+            Effect.tryPromise({
+              try: () =>
+                resolveSourceHeadersForInvocation(
+                  ctx,
+                  sourceForInvoke,
+                  accountId,
+                  forceRefresh ? { forceRefresh: true } : undefined,
+                ),
+              catch: (cause) =>
+                toToolProviderError(
+                  "openapi",
+                  "resolve_credentials",
+                  `OpenAPI credential resolution failed for tool: ${input.tool.toolId}`,
+                  cause,
+                ),
+            });
+
+          const invokeOpenApi = (resolvedHeaders: Record<string, string>) =>
+            baseOpenApiProvider.invoke({
+              source: sourceWithInvocationHeaders(sourceForInvoke, resolvedHeaders),
+              tool: input.tool,
+              args: input.args,
+            });
+
+          const sourceHeaders = yield* resolveHeaders(false);
+          let result = yield* invokeOpenApi(sourceHeaders.headers);
+
+          if (shouldRetryOAuthAfterUnauthorized(sourceHeaders.oauthConnectionId, result.output)) {
+            const refreshedHeaders = yield* resolveHeaders(true);
+            result = yield* invokeOpenApi(refreshedHeaders.headers);
+          }
+
+          return result;
+        }),
+    };
 
     const graphqlProvider = {
       kind: "graphql" as const,
@@ -1078,39 +1279,58 @@ const invokeToolWithRegistry = (
               operationName = payload.fieldName;
             }
 
+            const invokeGraphql = async (
+              resolvedHeaders: Record<string, string>,
+            ): Promise<{ output: unknown; isError: boolean }> => {
+              const response = await fetch(payload.endpoint, {
+                method: "POST",
+                headers: mergeHeaders(
+                  {
+                    "content-type": "application/json",
+                  },
+                  resolvedHeaders,
+                ),
+                body: JSON.stringify({
+                  query,
+                  variables,
+                  operationName,
+                }),
+              });
+
+              const body = await graphqlResponseBody(response);
+              const bodyRecord = jsonObjectFromUnknown(body);
+              const hasErrors = Array.isArray(bodyRecord.errors);
+
+              return {
+                output: {
+                  status: response.status,
+                  headers: headersToRecord(response.headers),
+                  body,
+                },
+                isError: response.status >= 400 || hasErrors,
+              };
+            };
+
             const sourceHeaders = await resolveSourceHeadersForInvocation(
               ctx,
               input.source,
               accountId,
             );
 
-            const response = await fetch(payload.endpoint, {
-              method: "POST",
-              headers: mergeHeaders(
-                {
-                  "content-type": "application/json",
-                },
-                sourceHeaders,
-              ),
-              body: JSON.stringify({
-                query,
-                variables,
-                operationName,
-              }),
-            });
+            let result = await invokeGraphql(sourceHeaders.headers);
 
-            const body = await graphqlResponseBody(response);
-            const bodyRecord = jsonObjectFromUnknown(body);
-            const hasErrors = Array.isArray(bodyRecord.errors);
+            if (shouldRetryOAuthAfterUnauthorized(sourceHeaders.oauthConnectionId, result.output)) {
+              const refreshedHeaders = await resolveSourceHeadersForInvocation(
+                ctx,
+                input.source,
+                accountId,
+                { forceRefresh: true },
+              );
 
-            return {
-              output: {
-                status: response.status,
-                headers: headersToRecord(response.headers),
-                body,
-              },
-              isError: response.status >= 400 || hasErrors,
-            };
+              result = await invokeGraphql(refreshedHeaders.headers);
+            }
+
+            return result;
           },
           catch: (cause) =>
             toToolProviderError(
@@ -1133,11 +1353,6 @@ const invokeToolWithRegistry = (
 
             const payload = decodeMcpInvocationPayload(input.tool.providerPayload);
             const invokeArgs = normalizeInvokeInput(input.args);
-            const sourceHeaders = await resolveSourceHeadersForInvocation(
-              ctx,
-              input.source,
-              accountId,
-            );
 
             if (payload.transport !== "streamable-http") {
               throw new Error(
@@ -1146,74 +1361,99 @@ const invokeToolWithRegistry = (
             }
 
             const endpoint = createMcpEndpointUrl(payload);
-            const initializeResponse = await postMcpJsonRpc(
-              endpoint,
-              {
-                jsonrpc: "2.0",
-                id: `init_${crypto.randomUUID()}`,
-                method: "initialize",
-                params: {
-                  protocolVersion: "2024-11-05",
-                  capabilities: {},
-                  clientInfo: {
-                    name: "executor-v2-runtime",
-                    version: "0.1.0",
+            const invokeMcp = async (
+              resolvedHeaders: Record<string, string>,
+            ): Promise<{ output: unknown; isError: boolean }> => {
+              const initializeResponse = await postMcpJsonRpc(
+                endpoint,
+                {
+                  jsonrpc: "2.0",
+                  id: `init_${crypto.randomUUID()}`,
+                  method: "initialize",
+                  params: {
+                    protocolVersion: "2024-11-05",
+                    capabilities: {},
+                    clientInfo: {
+                      name: "executor-v2-runtime",
+                      version: "0.1.0",
+                    },
                   },
                 },
-              },
-              null,
-              sourceHeaders,
-            );
-            const initializeBody = await decodeMcpJsonResponse(initializeResponse);
+                null,
+                resolvedHeaders,
+              );
+              const initializeBody = await decodeMcpJsonResponse(initializeResponse);
 
-            const sessionId = initializeResponse.headers.get("mcp-session-id");
+              const sessionId = initializeResponse.headers.get("mcp-session-id");
 
-            if (initializeResponse.status >= 400 || initializeBody.error !== undefined) {
+              if (initializeResponse.status >= 400 || initializeBody.error !== undefined) {
+                return {
+                  output: {
+                    status: initializeResponse.status,
+                    headers: headersToRecord(initializeResponse.headers),
+                    body: initializeBody,
+                  },
+                  isError: true,
+                };
+              }
+
+              await postMcpJsonRpc(
+                endpoint,
+                {
+                  jsonrpc: "2.0",
+                  method: "notifications/initialized",
+                  params: {},
+                },
+                sessionId,
+                resolvedHeaders,
+              );
+
+              const callResponse = await postMcpJsonRpc(
+                endpoint,
+                {
+                  jsonrpc: "2.0",
+                  id: `call_${crypto.randomUUID()}`,
+                  method: "tools/call",
+                  params: {
+                    name: payload.toolName,
+                    arguments: invokeArgs,
+                  },
+                },
+                sessionId,
+                resolvedHeaders,
+              );
+              const callBody = await decodeMcpJsonResponse(callResponse);
+
               return {
                 output: {
-                  status: initializeResponse.status,
-                  headers: headersToRecord(initializeResponse.headers),
-                  body: initializeBody,
+                  status: callResponse.status,
+                  headers: headersToRecord(callResponse.headers),
+                  body: callBody,
                 },
-                isError: true,
+                isError: callResponse.status >= 400 || callBody.error !== undefined,
               };
+            };
+
+            const sourceHeaders = await resolveSourceHeadersForInvocation(
+              ctx,
+              input.source,
+              accountId,
+            );
+
+            let result = await invokeMcp(sourceHeaders.headers);
+
+            if (shouldRetryOAuthAfterUnauthorized(sourceHeaders.oauthConnectionId, result.output)) {
+              const refreshedHeaders = await resolveSourceHeadersForInvocation(
+                ctx,
+                input.source,
+                accountId,
+                { forceRefresh: true },
+              );
+
+              result = await invokeMcp(refreshedHeaders.headers);
             }
 
-            await postMcpJsonRpc(
-              endpoint,
-              {
-                jsonrpc: "2.0",
-                method: "notifications/initialized",
-                params: {},
-              },
-              sessionId,
-              sourceHeaders,
-            );
-
-            const callResponse = await postMcpJsonRpc(
-              endpoint,
-              {
-                jsonrpc: "2.0",
-                id: `call_${crypto.randomUUID()}`,
-                method: "tools/call",
-                params: {
-                  name: payload.toolName,
-                  arguments: invokeArgs,
-                },
-              },
-              sessionId,
-              sourceHeaders,
-            );
-            const callBody = await decodeMcpJsonResponse(callResponse);
-
-            return {
-              output: {
-                status: callResponse.status,
-                headers: headersToRecord(callResponse.headers),
-                body: callBody,
-              },
-              isError: callResponse.status >= 400 || callBody.error !== undefined,
-            };
+            return result;
           },
           catch: (cause) =>
             toToolProviderError(
@@ -1226,10 +1466,7 @@ const invokeToolWithRegistry = (
     };
 
     const registry = makeToolProviderRegistry([
-      {
-        kind: "openapi",
-        invoke: (input) => openApiProvider.invoke(input),
-      },
+      openApiProvider,
       graphqlProvider,
       mcpProvider,
     ]);
@@ -1237,7 +1474,7 @@ const invokeToolWithRegistry = (
     const providerKind = artifactTool.protocol;
     const invocationPayload = safeJsonParse(artifactTool.invocationJson);
 
-    const descriptor: CanonicalToolDescriptor = {
+    const descriptor = {
       providerKind: providerKind as any,
       sourceId: source.id,
       workspaceId: source.workspaceId,
@@ -1257,7 +1494,7 @@ const invokeToolWithRegistry = (
           : providerKind === "graphql"
             ? decodeGraphqlInvocationPayload(invocationPayload)
             : decodeMcpInvocationPayload(invocationPayload),
-    };
+    } as CanonicalToolDescriptor;
 
     const invocation = yield* registry
       .invoke({
@@ -1864,3 +2101,28 @@ export const createConvexSourceToolRegistry = (
       }),
   } as ToolRegistry;
 };
+
+export const invokeWorkspaceTool = internalAction({
+  args: {
+    workspaceId: v.string(),
+    accountId: v.string(),
+    runId: v.string(),
+    callId: v.string(),
+    toolPath: v.string(),
+    input: v.optional(v.any()),
+  },
+  handler: async (ctx, args): Promise<RuntimeToolCallResult> => {
+    const toolRegistry = createConvexSourceToolRegistry(ctx, args.workspaceId, {
+      accountId: args.accountId,
+    });
+
+    return await Effect.runPromise(
+      toolRegistry.callTool({
+        runId: args.runId,
+        callId: args.callId,
+        toolPath: args.toolPath,
+        input: normalizeInvokeInput(args.input),
+      }),
+    );
+  },
+});

@@ -162,39 +162,16 @@ export const buildSourceConfig = (input: {
 }): Record<string, unknown> => {
   const endpoint = input.endpoint.trim();
 
-  const auth = (() => {
-    if (input.authType === "none") {
-      return undefined;
-    }
-
-    if (input.authType === "apiKey") {
-      return {
-        type: "apiKey",
-        mode: input.authMode,
-        header: input.apiKeyHeader.trim() || "Authorization",
-      };
-    }
-
-    return {
-      type: input.authType,
-      mode: input.authMode,
-    };
-  })();
-
   if (input.type === "mcp") {
     return {
       url: endpoint,
       ...(input.mcpTransport !== "auto" ? { transport: input.mcpTransport } : {}),
-      ...(auth ? { auth } : {}),
-      ...(input.authType !== "none" ? { useCredentialedFetch: true } : {}),
     };
   }
 
   if (input.type === "graphql") {
     return {
       endpoint,
-      ...(auth ? { auth } : {}),
-      ...(input.authType !== "none" ? { useCredentialedFetch: true } : {}),
     };
   }
 
@@ -202,8 +179,6 @@ export const buildSourceConfig = (input: {
     spec: endpoint,
     specUrl: endpoint,
     ...(input.baseUrl.trim().length > 0 ? { baseUrl: input.baseUrl.trim() } : {}),
-    ...(auth ? { auth } : {}),
-    ...(input.authType !== "none" ? { useCredentialedFetch: true } : {}),
   };
 };
 
