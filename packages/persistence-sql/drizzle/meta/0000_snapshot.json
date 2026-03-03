@@ -1,5 +1,5 @@
 {
-  "id": "ab2ffa01-b774-4a84-bb66-50979a649de7",
+  "id": "d7852e1f-4ec0-475b-8e65-2ee7976d0ec0",
   "prevId": "00000000-0000-0000-0000-000000000000",
   "version": "7",
   "dialect": "postgresql",
@@ -78,6 +78,18 @@
               "isExpression": false,
               "asc": true,
               "nulls": "last"
+            },
+            {
+              "expression": "requested_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
             }
           ],
           "isUnique": false,
@@ -99,13 +111,51 @@
           "concurrently": false,
           "method": "btree",
           "with": {}
+        },
+        "approvals_lookup_idx": {
+          "name": "approvals_lookup_idx",
+          "columns": [
+            {
+              "expression": "workspace_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "task_run_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "call_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "requested_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
         }
       },
       "foreignKeys": {},
       "compositePrimaryKeys": {},
       "uniqueConstraints": {},
       "policies": {},
-      "checkConstraints": {},
+      "checkConstraints": {
+        "approvals_status_check": {
+          "name": "approvals_status_check",
+          "value": "\"approvals\".\"status\" in ('pending', 'approved', 'denied', 'expired')"
+        }
+      },
       "isRLSEnabled": false
     },
     "public.auth_connections": {
@@ -254,13 +304,57 @@
           "concurrently": false,
           "method": "btree",
           "with": {}
+        },
+        "auth_connections_org_updated_idx": {
+          "name": "auth_connections_org_updated_idx",
+          "columns": [
+            {
+              "expression": "organization_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "updated_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
         }
       },
       "foreignKeys": {},
       "compositePrimaryKeys": {},
       "uniqueConstraints": {},
       "policies": {},
-      "checkConstraints": {},
+      "checkConstraints": {
+        "auth_connections_owner_type_check": {
+          "name": "auth_connections_owner_type_check",
+          "value": "\"auth_connections\".\"owner_type\" in ('organization', 'workspace', 'account')"
+        },
+        "auth_connections_strategy_check": {
+          "name": "auth_connections_strategy_check",
+          "value": "\"auth_connections\".\"strategy\" in ('oauth2', 'api_key', 'bearer', 'basic', 'custom')"
+        },
+        "auth_connections_status_check": {
+          "name": "auth_connections_status_check",
+          "value": "\"auth_connections\".\"status\" in ('active', 'reauth_required', 'revoked', 'disabled', 'error')"
+        },
+        "auth_connections_owner_scope_check": {
+          "name": "auth_connections_owner_scope_check",
+          "value": "(\n        (\"auth_connections\".\"owner_type\" = 'organization' AND \"auth_connections\".\"workspace_id\" IS NULL AND \"auth_connections\".\"account_id\" IS NULL)\n        OR (\"auth_connections\".\"owner_type\" = 'workspace' AND \"auth_connections\".\"workspace_id\" IS NOT NULL AND \"auth_connections\".\"account_id\" IS NULL)\n        OR (\"auth_connections\".\"owner_type\" = 'account' AND \"auth_connections\".\"workspace_id\" IS NULL AND \"auth_connections\".\"account_id\" IS NOT NULL)\n      )"
+        }
+      },
       "isRLSEnabled": false
     },
     "public.auth_materials": {
@@ -315,7 +409,7 @@
               "nulls": "last"
             }
           ],
-          "isUnique": false,
+          "isUnique": true,
           "concurrently": false,
           "method": "btree",
           "with": {}
@@ -464,7 +558,7 @@
               "nulls": "last"
             }
           ],
-          "isUnique": false,
+          "isUnique": true,
           "concurrently": false,
           "method": "btree",
           "with": {}
@@ -474,7 +568,16 @@
       "compositePrimaryKeys": {},
       "uniqueConstraints": {},
       "policies": {},
-      "checkConstraints": {},
+      "checkConstraints": {
+        "oauth_states_token_version_nonnegative": {
+          "name": "oauth_states_token_version_nonnegative",
+          "value": "\"oauth_states\".\"token_version\" >= 0"
+        },
+        "oauth_states_lease_fence_nonnegative": {
+          "name": "oauth_states_lease_fence_nonnegative",
+          "value": "\"oauth_states\".\"lease_fence\" >= 0"
+        }
+      },
       "isRLSEnabled": false
     },
     "public.organization_memberships": {
@@ -572,13 +675,97 @@
           "concurrently": false,
           "method": "btree",
           "with": {}
+        },
+        "organization_memberships_org_updated_idx": {
+          "name": "organization_memberships_org_updated_idx",
+          "columns": [
+            {
+              "expression": "organization_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "updated_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "organization_memberships_account_updated_idx": {
+          "name": "organization_memberships_account_updated_idx",
+          "columns": [
+            {
+              "expression": "account_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "updated_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "organization_memberships_org_account_idx": {
+          "name": "organization_memberships_org_account_idx",
+          "columns": [
+            {
+              "expression": "organization_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "account_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
         }
       },
       "foreignKeys": {},
       "compositePrimaryKeys": {},
       "uniqueConstraints": {},
       "policies": {},
-      "checkConstraints": {},
+      "checkConstraints": {
+        "organization_memberships_role_check": {
+          "name": "organization_memberships_role_check",
+          "value": "\"organization_memberships\".\"role\" in ('viewer', 'editor', 'admin', 'owner')"
+        },
+        "organization_memberships_status_check": {
+          "name": "organization_memberships_status_check",
+          "value": "\"organization_memberships\".\"status\" in ('invited', 'active', 'suspended', 'removed')"
+        }
+      },
       "isRLSEnabled": false
     },
     "public.organizations": {
@@ -628,12 +815,54 @@
           "notNull": true
         }
       },
-      "indexes": {},
+      "indexes": {
+        "organizations_slug_idx": {
+          "name": "organizations_slug_idx",
+          "columns": [
+            {
+              "expression": "slug",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "organizations_updated_idx": {
+          "name": "organizations_updated_idx",
+          "columns": [
+            {
+              "expression": "updated_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
       "foreignKeys": {},
       "compositePrimaryKeys": {},
       "uniqueConstraints": {},
       "policies": {},
-      "checkConstraints": {},
+      "checkConstraints": {
+        "organizations_status_check": {
+          "name": "organizations_status_check",
+          "value": "\"organizations\".\"status\" in ('active', 'suspended', 'archived')"
+        }
+      },
       "isRLSEnabled": false
     },
     "public.policies": {
@@ -686,9 +915,42 @@
               "isExpression": false,
               "asc": true,
               "nulls": "last"
+            },
+            {
+              "expression": "updated_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
             }
           ],
           "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "policies_workspace_tool_path_idx": {
+          "name": "policies_workspace_tool_path_idx",
+          "columns": [
+            {
+              "expression": "workspace_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "tool_path_pattern",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
           "concurrently": false,
           "method": "btree",
           "with": {}
@@ -698,7 +960,12 @@
       "compositePrimaryKeys": {},
       "uniqueConstraints": {},
       "policies": {},
-      "checkConstraints": {},
+      "checkConstraints": {
+        "policies_decision_check": {
+          "name": "policies_decision_check",
+          "value": "\"policies\".\"decision\" in ('allow', 'require_approval', 'deny')"
+        }
+      },
       "isRLSEnabled": false
     },
     "public.profile": {
@@ -742,12 +1009,39 @@
           "notNull": true
         }
       },
-      "indexes": {},
+      "indexes": {
+        "profile_updated_idx": {
+          "name": "profile_updated_idx",
+          "columns": [
+            {
+              "expression": "updated_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
       "foreignKeys": {},
       "compositePrimaryKeys": {},
       "uniqueConstraints": {},
       "policies": {},
-      "checkConstraints": {},
+      "checkConstraints": {
+        "profile_runtime_mode_check": {
+          "name": "profile_runtime_mode_check",
+          "value": "\"profile\".\"runtime_mode\" in ('local', 'linked', 'remote')"
+        }
+      },
       "isRLSEnabled": false
     },
     "public.source_auth_bindings": {
@@ -845,6 +1139,18 @@
               "isExpression": false,
               "asc": true,
               "nulls": "last"
+            },
+            {
+              "expression": "updated_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
             }
           ],
           "isUnique": false,
@@ -896,13 +1202,78 @@
           "concurrently": false,
           "method": "btree",
           "with": {}
+        },
+        "source_auth_bindings_workspace_scope_idx": {
+          "name": "source_auth_bindings_workspace_scope_idx",
+          "columns": [
+            {
+              "expression": "workspace_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "updated_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "created_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "where": "\"source_auth_bindings\".\"workspace_id\" is not null",
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "source_auth_bindings_org_scope_idx": {
+          "name": "source_auth_bindings_org_scope_idx",
+          "columns": [
+            {
+              "expression": "organization_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "updated_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "created_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "where": "\"source_auth_bindings\".\"workspace_id\" is null",
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
         }
       },
       "foreignKeys": {},
       "compositePrimaryKeys": {},
       "uniqueConstraints": {},
       "policies": {},
-      "checkConstraints": {},
+      "checkConstraints": {
+        "source_auth_bindings_scope_type_check": {
+          "name": "source_auth_bindings_scope_type_check",
+          "value": "\"source_auth_bindings\".\"scope_type\" in ('workspace', 'organization', 'account')"
+        },
+        "source_auth_bindings_scope_shape_check": {
+          "name": "source_auth_bindings_scope_shape_check",
+          "value": "(\n        (\"source_auth_bindings\".\"scope_type\" = 'organization' AND \"source_auth_bindings\".\"workspace_id\" IS NULL AND \"source_auth_bindings\".\"account_id\" IS NULL)\n        OR (\"source_auth_bindings\".\"scope_type\" = 'workspace' AND \"source_auth_bindings\".\"workspace_id\" IS NOT NULL AND \"source_auth_bindings\".\"account_id\" IS NULL)\n        OR (\"source_auth_bindings\".\"scope_type\" = 'account' AND \"source_auth_bindings\".\"workspace_id\" IS NULL AND \"source_auth_bindings\".\"account_id\" IS NOT NULL)\n      )"
+        }
+      },
       "isRLSEnabled": false
     },
     "public.sources": {
@@ -983,6 +1354,21 @@
         }
       },
       "indexes": {
+        "sources_source_id_idx": {
+          "name": "sources_source_id_idx",
+          "columns": [
+            {
+              "expression": "source_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
         "sources_workspace_name_idx": {
           "name": "sources_workspace_name_idx",
           "columns": [
@@ -994,6 +1380,33 @@
             },
             {
               "expression": "name",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "sources_workspace_name_source_idx": {
+          "name": "sources_workspace_name_source_idx",
+          "columns": [
+            {
+              "expression": "workspace_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "name",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "source_id",
               "isExpression": false,
               "asc": true,
               "nulls": "last"
@@ -1017,7 +1430,16 @@
       },
       "uniqueConstraints": {},
       "policies": {},
-      "checkConstraints": {},
+      "checkConstraints": {
+        "sources_kind_check": {
+          "name": "sources_kind_check",
+          "value": "\"sources\".\"kind\" in ('mcp', 'openapi', 'graphql', 'internal')"
+        },
+        "sources_status_check": {
+          "name": "sources_status_check",
+          "value": "\"sources\".\"status\" in ('draft', 'probing', 'auth_required', 'connected', 'error')"
+        }
+      },
       "isRLSEnabled": false
     },
     "public.storage_instances": {
@@ -1163,13 +1585,115 @@
           "concurrently": false,
           "method": "btree",
           "with": {}
+        },
+        "storage_instances_workspace_scope_idx": {
+          "name": "storage_instances_workspace_scope_idx",
+          "columns": [
+            {
+              "expression": "workspace_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "updated_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "where": "\"storage_instances\".\"workspace_id\" is not null",
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "storage_instances_org_scope_idx": {
+          "name": "storage_instances_org_scope_idx",
+          "columns": [
+            {
+              "expression": "organization_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "updated_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "where": "\"storage_instances\".\"workspace_id\" is null",
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "storage_instances_provider_backend_idx": {
+          "name": "storage_instances_provider_backend_idx",
+          "columns": [
+            {
+              "expression": "provider",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "backend_key",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
         }
       },
       "foreignKeys": {},
       "compositePrimaryKeys": {},
       "uniqueConstraints": {},
       "policies": {},
-      "checkConstraints": {},
+      "checkConstraints": {
+        "storage_instances_scope_type_check": {
+          "name": "storage_instances_scope_type_check",
+          "value": "\"storage_instances\".\"scope_type\" in ('scratch', 'account', 'workspace', 'organization')"
+        },
+        "storage_instances_durability_check": {
+          "name": "storage_instances_durability_check",
+          "value": "\"storage_instances\".\"durability\" in ('ephemeral', 'durable')"
+        },
+        "storage_instances_status_check": {
+          "name": "storage_instances_status_check",
+          "value": "\"storage_instances\".\"status\" in ('active', 'closed', 'deleted')"
+        },
+        "storage_instances_provider_check": {
+          "name": "storage_instances_provider_check",
+          "value": "\"storage_instances\".\"provider\" in ('agentfs-local', 'agentfs-cloudflare')"
+        },
+        "storage_instances_size_nonnegative": {
+          "name": "storage_instances_size_nonnegative",
+          "value": "\"storage_instances\".\"size_bytes\" is null or \"storage_instances\".\"size_bytes\" >= 0"
+        },
+        "storage_instances_file_count_nonnegative": {
+          "name": "storage_instances_file_count_nonnegative",
+          "value": "\"storage_instances\".\"file_count\" is null or \"storage_instances\".\"file_count\" >= 0"
+        }
+      },
       "isRLSEnabled": false
     },
     "public.sync_states": {
@@ -1240,13 +1764,45 @@
           "concurrently": false,
           "method": "btree",
           "with": {}
+        },
+        "sync_states_workspace_target_url_idx": {
+          "name": "sync_states_workspace_target_url_idx",
+          "columns": [
+            {
+              "expression": "workspace_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "target",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "target_url",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
         }
       },
       "foreignKeys": {},
       "compositePrimaryKeys": {},
       "uniqueConstraints": {},
       "policies": {},
-      "checkConstraints": {},
+      "checkConstraints": {
+        "sync_states_target_check": {
+          "name": "sync_states_target_check",
+          "value": "\"sync_states\".\"target\" in ('remote')"
+        }
+      },
       "isRLSEnabled": false
     },
     "public.task_runs": {
@@ -1341,7 +1897,12 @@
       "compositePrimaryKeys": {},
       "uniqueConstraints": {},
       "policies": {},
-      "checkConstraints": {},
+      "checkConstraints": {
+        "task_runs_status_check": {
+          "name": "task_runs_status_check",
+          "value": "\"task_runs\".\"status\" in ('queued', 'running', 'completed', 'failed', 'timed_out', 'denied')"
+        }
+      },
       "isRLSEnabled": false
     },
     "public.tool_artifacts": {
@@ -1368,18 +1929,6 @@
         },
         "source_hash": {
           "name": "source_hash",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "tool_count": {
-          "name": "tool_count",
-          "type": "bigint",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "manifest_json": {
-          "name": "manifest_json",
           "type": "text",
           "primaryKey": false,
           "notNull": true
@@ -1412,6 +1961,21 @@
           "concurrently": false,
           "method": "btree",
           "with": {}
+        },
+        "tool_artifacts_source_hash_idx": {
+          "name": "tool_artifacts_source_hash_idx",
+          "columns": [
+            {
+              "expression": "source_hash",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
         }
       },
       "foreignKeys": {},
@@ -1427,6 +1991,54 @@
       "uniqueConstraints": {},
       "policies": {},
       "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.tool_manifests": {
+      "name": "tool_manifests",
+      "schema": "",
+      "columns": {
+        "source_hash": {
+          "name": "source_hash",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "tool_count": {
+          "name": "tool_count",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "manifest_json": {
+          "name": "manifest_json",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": true
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "tool_manifests_tool_count_nonnegative": {
+          "name": "tool_manifests_tool_count_nonnegative",
+          "value": "\"tool_manifests\".\"tool_count\" >= 0"
+        }
+      },
       "isRLSEnabled": false
     },
     "public.workspaces": {
@@ -1482,6 +2094,54 @@
             }
           ],
           "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "workspaces_org_updated_idx": {
+          "name": "workspaces_org_updated_idx",
+          "columns": [
+            {
+              "expression": "organization_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "updated_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "workspaces_org_name_idx": {
+          "name": "workspaces_org_name_idx",
+          "columns": [
+            {
+              "expression": "organization_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "name",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
           "concurrently": false,
           "method": "btree",
           "with": {}
