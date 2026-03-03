@@ -2,7 +2,7 @@
 
 import { useAtomValue } from "@effect-atom/atom-react";
 import { Result } from "@effect-atom/atom";
-import type { SourceId } from "@executor-v2/schema";
+import type { Source, SourceId } from "@executor-v2/schema";
 import type { SourceToolSummary } from "@executor-v2/management-api/tools/api";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
@@ -176,7 +176,10 @@ const finalizeFolderNode = (node: MutableFolderNode): FolderGroup => {
   };
 };
 
-const buildGroups = (tools: ReadonlyArray<ToolItem>): SourceGroup[] => {
+const buildGroups = (
+  sources: ReadonlyArray<Source>,
+  tools: ReadonlyArray<ToolItem>,
+): SourceGroup[] => {
   const bySource = new Map<string, ToolItem[]>();
   for (const tool of tools) {
     const list = bySource.get(tool.sourceId);
@@ -187,10 +190,25 @@ const buildGroups = (tools: ReadonlyArray<ToolItem>): SourceGroup[] => {
     }
   }
 
+  const sourceById = new Map<string, Source>();
+  for (const source of sources) {
+    sourceById.set(source.id, source);
+  }
+
+  const sourceIds = new Set<string>();
+  for (const source of sources) {
+    sourceIds.add(source.id);
+  }
+  for (const sourceId of bySource.keys()) {
+    sourceIds.add(sourceId);
+  }
+
   const result: SourceGroup[] = [];
 
-  for (const [sourceId, sourceTools] of bySource) {
-    const first = sourceTools[0]!;
+  for (const sourceId of sourceIds) {
+    const sourceTools = bySource.get(sourceId) ?? [];
+    const source = sourceById.get(sourceId);
+    const first = sourceTools[0];
     const rootFolders = new Map<string, MutableFolderNode>();
     const direct: ToolItem[] = [];
 
@@ -235,8 +253,8 @@ const buildGroups = (tools: ReadonlyArray<ToolItem>): SourceGroup[] => {
 
     result.push({
       sourceId: sourceId as SourceId,
-      sourceName: first.sourceName,
-      sourceKind: first.sourceKind,
+      sourceName: source?.name ?? first?.sourceName ?? sourceId,
+      sourceKind: source?.kind ?? first?.sourceKind ?? "openapi",
       directTools: [...direct].sort(sortToolsForGroup),
       folders,
       toolCount: sourceTools.length,
@@ -358,7 +376,10 @@ export function ToolsView(props: {
     [workspaceTools.items, searchTerms],
   );
 
-  const groups = useMemo(() => buildGroups(filteredTools), [filteredTools]);
+  const groups = useMemo(
+    () => buildGroups(sources.items, filteredTools),
+    [sources.items, filteredTools],
+  );
 
   const focusedTool = useMemo(
     () =>
@@ -644,7 +665,7 @@ export function ToolsView(props: {
             <div className="p-4 text-center text-[13px] text-muted-foreground">
               {searchTerms.length > 0
                 ? "No tools match your search"
-                : "No tools available"}
+                : "No sources available"}
             </div>
           )}
 
@@ -770,6 +791,14 @@ function SourceGroupNode({
       {/* Children: folders and/or direct tools */}
       {isExpanded && (
         <div className="ml-3 border-l border-border/50 pl-0.5">
+          {group.toolCount === 0 && (
+            <div className="px-2 py-1.5 text-[11px] text-muted-foreground/60">
+              {search.trim().length > 0
+                ? "No matching tools in this source"
+                : "No tools yet"}
+            </div>
+          )}
+
           {hasFolders &&
             group.folders.map((folder) => (
               <FolderGroupNode

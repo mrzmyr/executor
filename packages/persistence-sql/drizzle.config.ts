@@ -12,6 +12,8 @@ const sanitizePostgresUrl = (value: string): string => {
     parsed.searchParams.delete("sslcert");
     parsed.searchParams.delete("sslkey");
     parsed.searchParams.delete("sslcrl");
+    parsed.searchParams.delete("max");
+    parsed.searchParams.delete("idle_timeout");
 
     return parsed.toString();
   } catch {
