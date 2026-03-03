@@ -65,9 +65,6 @@ type SourceGroup = {
   toolCount: number;
 };
 
-const configuredControlPlaneBaseUrl =
-  process.env.NEXT_PUBLIC_CONTROL_PLANE_BASE_URL?.trim() ?? "";
-
 const isLocalHost = (hostname: string): boolean =>
   hostname === "localhost"
   || hostname === "127.0.0.1"
@@ -401,13 +398,6 @@ export function ToolsView(props: {
   const mcpUrl = useMemo(() => {
     if (props.mcpBaseUrl) {
       const configured = new URL(props.mcpBaseUrl);
-      configured.pathname = "/v1/mcp";
-      configured.searchParams.set("workspaceId", workspaceId);
-      return configured.toString();
-    }
-
-    if (configuredControlPlaneBaseUrl.length > 0 && /^https?:\/\//i.test(configuredControlPlaneBaseUrl)) {
-      const configured = new URL(configuredControlPlaneBaseUrl);
       configured.pathname = "/v1/mcp";
       configured.searchParams.set("workspaceId", workspaceId);
       return configured.toString();

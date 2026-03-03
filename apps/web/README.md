@@ -17,21 +17,15 @@ The API route now runs the control-plane server in-process.
 
 Database selection priority:
 
-- `CONTROL_PLANE_DATABASE_URL`
 - `DATABASE_URL`
-- `POSTGRES_URL`
 
 If none are set, fallback is local PGlite data at:
 
-- `CONTROL_PLANE_DATA_DIR`
 - default: `.executor-v2/web-state/control-plane-pgdata`
-
-If needed, `NEXT_PUBLIC_CONTROL_PLANE_BASE_URL` can override the browser base URL.
 
 MCP install URL generation:
 
-- Derives from existing control-plane/frontend config.
-- Prioritizes server-side `CONTROL_PLANE_UPSTREAM_URL` (or server/base control-plane URL) when available.
+- Derives from existing frontend origin and deployment metadata.
 - In local dev with no DB URL, defaults to local PGlite-backed control-plane in this Next.js app.
 
 WorkOS auth setup (optional but recommended):

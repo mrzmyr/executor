@@ -117,30 +117,39 @@ const toAccountScopedIds = (subject: string) => {
 };
 
 const resolveDatabaseUrl = (): string | undefined => {
-  const override = trim(process.env.CONTROL_PLANE_DATABASE_URL);
-  if (override) {
-    return override;
-  }
-
-  const candidates = [process.env.DATABASE_URL, process.env.POSTGRES_URL];
-
-  for (const candidate of candidates) {
-    const value = trim(candidate);
-    if (value) {
-      return deriveRuntimeDatabaseUrl(value);
-    }
-  }
-
-  return undefined;
+  const value = trim(process.env.DATABASE_URL);
+  return value ? deriveRuntimeDatabaseUrl(value) : undefined;
 };
 
 const resolveControlPlaneDataDir = (): string =>
-  trim(process.env.CONTROL_PLANE_DATA_DIR) ?? defaultControlPlaneDataDir;
+  defaultControlPlaneDataDir;
 
 const resolveStateRootDir = (): string =>
-  trim(process.env.CONTROL_PLANE_STATE_ROOT_DIR) ?? defaultControlPlaneStateRootDir;
+  defaultControlPlaneStateRootDir;
+
+const openApiSyncRetryDelayMs = 300;
 
 const formatCause = (cause: unknown): string => {
+  if (cause && typeof cause === "object") {
+    const maybeError = cause as {
+      message?: unknown;
+      details?: unknown;
+    };
+
+    const details = typeof maybeError.details === "string" ? maybeError.details.trim() : "";
+    const message = typeof maybeError.message === "string" ? maybeError.message.trim() : "";
+
+    if (details.length > 0) {
+      return message.length > 0 && message !== details
+        ? `${message}: ${details}`
+        : details;
+    }
+
+    if (message.length > 0) {
+      return message;
+    }
+  }
+
   if (cause instanceof Error) {
     return cause.message;
   }
@@ -252,6 +261,18 @@ const createControlPlaneRuntime = async (): Promise<ControlPlaneRuntime> => {
   const sourceManager = makeSourceManagerService(toolArtifactStore);
   const baseSourcesService = makeControlPlaneSourcesService(sourceCatalog);
 
+  const fetchOpenApiSpec = (endpoint: string) =>
+    Effect.tryPromise({
+      try: () => fetchOpenApiDocument(endpoint),
+      catch: (cause) => String(cause),
+    }).pipe(Effect.either);
+
+  const refreshOpenApiTools = (input: {
+    source: Parameters<typeof sourceManager.refreshOpenApiArtifact>[0]["source"];
+    openApiSpec: unknown;
+  }) =>
+    sourceManager.refreshOpenApiArtifact(input).pipe(Effect.either);
+
   const persistSourceErrorState = (source: Parameters<typeof sourceStore.upsert>[0], message: string) => {
     const failedSource = {
       ...source,
@@ -276,10 +297,11 @@ const createControlPlaneRuntime = async (): Promise<ControlPlaneRuntime> => {
           return source;
         }
 
-        const openApiSpecResult = yield* Effect.tryPromise({
-          try: () => fetchOpenApiDocument(source.endpoint),
-          catch: (cause) => String(cause),
-        }).pipe(Effect.either);
+        let openApiSpecResult = yield* fetchOpenApiSpec(source.endpoint);
+        if (openApiSpecResult._tag === "Left") {
+          yield* Effect.sleep(openApiSyncRetryDelayMs);
+          openApiSpecResult = yield* fetchOpenApiSpec(source.endpoint);
+        }
 
         if (openApiSpecResult._tag === "Left") {
           const details = formatCause(openApiSpecResult.left);
@@ -294,12 +316,17 @@ const createControlPlaneRuntime = async (): Promise<ControlPlaneRuntime> => {
           return yield* persistSourceErrorState(source, message);
         }
 
-        const refreshedResult = yield* sourceManager
-          .refreshOpenApiArtifact({
+        let refreshedResult = yield* refreshOpenApiTools({
+          source,
+          openApiSpec: openApiSpecResult.right,
+        });
+        if (refreshedResult._tag === "Left") {
+          yield* Effect.sleep(openApiSyncRetryDelayMs);
+          refreshedResult = yield* refreshOpenApiTools({
             source,
             openApiSpec: openApiSpecResult.right,
-          })
-          .pipe(Effect.either);
+          });
+        }
 
         if (refreshedResult._tag === "Left") {
           const details = formatCause(refreshedResult.left);
