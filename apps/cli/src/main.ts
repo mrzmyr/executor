@@ -8,6 +8,7 @@ import { FetchHttpClient } from "@effect/platform";
 import { BunContext, BunRuntime } from "@effect/platform-bun";
 import {
   createExecutorApiFetchHandler,
+  ExecutorControlPlaneBaseUrlHeader,
   type ExecutorApiPrincipal,
 } from "@executor-v2/api-http";
 import { makeControlPlaneClient } from "@executor-v2/management-api/client";
@@ -30,10 +31,25 @@ type RequestOptions = {
   method: "GET" | "POST" | "DELETE";
   path: string;
   body?: unknown;
+  headers?: Record<string, string>;
 };
 
 type WorkspaceRecord = {
   id: string;
+};
+
+type McpToolsListTool = {
+  name?: string;
+  description?: string;
+};
+
+type McpToolsListResponse = {
+  result?: {
+    tools?: Array<McpToolsListTool>;
+  };
+  error?: {
+    message?: string;
+  };
 };
 
 type DeviceAuthorizationResponse = {
@@ -302,6 +318,9 @@ class ExecutorServerClient {
     const baseUrl = await this.#resolveBaseUrl();
     const url = `${baseUrl}${options.path}`;
     const headers = await this.#buildHeaders();
+    if (options.headers) {
+      Object.assign(headers, options.headers);
+    }
     if (options.body !== undefined) {
       headers["Content-Type"] = "application/json";
     }
@@ -340,6 +359,10 @@ class ExecutorServerClient {
     });
 
     return Effect.runPromise(program.pipe(Effect.provide(FetchHttpClient.layer)));
+  }
+
+  async resolveBaseUrl(): Promise<string> {
+    return this.#resolveBaseUrl();
   }
 
   async #buildHeaders(): Promise<Record<string, string>> {
@@ -1133,6 +1156,7 @@ const runExecuteCommand = Command.make(
         };
 
         await withClient(common, async ({ client, config, workspaceOverride, asJson }) => {
+          const controlPlaneBaseUrl = await client.resolveBaseUrl();
           const workspaceId = workspaceOverride?.trim().length
             ? workspaceOverride.trim()
             : (config.workspaceId?.trim().length ? config.workspaceId.trim() : undefined);
@@ -1141,6 +1165,9 @@ const runExecuteCommand = Command.make(
           const result = await client.request<unknown>({
             method: "POST",
             path: `/execute${query}`,
+            headers: {
+              [ExecutorControlPlaneBaseUrlHeader]: controlPlaneBaseUrl,
+            },
             body: {
               code,
               ...(Option.isSome(input.timeoutMs)
@@ -1155,11 +1182,91 @@ const runExecuteCommand = Command.make(
       catch: toErrorMessage,
     }),
 ).pipe(
-  Command.withDescription("Execute TypeScript code through Executor runtime"),
+  Command.withDescription("Execute JavaScript against configured runtime"),
+);
+
+const runDescribeCommand = Command.make(
+  "describe",
+  {
+    ...commonTargetOptions(),
+    toolExposureMode: Options.choice("tool-exposure-mode", ["sources_only", "all_tools"]).pipe(
+      Options.optional,
+    ),
+  },
+  (input) =>
+    Effect.tryPromise({
+      try: async () => {
+        const common: CommonTargetOptions = {
+          target: input.target,
+          workspace: input.workspace,
+          baseUrl: input.baseUrl,
+          json: input.json,
+        };
+
+        await withClient(common, async ({ client, config, workspaceOverride, asJson }) => {
+          const workspaceId = await ensureWorkspaceId(client, config, workspaceOverride);
+          const controlPlaneBaseUrl = await client.resolveBaseUrl();
+          const toolExposureMode = optionToUndefined(input.toolExposureMode);
+
+          const queryParts = [
+            `workspaceId=${encodeURIComponent(workspaceId)}`,
+            ...(toolExposureMode
+              ? [`toolExposureMode=${encodeURIComponent(toolExposureMode)}`]
+              : []),
+          ];
+
+          const response = await client.request<McpToolsListResponse>({
+            method: "POST",
+            path: `/v1/mcp?${queryParts.join("&")}`,
+            headers: {
+              Accept: "application/json, text/event-stream",
+              [ExecutorControlPlaneBaseUrlHeader]: controlPlaneBaseUrl,
+            },
+            body: {
+              jsonrpc: "2.0",
+              id: "executor-cli-tools-list",
+              method: "tools/list",
+              params: {},
+            },
+          });
+
+          if (response.error?.message) {
+            throw new Error(response.error.message);
+          }
+
+          const executeTool = response.result?.tools?.find((tool) => tool.name === "executor.execute");
+          const description =
+            typeof executeTool?.description === "string"
+              ? executeTool.description.trim()
+              : "";
+
+          if (description.length === 0) {
+            throw new Error("Executor execute tool description is unavailable.");
+          }
+
+          if (asJson) {
+            printOutput(
+              {
+                workspaceId,
+                toolExposureMode: toolExposureMode ?? "sources_only",
+                description,
+              },
+              true,
+            );
+            return;
+          }
+
+          stdout.write(`${description}\n`);
+        });
+      },
+      catch: toErrorMessage,
+    }),
+).pipe(
+  Command.withDescription("Show execute tool description with namespace/tool context"),
 );
 
 const runCommand = Command.make("run").pipe(
-  Command.withSubcommands([runExecuteCommand] as any),
+  Command.withSubcommands([runExecuteCommand, runDescribeCommand] as any),
   Command.withDescription("Code execution commands"),
 );
 

@@ -7,6 +7,9 @@ export type RunTerminalStatus =
 export type ExecuteRunInput = {
   code: string;
   timeoutMs?: number;
+  context?: {
+    controlPlaneBaseUrl?: string;
+  };
 };
 
 export type ExecuteRunResult = {
@@ -74,5 +77,4 @@ export const createExecutorRunClient = (
 ): ExecutorRunClient => ({
   execute,
 });
-
 

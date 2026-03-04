@@ -2,6 +2,7 @@ import { withAuth } from "@workos-inc/authkit-nextjs";
 import type { NextRequest } from "next/server";
 
 import {
+  ExecutorControlPlaneBaseUrlHeader,
   createExecutorApiFetchHandler,
   type ExecutorApiPrincipal,
 } from "@executor-v2/api-http";
@@ -35,7 +36,13 @@ const rewriteControlPlaneRequest = (
 ): Request => {
   const rewrittenUrl = new URL(request.url);
   rewrittenUrl.pathname = `/${path.join("/")}`;
-  return new Request(rewrittenUrl, request);
+  const rewrittenRequest = new Request(rewrittenUrl, request);
+  const headers = new Headers(request.headers);
+  headers.set(
+    ExecutorControlPlaneBaseUrlHeader,
+    `${request.nextUrl.origin}/api/control-plane`,
+  );
+  return new Request(rewrittenRequest, { headers });
 };
 
 const storageErrorResponse = (operation: string, cause: unknown): Response => {

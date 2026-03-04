@@ -1,6 +1,7 @@
 import {
   ControlPlaneAuthHeaders,
   ControlPlaneService,
+  controlPlaneOpenApiSpec,
   fetchOpenApiDocument,
   makeControlPlaneService,
   makeControlPlaneSourcesService,
@@ -58,6 +59,10 @@ import {
   type Profile,
   type Organization,
   type OrganizationMembership,
+  type Source,
+  type SourceId,
+  type ToolArtifact,
+  type WorkspaceId,
   type Workspace,
 } from "@executor-v2/schema";
 import {
@@ -69,6 +74,7 @@ import { makeDenoSubprocessRuntimeAdapter } from "@executor-v2/runtime-deno-subp
 import { makeLocalInProcessRuntimeAdapter } from "@executor-v2/runtime-local-inproc";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import { webServerEnvironment } from "../env/server";
 
 const isPlanetScalePostgresUrl = (value: string): boolean => {
@@ -194,10 +200,55 @@ const resolveStateRootDir = (): string =>
 
 const openApiSyncRetryDelayMs = 300;
 const runtimeToolCallRetentionMs = 15 * 60 * 1000;
-const defaultGithubOpenApiSpecUrl =
-  "https://raw.githubusercontent.com/github/rest-api-description/main/descriptions/api.github.com/api.github.com.json";
-const defaultGithubApiBaseUrl = "https://api.github.com";
-const defaultGithubSourceId = "src_github_openapi";
+const runtimeExecutorSourceId = "src_executor_control_plane" as SourceId;
+
+const trimTrailingSlash = (value: string): string =>
+  value.replace(/\/+$/, "");
+
+const normalizeHttpBaseUrl = (value: string | undefined): string | null => {
+  if (!value) {
+    return null;
+  }
+
+  const trimmed = value.trim();
+  if (trimmed.length === 0) {
+    return null;
+  }
+
+  try {
+    const parsed = new URL(trimmed);
+    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+      return null;
+    }
+
+    return trimTrailingSlash(parsed.toString());
+  } catch {
+    return null;
+  }
+};
+
+const buildRuntimeExecutorSource = (
+  workspaceId: string,
+  controlPlaneBaseUrl: string,
+): Source => {
+  const now = Date.now();
+  const baseUrl = trimTrailingSlash(controlPlaneBaseUrl);
+
+  return {
+    id: runtimeExecutorSourceId,
+    workspaceId: workspaceId as WorkspaceId,
+    name: "executor",
+    kind: "openapi",
+    endpoint: `${baseUrl}/v1/openapi.json`,
+    status: "connected",
+    enabled: true,
+    configJson: JSON.stringify({ baseUrl }),
+    sourceHash: null,
+    lastError: null,
+    createdAt: now,
+    updatedAt: now,
+  };
+};
 
 const formatCause = (cause: unknown): string => {
   if (cause && typeof cause === "object") {
@@ -754,6 +805,25 @@ const createControlPlaneRuntime = async (): Promise<ControlPlaneRuntime> => {
     runCleanupTimers.set(runId, timer);
   };
 
+  const createWorkspaceRunExecutor = (
+    workspaceId: string,
+    toolRegistry: ReturnType<typeof createSourceToolRegistry>,
+  ) => {
+    const executeRuntimeRun = createRuntimeHostExecuteRuntimeRun({
+      defaultRuntimeKind,
+      runtimeAdapters,
+      toolRegistry,
+    });
+
+    return createRunExecutor(executeRuntimeRun, {
+      makeRunId: () => {
+        const runId = `run_${crypto.randomUUID()}`;
+        rememberRunWorkspace(runId, workspaceId);
+        return runId;
+      },
+    });
+  };
+
   const resolveMcpSession = (workspaceId: string): {
     handler: (request: Request) => Promise<Response>;
     executeRun: (input: ExecuteRunInput) => Effect.Effect<ExecuteRunResult>;
@@ -772,18 +842,7 @@ const createControlPlaneRuntime = async (): Promise<ControlPlaneRuntime> => {
       toolProviderRegistry,
       approvalPolicy: persistentApprovalPolicy,
     });
-    const executeRuntimeRun = createRuntimeHostExecuteRuntimeRun({
-      defaultRuntimeKind,
-      runtimeAdapters,
-      toolRegistry,
-    });
-    const runExecutor = createRunExecutor(executeRuntimeRun, {
-      makeRunId: () => {
-        const runId = `run_${crypto.randomUUID()}`;
-        rememberRunWorkspace(runId, workspaceId);
-        return runId;
-      },
-    });
+    const runExecutor = createWorkspaceRunExecutor(workspaceId, toolRegistry);
     const next = createRuntimeHostMcpHandler(runExecutor.executeRun, {
       toolRegistry,
       defaultToolExposureMode,
@@ -828,6 +887,90 @@ const createControlPlaneRuntime = async (): Promise<ControlPlaneRuntime> => {
     return session;
   };
 
+  const resolveExecuteToolRegistry = async (
+    workspaceId: string,
+    input: ExecuteRunInput,
+    fallback: ReturnType<typeof createSourceToolRegistry>,
+  ): Promise<ReturnType<typeof createSourceToolRegistry>> => {
+    const controlPlaneBaseUrl = normalizeHttpBaseUrl(input.context?.controlPlaneBaseUrl);
+    if (!controlPlaneBaseUrl) {
+      return fallback;
+    }
+
+    const runtimeSource = buildRuntimeExecutorSource(workspaceId, controlPlaneBaseUrl);
+    const artifactKey = `${runtimeSource.workspaceId}:${runtimeSource.id}`;
+    const runtimeArtifacts = new Map<string, ToolArtifact>();
+
+    const overlaySourceStore: SourceStore = {
+      getById: (workspaceIdValue, sourceIdValue) => {
+        if (workspaceIdValue === runtimeSource.workspaceId && sourceIdValue === runtimeSource.id) {
+          return Effect.succeed(Option.some(runtimeSource));
+        }
+
+        return sourceStore.getById(workspaceIdValue, sourceIdValue);
+      },
+      listByWorkspace: (workspaceIdValue) =>
+        sourceStore.listByWorkspace(workspaceIdValue).pipe(
+          Effect.map((sources) => {
+            if (workspaceIdValue !== runtimeSource.workspaceId) {
+              return sources;
+            }
+
+            const withoutRuntimeSource = sources.filter((source) => source.id !== runtimeSource.id);
+            return [...withoutRuntimeSource, runtimeSource];
+          }),
+        ),
+      upsert: (source) => sourceStore.upsert(source),
+      removeById: (workspaceIdValue, sourceIdValue) =>
+        sourceStore.removeById(workspaceIdValue, sourceIdValue),
+    };
+
+    const overlayToolArtifactStore: ToolArtifactStore = {
+      getBySource: (workspaceIdValue, sourceIdValue) => {
+        if (workspaceIdValue === runtimeSource.workspaceId && sourceIdValue === runtimeSource.id) {
+          const artifact = runtimeArtifacts.get(artifactKey);
+          return Effect.succeed(artifact ? Option.some(artifact) : Option.none());
+        }
+
+        return toolArtifactStore.getBySource(workspaceIdValue, sourceIdValue);
+      },
+      upsert: (artifact) => {
+        if (artifact.workspaceId === runtimeSource.workspaceId && artifact.sourceId === runtimeSource.id) {
+          return Effect.sync(() => {
+            runtimeArtifacts.set(artifactKey, artifact);
+          });
+        }
+
+        return toolArtifactStore.upsert(artifact);
+      },
+    };
+
+    const overlaySourceManager = makeSourceManagerService(overlayToolArtifactStore);
+    const refreshResult = await Effect.runPromise(
+      overlaySourceManager.refreshOpenApiArtifact({
+        source: runtimeSource,
+        openApiSpec: controlPlaneOpenApiSpec,
+      }).pipe(Effect.either),
+    );
+
+    if (refreshResult._tag === "Left") {
+      console.error("[control-plane] runtime executor source refresh failed", {
+        workspaceId,
+        controlPlaneBaseUrl,
+        details: formatCause(refreshResult.left),
+      });
+      return fallback;
+    }
+
+    return createSourceToolRegistry({
+      workspaceId,
+      sourceStore: overlaySourceStore,
+      toolArtifactStore: overlayToolArtifactStore,
+      toolProviderRegistry,
+      approvalPolicy: persistentApprovalPolicy,
+    });
+  };
+
   return {
     persistence,
     sourceStore,
@@ -840,7 +983,18 @@ const createControlPlaneRuntime = async (): Promise<ControlPlaneRuntime> => {
     },
     executeRun: async (input, workspaceId) => {
       const session = resolveMcpSession(workspaceId);
-      return Effect.runPromise(session.executeRun(input));
+      const toolRegistry = await resolveExecuteToolRegistry(
+        workspaceId,
+        input,
+        session.toolRegistry,
+      );
+
+      if (toolRegistry === session.toolRegistry) {
+        return Effect.runPromise(session.executeRun(input));
+      }
+
+      const runExecutor = createWorkspaceRunExecutor(workspaceId, toolRegistry);
+      return Effect.runPromise(runExecutor.executeRun(input));
     },
     handleRuntimeToolCall: async (request) => {
       if (request.method.toUpperCase() !== "POST") {

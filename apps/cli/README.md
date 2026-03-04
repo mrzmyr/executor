@@ -26,6 +26,7 @@ Supported commands:
 - `executor workspace use <workspace-id>`
 - `executor run execute --code ...`
 - `executor run execute --file ...`
+- `executor run describe`
 
 Control-plane management from CLI should happen through `run execute` and discovered
 source tool paths (for example, add Executor's own OpenAPI source, then call its
@@ -35,6 +36,7 @@ Run locally:
 
 - `bun run --cwd apps/cli start -- target show`
 - `bun run --cwd apps/cli start -- run execute --target local --code "return 1"`
+- `bun run --cwd apps/cli start -- run describe --target local --workspace ws_local`
 - `bun run --cwd apps/cli start -- --help`
 - `bun run --cwd apps/cli start -- server start --port 8788`
 

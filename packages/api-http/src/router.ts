@@ -14,6 +14,9 @@ export type ExecutorApiPrincipal = {
   workspaceId: string;
 };
 
+export const ExecutorControlPlaneBaseUrlHeader =
+  "x-executor-control-plane-base-url" as const;
+
 export type ExecutorApiHandlers = {
   handleControlPlane: (request: Request) => Promise<Response>;
   handleMcp: (request: Request, workspaceId: string) => Promise<Response>;
@@ -110,6 +113,37 @@ const parseExecuteRequest = async (request: Request): Promise<ExecuteRunInput | 
     code: record.code,
     ...(timeoutMs !== undefined ? { timeoutMs } : {}),
   };
+};
+
+const normalizeControlPlaneBaseUrl = (value: string): string | undefined => {
+  const trimmed = value.trim();
+  if (trimmed.length === 0) {
+    return undefined;
+  }
+
+  try {
+    const url = new URL(trimmed);
+    if (url.protocol !== "http:" && url.protocol !== "https:") {
+      return undefined;
+    }
+
+    return url.toString().replace(/\/+$/, "");
+  } catch {
+    return undefined;
+  }
+};
+
+const resolveControlPlaneBaseUrl = (request: Request): string | undefined => {
+  const headerValue = request.headers.get(ExecutorControlPlaneBaseUrlHeader);
+  if (headerValue) {
+    const normalized = normalizeControlPlaneBaseUrl(headerValue);
+    if (normalized) {
+      return normalized;
+    }
+  }
+
+  const url = new URL(request.url);
+  return `${url.origin}`;
 };
 
 const resolveExecutionWorkspaceId = (
@@ -221,8 +255,19 @@ export const createExecutorApiFetchHandler = (
         );
       }
 
+      const controlPlaneBaseUrl = resolveControlPlaneBaseUrl(request);
+
       const result = await options.handlers.executeRun(
-        input,
+        {
+          ...input,
+          ...(controlPlaneBaseUrl
+            ? {
+              context: {
+                controlPlaneBaseUrl,
+              },
+            }
+            : {}),
+        },
         resolveExecutionWorkspaceId(request, principalResult, options.defaultMcpWorkspaceId),
       );
 
