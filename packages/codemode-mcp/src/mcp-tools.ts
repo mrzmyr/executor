@@ -73,40 +73,39 @@ const inputSchemaFromManifest = (inputSchemaJson: string | undefined) => {
   }
 };
 
-const withConnection = async <A>(
-  connect: McpConnector,
-  run: (connection: McpConnection) => Promise<A>,
-): Promise<A> => {
-  const connection = await connect();
+const closeConnection = (connection: McpConnection): Effect.Effect<void> =>
+  Effect.tryPromise({
+    try: () => connection.close?.() ?? Promise.resolve(),
+    catch: () => undefined,
+  }).pipe(
+    Effect.asVoid,
+    Effect.catchAll(() => Effect.succeed(undefined)),
+  );
 
-  try {
-    return await run(connection);
-  } finally {
-    await connection.close?.().catch(() => undefined);
-  }
-};
+const withConnectionEffect = <A, E>(input: {
+  connect: McpConnector;
+  onConnectError: (cause: unknown) => McpToolsError;
+  run: (connection: McpConnection) => Effect.Effect<A, E>;
+}): Effect.Effect<A, E | McpToolsError> =>
+  Effect.acquireUseRelease(
+    Effect.tryPromise({
+      try: input.connect,
+      catch: input.onConnectError,
+    }),
+    input.run,
+    closeConnection,
+  );
 
 const elicitationClientSemaphore = PartitionedSemaphore.makeUnsafe<McpClientLike>({
   permits: 1,
 });
 
-const withElicitationClientLock = <A>(
+const withElicitationClientLock = <A, E>(
   client: McpClientLike,
-  run: () => Promise<A>,
-): Promise<A> =>
-  Effect.runPromise(
-    elicitationClientSemaphore.withPermits(client, 1)(
-      Effect.tryPromise({
-        try: run,
-        catch: (cause) =>
-          cause instanceof Error || cause instanceof McpToolsError
-            ? cause
-            : new Error(String(cause)),
-      }),
-    ),
-  );
+  effect: Effect.Effect<A, E>,
+): Effect.Effect<A, E> => elicitationClientSemaphore.withPermits(client, 1)(effect);
 
-const resolveElicitationResponse = async (input: {
+const resolveElicitationResponse = (input: {
   toolName: string;
   onElicitation: NonNullable<ToolExecutionContext["onElicitation"]>;
   interactionId: string;
@@ -115,27 +114,23 @@ const resolveElicitationResponse = async (input: {
   args: Record<string, unknown>;
   executionContext?: ToolExecutionContext;
   elicitation: ElicitationRequest;
-}): Promise<ElicitationResponse> => {
-  try {
-    return await Effect.runPromise(
-      input.onElicitation({
-        interactionId: input.interactionId,
-        path: input.path,
-        sourceKey: input.sourceKey,
-        args: input.args,
-        metadata: input.executionContext?.metadata,
-        context: input.executionContext?.invocation,
-        elicitation: input.elicitation,
-      }),
-    );
-  } catch (cause) {
-    throw new McpToolsError({
-      stage: "call_tool",
-      message: `Failed resolving elicitation for ${input.toolName}`,
-      details: toDetails(cause),
-    });
-  }
-};
+}): Effect.Effect<ElicitationResponse, McpToolsError> =>
+  input.onElicitation({
+    interactionId: input.interactionId,
+    path: input.path,
+    sourceKey: input.sourceKey,
+    args: input.args,
+    metadata: input.executionContext?.metadata,
+    context: input.executionContext?.invocation,
+    elicitation: input.elicitation,
+  }).pipe(
+    Effect.mapError((cause) =>
+      new McpToolsError({
+        stage: "call_tool",
+        message: `Failed resolving elicitation for ${input.toolName}`,
+        details: toDetails(cause),
+      })),
+  );
 
 const installMcpElicitationHandler = (input: {
   client: McpClientLike;
@@ -145,47 +140,65 @@ const installMcpElicitationHandler = (input: {
   sourceKey: string;
   args: Record<string, unknown>;
   executionContext?: ToolExecutionContext;
-}): void => {
-  if (!hasElicitationRequestHandler(input.client)) {
-    throw new McpToolsError({
-      stage: "call_tool",
-      message: `MCP client does not support elicitation callbacks for ${input.toolName}`,
-      details: null,
-    });
-  }
+}): Effect.Effect<void, McpToolsError> =>
+  Effect.try({
+    try: () => {
+      if (!hasElicitationRequestHandler(input.client)) {
+        throw new McpToolsError({
+          stage: "call_tool",
+          message: `MCP client does not support elicitation callbacks for ${input.toolName}`,
+          details: null,
+        });
+      }
 
-  let sequence = 0;
+      let sequence = 0;
+      input.client.setRequestHandler(ElicitRequestSchema, (request) => {
+        sequence += 1;
 
-  input.client.setRequestHandler(ElicitRequestSchema, async (request) => {
-    const elicitation = readMcpElicitationRequest(request.params);
-    sequence += 1;
-    const interactionId = createInteractionId({
-      path: input.path,
-      invocation: input.executionContext?.invocation,
-      elicitation,
-      sequence,
-    });
-
-    try {
-      const response = await resolveElicitationResponse({
-        toolName: input.toolName,
-        onElicitation: input.onElicitation,
-        interactionId,
-        path: input.path,
-        sourceKey: input.sourceKey,
-        args: input.args,
-        executionContext: input.executionContext,
-        elicitation,
+        return Effect.runPromise(
+          Effect.try({
+            try: () => readMcpElicitationRequest(request.params),
+            catch: (cause) =>
+              new McpToolsError({
+                stage: "call_tool",
+                message: `Failed parsing MCP elicitation for ${input.toolName}`,
+                details: toDetails(cause),
+              }),
+          }).pipe(
+            Effect.flatMap((elicitation) =>
+              resolveElicitationResponse({
+                toolName: input.toolName,
+                onElicitation: input.onElicitation,
+                interactionId: createInteractionId({
+                  path: input.path,
+                  invocation: input.executionContext?.invocation,
+                  elicitation,
+                  sequence,
+                }),
+                path: input.path,
+                sourceKey: input.sourceKey,
+                args: input.args,
+                executionContext: input.executionContext,
+                elicitation,
+              }),
+            ),
+            Effect.map(toMcpElicitationResponse),
+            Effect.catchAll(() => Effect.succeed({ action: "cancel" as const })),
+          ),
+        );
       });
-
-      return toMcpElicitationResponse(response);
-    } catch {
-      return { action: "cancel" as const };
-    }
+    },
+    catch: (cause) =>
+      cause instanceof McpToolsError
+        ? cause
+        : new McpToolsError({
+            stage: "call_tool",
+            message: `Failed installing elicitation handler for ${input.toolName}`,
+            details: toDetails(cause),
+          }),
   });
-};
 
-const resolveUrlElicitations = async (input: {
+const resolveUrlElicitations = (input: {
   cause: {
     elicitations: ReadonlyArray<ElicitationRequest>;
   };
@@ -195,34 +208,115 @@ const resolveUrlElicitations = async (input: {
   sourceKey: string;
   args: Record<string, unknown>;
   executionContext?: ToolExecutionContext;
-}): Promise<void> => {
-  for (const elicitation of input.cause.elicitations) {
-    const interactionId = createInteractionId({
-      path: input.path,
-      invocation: input.executionContext?.invocation,
-      elicitation,
-    });
+}): Effect.Effect<void, McpToolsError> =>
+  Effect.forEach(
+    input.cause.elicitations,
+    (elicitation) =>
+      resolveElicitationResponse({
+        toolName: input.toolName,
+        onElicitation: input.onElicitation,
+        interactionId: createInteractionId({
+          path: input.path,
+          invocation: input.executionContext?.invocation,
+          elicitation,
+        }),
+        path: input.path,
+        sourceKey: input.sourceKey,
+        args: input.args,
+        executionContext: input.executionContext,
+        elicitation,
+      }).pipe(
+        Effect.flatMap((response) =>
+          response.action === "accept"
+            ? Effect.succeed(undefined)
+            : Effect.fail(
+                new McpToolsError({
+                  stage: "call_tool",
+                  message: `URL elicitation was not accepted for ${input.toolName}`,
+                  details: response.action,
+                }),
+              )),
+      ),
+    { discard: true },
+  );
 
-    const response = await resolveElicitationResponse({
-      toolName: input.toolName,
-      onElicitation: input.onElicitation,
-      interactionId,
-      path: input.path,
-      sourceKey: input.sourceKey,
-      args: input.args,
-      executionContext: input.executionContext,
-      elicitation,
-    });
+const callMcpTool = (input: {
+  client: McpClientLike;
+  toolName: string;
+  args: Record<string, unknown>;
+}): Effect.Effect<unknown, unknown> =>
+  Effect.tryPromise({
+    try: () =>
+      input.client.callTool({
+        name: input.toolName,
+        arguments: input.args,
+      }),
+    catch: (cause) => cause,
+  });
 
-    if (response.action !== "accept") {
-      throw new McpToolsError({
-        stage: "call_tool",
-        message: `URL elicitation was not accepted for ${input.toolName}`,
-        details: response.action,
+const runMcpToolCallEffect = (input: {
+  connection: McpConnection;
+  toolName: string;
+  path: ToolPath;
+  sourceKey: string;
+  args: Record<string, unknown>;
+  executionContext?: ToolExecutionContext;
+}): Effect.Effect<unknown, McpToolsError> =>
+  Effect.gen(function* () {
+    const onElicitation = input.executionContext?.onElicitation;
+    if (onElicitation) {
+      yield* installMcpElicitationHandler({
+        client: input.connection.client,
+        toolName: input.toolName,
+        onElicitation,
+        path: input.path,
+        sourceKey: input.sourceKey,
+        args: input.args,
+        executionContext: input.executionContext,
       });
     }
-  }
-};
+
+    let retries = 0;
+    while (true) {
+      const attempt = yield* Effect.either(
+        callMcpTool({
+          client: input.connection.client,
+          toolName: input.toolName,
+          args: input.args,
+        }),
+      );
+
+      if (attempt._tag === "Right") {
+        return attempt.right;
+      }
+
+      if (
+        onElicitation
+        && isUrlElicitationRequiredError(attempt.left)
+        && retries < 2
+      ) {
+        yield* resolveUrlElicitations({
+          cause: attempt.left,
+          toolName: input.toolName,
+          onElicitation,
+          path: input.path,
+          sourceKey: input.sourceKey,
+          args: input.args,
+          executionContext: input.executionContext,
+        });
+        retries += 1;
+        continue;
+      }
+
+      return yield* Effect.fail(
+        new McpToolsError({
+          stage: "call_tool",
+          message: `Failed invoking MCP tool: ${input.toolName}`,
+          details: toDetails(attempt.left),
+        }),
+      );
+    }
+  });
 
 export const createMcpConnectorFromClient = (
   client: McpClientLike,
@@ -250,70 +344,33 @@ export const createMcpToolsFromManifest = (input: {
           tool: {
             description: entry.description ?? `MCP tool: ${entry.toolName}`,
             inputSchema: inputSchemaFromManifest(entry.inputSchemaJson),
-            execute: async (
-              args: unknown,
-              executionContext?: ToolExecutionContext,
-            ) =>
-              withConnection(input.connect, async (connection) => {
-                const payloadArgs = readUnknownRecord(args);
-
-                const runCallFlow = async (): Promise<unknown> => {
-                  const onElicitation = executionContext?.onElicitation;
-                  if (onElicitation) {
-                    installMcpElicitationHandler({
-                      client: connection.client,
+            execute: (args: unknown, executionContext?: ToolExecutionContext) =>
+              Effect.runPromise(
+                withConnectionEffect({
+                  connect: input.connect,
+                  onConnectError: (cause) =>
+                    new McpToolsError({
+                      stage: "connect",
+                      message: `Failed connecting to MCP server for ${entry.toolName}`,
+                      details: toDetails(cause),
+                    }),
+                  run: (connection) => {
+                    const payloadArgs = readUnknownRecord(args);
+                    const callEffect = runMcpToolCallEffect({
+                      connection,
                       toolName: entry.toolName,
-                      onElicitation,
                       path,
                       sourceKey,
                       args: payloadArgs,
                       executionContext,
                     });
-                  }
 
-                  const callTool = () =>
-                    connection.client.callTool({
-                      name: entry.toolName,
-                      arguments: payloadArgs,
-                    });
-
-                  let retries = 0;
-                  while (true) {
-                    try {
-                      return await callTool();
-                    } catch (cause) {
-                      if (
-                        onElicitation
-                        && isUrlElicitationRequiredError(cause)
-                        && retries < 2
-                      ) {
-                        await resolveUrlElicitations({
-                          cause,
-                          toolName: entry.toolName,
-                          onElicitation,
-                          path,
-                          sourceKey,
-                          args: payloadArgs,
-                          executionContext,
-                        });
-
-                        retries += 1;
-                        continue;
-                      }
-
-                      throw new McpToolsError({
-                        stage: "call_tool",
-                        message: `Failed invoking MCP tool: ${entry.toolName}`,
-                        details: toDetails(cause),
-                      });
-                    }
-                  }
-                };
-
-                return executionContext?.onElicitation
-                  ? withElicitationClientLock(connection.client, runCallFlow)
-                  : runCallFlow();
-              }),
+                    return executionContext?.onElicitation
+                      ? withElicitationClientLock(connection.client, callEffect)
+                      : callEffect;
+                  },
+                }),
+              ),
           },
           metadata: {
             sourceKey,
@@ -332,27 +389,24 @@ export const discoverMcpToolsFromConnector = (input: {
   sourceKey?: string;
 }): Effect.Effect<{ manifest: McpToolManifest; tools: ToolMap }, McpToolsError> =>
   Effect.gen(function* () {
-    const listed = yield* Effect.tryPromise({
-      try: () =>
-        withConnection(input.connect, async (connection) => {
-          try {
-            return await connection.client.listTools();
-          } catch (cause) {
-            throw new McpToolsError({
+    const listed = yield* withConnectionEffect({
+      connect: input.connect,
+      onConnectError: (cause) =>
+        new McpToolsError({
+          stage: "connect",
+          message: "Failed connecting to MCP server",
+          details: toDetails(cause),
+        }),
+      run: (connection) =>
+        Effect.tryPromise({
+          try: () => connection.client.listTools(),
+          catch: (cause) =>
+            new McpToolsError({
               stage: "list_tools",
               message: "Failed listing MCP tools",
               details: toDetails(cause),
-            });
-          }
-        }),
-      catch: (cause) =>
-        cause instanceof McpToolsError
-          ? cause
-          : new McpToolsError({
-              stage: "connect",
-              message: "Failed connecting to MCP server",
-              details: toDetails(cause),
             }),
+        }),
     });
 
     const manifest = extractMcpToolManifestFromListToolsResult(listed);
