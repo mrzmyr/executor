@@ -18,11 +18,22 @@ export type ToolMetadata = {
 
 export type ExecutableTool = {
   description?: string;
-  inputSchema?: StandardSchema;
+  inputSchema: StandardSchema;
   outputSchema?: StandardSchema;
   parameters?: StandardSchema;
   execute: (...args: any[]) => unknown;
 };
+
+export const unknownInputSchema: StandardSchema = {
+  "~standard": {
+    version: 1,
+    vendor: "@executor-v3/codemode-core",
+    validate: (value: unknown) => ({
+      value,
+    }),
+  },
+};
+
 
 export type ToolDefinition = {
   tool: ExecutableTool;

@@ -12,6 +12,7 @@
   },
   "dependencies": {
     "@standard-schema/spec": "^1.0.0",
+    "ajv": "^8.17.1",
     "effect": "^3.19.19"
   },
   "devDependencies": {

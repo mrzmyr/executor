@@ -1,7 +1,12 @@
 import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
 
-import { toTool, type ToolMap } from "@executor-v3/codemode-core";
+import {
+  standardSchemaFromJsonSchema,
+  toTool,
+  type ToolMap,
+  unknownInputSchema,
+} from "@executor-v3/codemode-core";
 
 import {
   extractOpenApiManifest,
@@ -179,6 +184,22 @@ const decodeFetchResponseBody = async (response: Response): Promise<unknown> => 
   return response.text();
 };
 
+const inputSchemaFromTypingJson = (inputSchemaJson: string | undefined) => {
+  if (!inputSchemaJson) {
+    return unknownInputSchema;
+  }
+
+  try {
+    return standardSchemaFromJsonSchema(JSON.parse(inputSchemaJson), {
+      vendor: "openapi",
+      fallback: unknownInputSchema,
+    });
+  } catch {
+    return unknownInputSchema;
+  }
+};
+
+
 type CreateOpenApiToolsFromManifestInput = {
   manifest: OpenApiToolManifest;
   baseUrl: string;
@@ -297,6 +318,7 @@ export const createOpenApiToolsFromManifest = (
     result[toolPath] = toTool({
       tool: {
         description,
+        inputSchema: inputSchemaFromTypingJson(extracted.typing?.inputSchemaJson),
         execute: async (args: unknown) => {
           const decodedArgs = asToolArgs(args);
           const request = buildFetchRequest({

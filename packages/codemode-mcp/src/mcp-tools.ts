@@ -1,7 +1,12 @@
 import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
 
-import { toTool, type ToolMap } from "@executor-v3/codemode-core";
+import {
+  standardSchemaFromJsonSchema,
+  toTool,
+  type ToolMap,
+  unknownInputSchema,
+} from "@executor-v3/codemode-core";
 
 export type McpClientLike = {
   listTools: () => Promise<unknown>;
@@ -76,6 +81,22 @@ const stringifyJson = (value: unknown): string | undefined => {
     return undefined;
   }
 };
+
+const inputSchemaFromManifest = (inputSchemaJson: string | undefined) => {
+  if (!inputSchemaJson) {
+    return unknownInputSchema;
+  }
+
+  try {
+    return standardSchemaFromJsonSchema(JSON.parse(inputSchemaJson), {
+      vendor: "mcp",
+      fallback: unknownInputSchema,
+    });
+  } catch {
+    return unknownInputSchema;
+  }
+};
+
 
 const readListedTools = (value: unknown): Array<Record<string, unknown>> => {
   const root = toRecord(value);
@@ -167,6 +188,7 @@ export const createMcpToolsFromManifest = (input: {
         toTool({
           tool: {
             description: entry.description ?? `MCP tool: ${entry.toolName}`,
+            inputSchema: inputSchemaFromManifest(entry.inputSchemaJson),
             execute: async (args: unknown) =>
               withConnection(input.connect, async (connection) => {
                 const payloadArgs = toRecord(args);

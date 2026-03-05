@@ -9,6 +9,7 @@ import {
   executeCodeWithTools,
   makeToolInvokerFromTools,
   mergeToolMaps,
+  standardSchemaFromJsonSchema,
   toTool,
   type CodeExecutor,
   type ToolDescriptor,
@@ -76,6 +77,50 @@ describe("codemode-core", () => {
       expect(createIssueDescriptor?.interaction).toBe("required");
       expect(createIssueDescriptor?.sourceKey).toBe("api.demo");
       expect(staticDiscovery.executeDescription).toContain("issues.create");
+    }),
+  );
+
+
+  it.effect("builds Standard Schema validators from JSON Schema", () =>
+    Effect.gen(function* () {
+      const tools = {
+        "math.add": {
+          description: "Add two numbers",
+          inputSchema: standardSchemaFromJsonSchema({
+            type: "object",
+            required: ["a", "b"],
+            properties: {
+              a: { type: "number" },
+              b: { type: "number" },
+            },
+            additionalProperties: false,
+          }),
+          execute: ({ a, b }: { a: number; b: number }) => ({ sum: a + b }),
+        },
+      } satisfies ToolMap;
+
+      const invoker = makeToolInvokerFromTools({ tools });
+
+      const success = yield* invoker.invoke({
+        path: "math.add",
+        args: { a: 1, b: 2 },
+      });
+      expect(success).toEqual({ sum: 3 });
+
+      const failure = yield* Effect.either(
+        invoker.invoke({
+          path: "math.add",
+          args: { a: "1", b: 2 },
+        }),
+      );
+
+      expect(failure._tag).toBe("Left");
+      if (failure._tag === "Left") {
+        expect(failure.left).toBeInstanceOf(Error);
+        if (failure.left instanceof Error) {
+          expect(failure.left.message).toContain("Input validation failed");
+        }
+      }
     }),
   );
 
