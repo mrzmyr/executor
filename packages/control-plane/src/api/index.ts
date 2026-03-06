@@ -3,6 +3,8 @@ export {
   controlPlaneOpenApiSpec,
 } from "./api";
 
+export type { LocalInstallation } from "#schema";
+
 export {
   ControlPlaneBadRequestError,
   ControlPlaneForbiddenError,
@@ -36,6 +38,7 @@ export {
 export {
   ControlPlaneApiLive,
   ControlPlaneActorResolverLive,
+  makeControlPlaneApiLayer,
   makeControlPlaneWebHandler,
 } from "./http";
 
@@ -55,6 +58,8 @@ export {
   type CreateExecutionPayload,
   type ResumeExecutionPayload,
 } from "./executions/api";
+
+export { LocalApi } from "./local/api";
 
 export {
   CreateOrganizationPayloadSchema,

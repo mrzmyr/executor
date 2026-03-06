@@ -8,7 +8,7 @@ import {
   ControlPlanePersistenceError,
   type SqlControlPlaneRows,
 } from "#persistence";
-import type { Execution } from "#schema";
+import type { Execution, ExecutionEnvelope } from "#schema";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
@@ -134,6 +134,27 @@ const fetchExecution = (
     }
 
     return existing.value;
+  });
+
+const fetchExecutionEnvelope = (
+  rows: SqlControlPlaneRows,
+  input: {
+    workspaceId: Execution["workspaceId"];
+    executionId: Execution["id"];
+    operation: string;
+  },
+): Effect.Effect<ExecutionEnvelope, ControlPlaneNotFoundError | ControlPlaneStorageError> =>
+  Effect.gen(function* () {
+    const execution = yield* fetchExecution(rows, input);
+    const pendingInteraction = yield* mapStorageError(
+      `${input.operation}.pending_interaction`,
+      rows.executionInteractions.getPendingByExecutionId(input.executionId),
+    );
+
+    return {
+      execution,
+      pendingInteraction: Option.isSome(pendingInteraction) ? pendingInteraction.value : null,
+    };
   });
 
 export const makeRuntimeExecutionsService = (
@@ -270,18 +291,18 @@ export const makeRuntimeExecutionsService = (
 
         yield* Deferred.await(nextState);
 
-        return yield* fetchExecution(rows, {
+        return yield* fetchExecutionEnvelope(rows, {
           workspaceId,
           executionId: execution.id,
           operation: "executions.create",
         });
       }) as Effect.Effect<
-        Execution,
+        ExecutionEnvelope,
         ControlPlaneBadRequestError | ControlPlaneNotFoundError | ControlPlaneStorageError
       >),
 
     getExecution: ({ workspaceId, executionId }) =>
-      fetchExecution(rows, {
+      fetchExecutionEnvelope(rows, {
         workspaceId,
         executionId,
         operation: "executions.get",
@@ -289,18 +310,18 @@ export const makeRuntimeExecutionsService = (
 
     resumeExecution: ({ workspaceId, executionId, payload }) =>
       Effect.gen(function* () {
-        const existing = yield* fetchExecution(rows, {
+        const existing = yield* fetchExecutionEnvelope(rows, {
           workspaceId,
           executionId,
           operation: "executions.resume",
         });
 
-        if (existing.status !== "waiting_for_interaction") {
+        if (existing.execution.status !== "waiting_for_interaction") {
           return yield* Effect.fail(
             badRequest(
               "executions.resume",
               "Execution is not waiting for interaction",
-              `executionId=${executionId} status=${existing.status}`,
+              `executionId=${executionId} status=${existing.execution.status}`,
             ),
           );
         }
@@ -349,7 +370,7 @@ export const makeRuntimeExecutionsService = (
 
         yield* Deferred.await(nextState);
 
-        return yield* fetchExecution(rows, {
+        return yield* fetchExecutionEnvelope(rows, {
           workspaceId,
           executionId,
           operation: "executions.resume",

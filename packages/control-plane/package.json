@@ -28,7 +28,7 @@
   "devDependencies": {
     "@effect/vitest": "catalog:",
     "@types/node": "catalog:",
-    "@effect/platform-node": "^0.104.1",
+    "@effect/platform-node": "catalog:",
     "@executor-v3/runtime-local-inproc": "workspace:*",
     "@modelcontextprotocol/sdk": "^1.26.0",
     "bun-types": "catalog:",

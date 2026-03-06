@@ -37,28 +37,33 @@ const makeClientLayer = (runtime: SqlControlPlaneRuntime) => {
   );
 };
 
+const makeControlPlaneClient = (accountId?: string) =>
+  HttpApiClient.make(ControlPlaneApi, {
+    transformClient: accountId
+      ? (client) =>
+          client.pipe(
+            HttpClient.mapRequest(
+              HttpClientRequest.setHeader(
+                ControlPlaneAuthHeaders.accountId,
+                accountId,
+              ),
+            ),
+          )
+      : undefined,
+  });
+
+export type ControlPlaneClient = Effect.Effect.Success<
+  ReturnType<typeof makeControlPlaneClient>
+>;
+
 export const withControlPlaneClient = <A, E>(
   input: {
     runtime: SqlControlPlaneRuntime;
     accountId?: string;
   },
-  f: (client: any) => Effect.Effect<A, E, never>,
+  f: (client: ControlPlaneClient) => Effect.Effect<A, E, never>,
 ): Effect.Effect<A, E | unknown, never> =>
   Effect.gen(function* () {
-    const accountId = input.accountId;
-    const client = yield* HttpApiClient.make(ControlPlaneApi, {
-      transformClient: accountId
-        ? (client) =>
-            client.pipe(
-              HttpClient.mapRequest(
-                HttpClientRequest.setHeader(
-                  ControlPlaneAuthHeaders.accountId,
-                  accountId,
-                ),
-              ),
-            )
-        : undefined,
-    });
-
+    const client = yield* makeControlPlaneClient(input.accountId);
     return yield* f(client);
   }).pipe(Effect.provide(makeClientLayer(input.runtime)));

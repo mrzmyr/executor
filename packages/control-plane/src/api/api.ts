@@ -1,6 +1,7 @@
 import { HttpApi, OpenApi } from "@effect/platform";
 
 import { ExecutionsApi } from "./executions/api";
+import { LocalApi } from "./local/api";
 import { MembershipsApi } from "./memberships/api";
 import { OrganizationsApi } from "./organizations/api";
 import { PoliciesApi } from "./policies/api";
@@ -58,6 +59,7 @@ export {
 } from "./policies/api";
 
 export class ControlPlaneApi extends HttpApi.make("controlPlane")
+  .add(LocalApi)
   .add(OrganizationsApi)
   .add(MembershipsApi)
   .add(WorkspacesApi)

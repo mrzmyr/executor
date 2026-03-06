@@ -296,7 +296,7 @@ describe("execution-mcp-resume", () => {
 
       const installation = runtime.localInstallation;
 
-      const created = (yield* withControlPlaneClient(
+      const created = yield* withControlPlaneClient(
         {
           runtime,
           accountId: installation.accountId,
@@ -310,15 +310,17 @@ describe("execution-mcp-resume", () => {
               code: 'return await tools.source.form.gated_echo({ value: "from-control-plane" });',
             },
           }),
-      )) as {
-        id: string;
-        status: string;
-      };
+      );
 
-      expect(created.status).toBe("waiting_for_interaction");
+      expect(created.execution.status).toBe("waiting_for_interaction");
+      expect(created.pendingInteraction).not.toBeNull();
+      if (created.pendingInteraction !== null) {
+        expect(created.pendingInteraction.kind).toBe("form");
+        expect(created.pendingInteraction.payloadJson).toContain("Approve gated echo");
+      }
 
       const pendingInteraction = yield* runtime.persistence.rows.executionInteractions.getPendingByExecutionId(
-        created.id as never,
+        created.execution.id,
       );
 
       expect(pendingInteraction._tag).toBe("Some");
@@ -327,7 +329,7 @@ describe("execution-mcp-resume", () => {
         expect(pendingInteraction.value.payloadJson).toContain("Approve gated echo");
       }
 
-      const resumed = (yield* withControlPlaneClient(
+      const resumed = yield* withControlPlaneClient(
         {
           runtime,
           accountId: installation.accountId,
@@ -336,7 +338,7 @@ describe("execution-mcp-resume", () => {
           client.executions.resume({
             path: {
               workspaceId: installation.workspaceId,
-              executionId: created.id as never,
+              executionId: created.execution.id,
             },
             payload: {
               responseJson: JSON.stringify({
@@ -347,15 +349,12 @@ describe("execution-mcp-resume", () => {
               }),
             },
           }),
-      )) as {
-        id: string;
-        status: string;
-        resultJson: string | null;
-      };
+      );
 
-      expect(resumed.id).toBe(created.id);
-      expect(resumed.status).toBe("completed");
-      expect(resumed.resultJson).toBe(
+      expect(resumed.execution.id).toBe(created.execution.id);
+      expect(resumed.execution.status).toBe("completed");
+      expect(resumed.pendingInteraction).toBeNull();
+      expect(resumed.execution.resultJson).toBe(
         JSON.stringify({
           content: [{ type: "text", text: "approved:from-control-plane" }],
         }),

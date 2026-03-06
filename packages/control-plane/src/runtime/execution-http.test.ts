@@ -57,7 +57,7 @@ describe("execution-http", () => {
       const runtime = yield* makeRuntime;
       const installation = runtime.localInstallation;
 
-      const createExecution = (yield* withControlPlaneClient(
+      const createExecution = yield* withControlPlaneClient(
         {
           runtime,
           accountId: installation.accountId,
@@ -71,16 +71,13 @@ describe("execution-http", () => {
               code: "return await tools.math.add({ a: 20, b: 22 });",
             },
           }),
-      )) as {
-        id: string;
-        status: string;
-        resultJson: string | null;
-      };
+      );
 
-      expect(createExecution.status).toBe("completed");
-      expect(createExecution.resultJson).toBe(JSON.stringify({ sum: 42 }));
+      expect(createExecution.execution.status).toBe("completed");
+      expect(createExecution.execution.resultJson).toBe(JSON.stringify({ sum: 42 }));
+      expect(createExecution.pendingInteraction).toBeNull();
 
-      const getExecution = (yield* withControlPlaneClient(
+      const getExecution = yield* withControlPlaneClient(
         {
           runtime,
           accountId: installation.accountId,
@@ -89,16 +86,14 @@ describe("execution-http", () => {
           client.executions.get({
             path: {
               workspaceId: installation.workspaceId,
-              executionId: createExecution.id,
+              executionId: createExecution.execution.id,
             },
           }),
-      )) as {
-        id: string;
-        status: string;
-      };
+      );
 
-      expect(getExecution.id).toBe(createExecution.id);
-      expect(getExecution.status).toBe("completed");
+      expect(getExecution.execution.id).toBe(createExecution.execution.id);
+      expect(getExecution.execution.status).toBe("completed");
+      expect(getExecution.pendingInteraction).toBeNull();
     }),
   );
 });

@@ -1,7 +1,7 @@
 import { HttpApiEndpoint, HttpApiGroup, HttpApiSchema } from "@effect/platform";
 import {
   ExecutionIdSchema,
-  ExecutionSchema,
+  ExecutionEnvelopeSchema,
   WorkspaceIdSchema,
 } from "#schema";
 import * as Schema from "effect/Schema";
@@ -33,7 +33,7 @@ export class ExecutionsApi extends HttpApiGroup.make("executions")
   .add(
     HttpApiEndpoint.post("create")`/workspaces/${workspaceIdParam}/executions`
       .setPayload(CreateExecutionPayloadSchema)
-      .addSuccess(ExecutionSchema)
+      .addSuccess(ExecutionEnvelopeSchema)
       .addError(ControlPlaneBadRequestError)
       .addError(ControlPlaneUnauthorizedError)
       .addError(ControlPlaneForbiddenError)
@@ -42,7 +42,7 @@ export class ExecutionsApi extends HttpApiGroup.make("executions")
   )
   .add(
     HttpApiEndpoint.get("get")`/workspaces/${workspaceIdParam}/executions/${executionIdParam}`
-      .addSuccess(ExecutionSchema)
+      .addSuccess(ExecutionEnvelopeSchema)
       .addError(ControlPlaneBadRequestError)
       .addError(ControlPlaneUnauthorizedError)
       .addError(ControlPlaneForbiddenError)
@@ -52,7 +52,7 @@ export class ExecutionsApi extends HttpApiGroup.make("executions")
   .add(
     HttpApiEndpoint.post("resume")`/workspaces/${workspaceIdParam}/executions/${executionIdParam}/resume`
       .setPayload(ResumeExecutionPayloadSchema)
-      .addSuccess(ExecutionSchema)
+      .addSuccess(ExecutionEnvelopeSchema)
       .addError(ControlPlaneBadRequestError)
       .addError(ControlPlaneUnauthorizedError)
       .addError(ControlPlaneForbiddenError)

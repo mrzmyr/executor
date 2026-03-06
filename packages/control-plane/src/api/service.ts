@@ -1,7 +1,8 @@
 import type {
   AccountId,
-  Execution,
+  ExecutionEnvelope,
   ExecutionId,
+  LocalInstallation,
   Organization,
   OrganizationId,
   OrganizationMembership,
@@ -237,17 +238,22 @@ export type ControlPlaneServiceShape = {
   createExecution: (
     input: CreateExecutionInput,
   ) => Effect.Effect<
-    Execution,
+    ExecutionEnvelope,
     ControlPlaneBadRequestError | ControlPlaneNotFoundError | ControlPlaneStorageError
   >;
   getExecution: (
     input: GetExecutionInput,
-  ) => Effect.Effect<Execution, ControlPlaneNotFoundError | ControlPlaneStorageError>;
+  ) => Effect.Effect<ExecutionEnvelope, ControlPlaneNotFoundError | ControlPlaneStorageError>;
   resumeExecution: (
     input: ResumeExecutionInput,
   ) => Effect.Effect<
-    Execution,
+    ExecutionEnvelope,
     ControlPlaneBadRequestError | ControlPlaneNotFoundError | ControlPlaneStorageError
+  >;
+
+  getLocalInstallation: () => Effect.Effect<
+    LocalInstallation,
+    ControlPlaneNotFoundError | ControlPlaneStorageError
   >;
 
   listPolicies: (

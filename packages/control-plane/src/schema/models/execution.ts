@@ -85,7 +85,13 @@ export const ExecutionInteractionUpdateSchema = createUpdateSchema(
   executionInteractionSchemaOverrides,
 );
 
+export const ExecutionEnvelopeSchema = Schema.Struct({
+  execution: ExecutionSchema,
+  pendingInteraction: Schema.NullOr(ExecutionInteractionSchema),
+});
+
 export type ExecutionStatus = typeof ExecutionStatusSchema.Type;
 export type Execution = typeof ExecutionSchema.Type;
 export type ExecutionInteractionStatus = typeof ExecutionInteractionStatusSchema.Type;
 export type ExecutionInteraction = typeof ExecutionInteractionSchema.Type;
+export type ExecutionEnvelope = typeof ExecutionEnvelopeSchema.Type;

@@ -21,6 +21,7 @@ import * as Option from "effect/Option";
 import { type ResolveExecutionEnvironment } from "./execution-state";
 import { type LiveExecutionManager } from "./live-execution";
 import { makeRuntimeExecutionsService } from "./execution-service";
+import { loadLocalInstallation } from "./local-installation";
 import { slugify } from "./slug";
 
 const badRequest = (
@@ -858,6 +859,37 @@ export const makeRuntimePoliciesService = (
       }),
   });
 
+export const makeRuntimeLocalService = (
+  rows: SqlControlPlaneRows,
+): Pick<ControlPlaneServiceShape, "getLocalInstallation"> => ({
+    getLocalInstallation: () =>
+      Effect.gen(function* () {
+        const installation = yield* loadLocalInstallation(rows).pipe(
+          Effect.mapError((error) =>
+            error instanceof ControlPlanePersistenceError
+              ? storageFromPersistence("local.installation.get", error)
+              : new ControlPlaneStorageError({
+                  operation: "local.installation.get",
+                  message: error instanceof Error ? error.message : String(error),
+                  details: "Failed loading local installation",
+                }),
+          ),
+        );
+
+        if (installation === null) {
+          return yield* Effect.fail(
+            notFound(
+              "local.installation.get",
+              "Local installation not found",
+              "No local installation has been provisioned",
+            ),
+          );
+        }
+
+        return installation;
+      }),
+  });
+
 export const makeRuntimeControlPlaneService = (
   rows: SqlControlPlaneRows,
   options: {
@@ -865,6 +897,7 @@ export const makeRuntimeControlPlaneService = (
     liveExecutionManager?: LiveExecutionManager;
   } = {},
 ): ControlPlaneServiceShape => ({
+  ...makeRuntimeLocalService(rows),
   ...makeRuntimeOrganizationsService(rows),
   ...makeRuntimeMembershipsService(rows),
   ...makeRuntimeWorkspacesService(rows),
