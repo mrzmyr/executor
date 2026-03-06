@@ -16,7 +16,7 @@ import {
   ControlPlaneForbiddenError,
   ControlPlaneUnauthorizedError,
 } from "../errors";
-import { ControlPlaneService } from "../service";
+import { ControlPlaneSourcesService } from "../service";
 
 const toForbiddenError = (
   operation: string,
@@ -65,7 +65,7 @@ export const ControlPlaneSourcesLive = HttpApiBuilder.group(
     handlers
       .handle("list", ({ path }) =>
         Effect.gen(function* () {
-          const service = yield* ControlPlaneService;
+          const service = yield* ControlPlaneSourcesService;
           const actor = yield* resolveWorkspaceActor(path.workspaceId);
 
           return yield* withPolicy(requireReadSources(path.workspaceId))(
@@ -82,7 +82,7 @@ export const ControlPlaneSourcesLive = HttpApiBuilder.group(
       )
       .handle("create", ({ path, payload }) =>
         Effect.gen(function* () {
-          const service = yield* ControlPlaneService;
+          const service = yield* ControlPlaneSourcesService;
           const actor = yield* resolveWorkspaceActor(path.workspaceId);
 
           return yield* withPolicy(requireWriteSources(path.workspaceId))(
@@ -99,7 +99,7 @@ export const ControlPlaneSourcesLive = HttpApiBuilder.group(
       )
       .handle("get", ({ path }) =>
         Effect.gen(function* () {
-          const service = yield* ControlPlaneService;
+          const service = yield* ControlPlaneSourcesService;
           const actor = yield* resolveWorkspaceActor(path.workspaceId);
 
           return yield* withPolicy(requireReadSources(path.workspaceId))(
@@ -119,7 +119,7 @@ export const ControlPlaneSourcesLive = HttpApiBuilder.group(
       )
       .handle("update", ({ path, payload }) =>
         Effect.gen(function* () {
-          const service = yield* ControlPlaneService;
+          const service = yield* ControlPlaneSourcesService;
           const actor = yield* resolveWorkspaceActor(path.workspaceId);
 
           return yield* withPolicy(requireWriteSources(path.workspaceId))(
@@ -140,7 +140,7 @@ export const ControlPlaneSourcesLive = HttpApiBuilder.group(
       )
       .handle("remove", ({ path }) =>
         Effect.gen(function* () {
-          const service = yield* ControlPlaneService;
+          const service = yield* ControlPlaneSourcesService;
           const actor = yield* resolveWorkspaceActor(path.workspaceId);
 
           return yield* withPolicy(requireWriteSources(path.workspaceId))(

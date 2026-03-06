@@ -1,4 +1,4 @@
-import type { ControlPlaneServiceShape } from "#api";
+import type { ControlPlaneExecutionsServiceShape } from "#api";
 import {
   ControlPlaneBadRequestError,
   ControlPlaneNotFoundError,
@@ -24,7 +24,6 @@ import {
   ResumeUnsupportedError,
 } from "./execution-state";
 import {
-  createLiveExecutionManager,
   type LiveExecutionManager,
 } from "./live-execution";
 
@@ -107,13 +106,6 @@ const ElicitationResponseSchema = Schema.Struct({
 
 const decodeElicitationResponse = Schema.decodeUnknown(ElicitationResponseSchema);
 
-const defaultExecutionResolver: ResolveExecutionEnvironment = () =>
-  Effect.fail(
-    new Error("Execution environment resolver is not configured"),
-  );
-
-const defaultLiveExecutionManager = createLiveExecutionManager();
-
 const withExecutionInvocationContext = (input: {
   executionId: Execution["id"];
   toolInvoker: ToolInvoker;
@@ -190,15 +182,10 @@ const fetchExecutionEnvelope = (
 
 export const createRuntimeExecutionsService = (
   rows: SqlControlPlaneRows,
-  executionResolver: ResolveExecutionEnvironment = defaultExecutionResolver,
-  liveExecutionManager: LiveExecutionManager = defaultLiveExecutionManager,
-): Pick<
-  ControlPlaneServiceShape,
-  | "createExecution"
-  | "getExecution"
-  | "resumeExecution"
-> => {
-  const createExecution: ControlPlaneServiceShape["createExecution"] = (
+  executionResolver: ResolveExecutionEnvironment,
+  liveExecutionManager: LiveExecutionManager,
+): ControlPlaneExecutionsServiceShape => {
+  const createExecution: ControlPlaneExecutionsServiceShape["createExecution"] = (
     { workspaceId, payload, createdByAccountId },
   ) =>
     Effect.gen(function* () {

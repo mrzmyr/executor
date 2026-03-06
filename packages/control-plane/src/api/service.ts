@@ -158,7 +158,7 @@ export type RemovePolicyInput = {
   policyId: PolicyId;
 };
 
-export type ControlPlaneServiceShape = {
+export type ControlPlaneOrganizationsServiceShape = {
   listOrganizations: (input: {
     accountId: AccountId;
   }) => Effect.Effect<ReadonlyArray<Organization>, ControlPlaneStorageError>;
@@ -178,7 +178,9 @@ export type ControlPlaneServiceShape = {
   removeOrganization: (
     input: RemoveOrganizationInput,
   ) => Effect.Effect<{ removed: boolean }, ControlPlaneStorageError>;
+};
 
+export type ControlPlaneMembershipsServiceShape = {
   listMemberships: (
     organizationId: OrganizationId,
   ) => Effect.Effect<
@@ -200,7 +202,9 @@ export type ControlPlaneServiceShape = {
   removeMembership: (
     input: RemoveMembershipInput,
   ) => Effect.Effect<{ removed: boolean }, ControlPlaneNotFoundError | ControlPlaneStorageError>;
+};
 
+export type ControlPlaneWorkspacesServiceShape = {
   listWorkspaces: (
     organizationId: OrganizationId,
   ) => Effect.Effect<ReadonlyArray<Workspace>, ControlPlaneNotFoundError | ControlPlaneStorageError>;
@@ -222,7 +226,9 @@ export type ControlPlaneServiceShape = {
   removeWorkspace: (
     input: RemoveWorkspaceInput,
   ) => Effect.Effect<{ removed: boolean }, ControlPlaneStorageError>;
+};
 
+export type ControlPlaneSourcesServiceShape = {
   listSources: (
     workspaceId: WorkspaceId,
   ) => Effect.Effect<ReadonlyArray<Source>, ControlPlaneStorageError>;
@@ -241,7 +247,9 @@ export type ControlPlaneServiceShape = {
   removeSource: (
     input: RemoveSourceInput,
   ) => Effect.Effect<{ removed: boolean }, ControlPlaneStorageError>;
+};
 
+export type ControlPlaneExecutionsServiceShape = {
   createExecution: (
     input: CreateExecutionInput,
   ) => Effect.Effect<
@@ -257,7 +265,9 @@ export type ControlPlaneServiceShape = {
     ExecutionEnvelope,
     ControlPlaneBadRequestError | ControlPlaneNotFoundError | ControlPlaneStorageError
   >;
+};
 
+export type ControlPlaneLocalServiceShape = {
   getLocalInstallation: () => Effect.Effect<
     LocalInstallation,
     ControlPlaneNotFoundError | ControlPlaneStorageError
@@ -265,7 +275,9 @@ export type ControlPlaneServiceShape = {
   completeSourceAuthCallback: (
     input: CompleteSourceAuthCallbackInput,
   ) => Effect.Effect<Source, ControlPlaneBadRequestError | ControlPlaneNotFoundError | ControlPlaneStorageError>;
+};
 
+export type ControlPlanePoliciesServiceShape = {
   listPolicies: (
     workspaceId: WorkspaceId,
   ) => Effect.Effect<ReadonlyArray<Policy>, ControlPlaneStorageError>;
@@ -286,6 +298,46 @@ export type ControlPlaneServiceShape = {
   ) => Effect.Effect<{ removed: boolean }, ControlPlaneStorageError>;
 };
 
-export class ControlPlaneService extends Context.Tag(
-  "#api/ControlPlaneService",
-)<ControlPlaneService, ControlPlaneServiceShape>() {}
+export class ControlPlaneOrganizationsService extends Context.Tag(
+  "#api/ControlPlaneOrganizationsService",
+)<ControlPlaneOrganizationsService, ControlPlaneOrganizationsServiceShape>() {
+}
+
+export class ControlPlaneMembershipsService extends Context.Tag(
+  "#api/ControlPlaneMembershipsService",
+)<ControlPlaneMembershipsService, ControlPlaneMembershipsServiceShape>() {
+}
+
+export class ControlPlaneWorkspacesService extends Context.Tag(
+  "#api/ControlPlaneWorkspacesService",
+)<ControlPlaneWorkspacesService, ControlPlaneWorkspacesServiceShape>() {
+}
+
+export class ControlPlaneSourcesService extends Context.Tag(
+  "#api/ControlPlaneSourcesService",
+)<ControlPlaneSourcesService, ControlPlaneSourcesServiceShape>() {
+}
+
+export class ControlPlaneExecutionsService extends Context.Tag(
+  "#api/ControlPlaneExecutionsService",
+)<ControlPlaneExecutionsService, ControlPlaneExecutionsServiceShape>() {
+}
+
+export class ControlPlaneLocalService extends Context.Tag(
+  "#api/ControlPlaneLocalService",
+)<ControlPlaneLocalService, ControlPlaneLocalServiceShape>() {
+}
+
+export class ControlPlanePoliciesService extends Context.Tag(
+  "#api/ControlPlanePoliciesService",
+)<ControlPlanePoliciesService, ControlPlanePoliciesServiceShape>() {
+}
+
+export type ControlPlaneApiServiceContext =
+  | ControlPlaneOrganizationsService
+  | ControlPlaneMembershipsService
+  | ControlPlaneWorkspacesService
+  | ControlPlaneSourcesService
+  | ControlPlaneExecutionsService
+  | ControlPlaneLocalService
+  | ControlPlanePoliciesService;

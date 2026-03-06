@@ -14,8 +14,21 @@ export {
 } from "./errors";
 
 export {
-  ControlPlaneService,
-  type ControlPlaneServiceShape,
+  ControlPlaneOrganizationsService,
+  type ControlPlaneOrganizationsServiceShape,
+  ControlPlaneMembershipsService,
+  type ControlPlaneMembershipsServiceShape,
+  ControlPlaneWorkspacesService,
+  type ControlPlaneWorkspacesServiceShape,
+  ControlPlaneSourcesService,
+  type ControlPlaneSourcesServiceShape,
+  ControlPlaneExecutionsService,
+  type ControlPlaneExecutionsServiceShape,
+  ControlPlaneLocalService,
+  type ControlPlaneLocalServiceShape,
+  ControlPlanePoliciesService,
+  type ControlPlanePoliciesServiceShape,
+  type ControlPlaneApiServiceContext,
   type CreateOrganizationInput,
   type UpdateOrganizationInput,
   type RemoveOrganizationInput,

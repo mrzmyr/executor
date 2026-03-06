@@ -16,7 +16,7 @@ import {
   ControlPlaneForbiddenError,
   ControlPlaneUnauthorizedError,
 } from "../errors";
-import { ControlPlaneService } from "../service";
+import { ControlPlaneMembershipsService } from "../service";
 
 const toForbiddenError = (
   operation: string,
@@ -63,7 +63,7 @@ export const ControlPlaneMembershipsLive = HttpApiBuilder.group(
     handlers
       .handle("list", ({ path }) =>
         Effect.gen(function* () {
-          const service = yield* ControlPlaneService;
+          const service = yield* ControlPlaneMembershipsService;
           const actor = yield* resolveActor;
 
           return yield* withPolicy(requireReadMemberships(path.organizationId))(
@@ -80,7 +80,7 @@ export const ControlPlaneMembershipsLive = HttpApiBuilder.group(
       )
       .handle("create", ({ path, payload }) =>
         Effect.gen(function* () {
-          const service = yield* ControlPlaneService;
+          const service = yield* ControlPlaneMembershipsService;
           const actor = yield* resolveActor;
 
           return yield* withPolicy(requireWriteMemberships(path.organizationId))(
@@ -97,7 +97,7 @@ export const ControlPlaneMembershipsLive = HttpApiBuilder.group(
       )
       .handle("update", ({ path, payload }) =>
         Effect.gen(function* () {
-          const service = yield* ControlPlaneService;
+          const service = yield* ControlPlaneMembershipsService;
           const actor = yield* resolveActor;
 
           return yield* withPolicy(requireWriteMemberships(path.organizationId))(
@@ -118,7 +118,7 @@ export const ControlPlaneMembershipsLive = HttpApiBuilder.group(
       )
       .handle("remove", ({ path }) =>
         Effect.gen(function* () {
-          const service = yield* ControlPlaneService;
+          const service = yield* ControlPlaneMembershipsService;
           const actor = yield* resolveActor;
 
           return yield* withPolicy(requireWriteMemberships(path.organizationId))(

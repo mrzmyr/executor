@@ -5,10 +5,23 @@ import * as Layer from "effect/Layer";
 import * as Scope from "effect/Scope";
 
 import {
+  type ControlPlaneApiServiceContext,
   ControlPlaneActorResolver,
   type ControlPlaneActorResolverShape,
-  ControlPlaneService,
-  type ControlPlaneServiceShape,
+  ControlPlaneExecutionsService,
+  type ControlPlaneExecutionsServiceShape,
+  ControlPlaneLocalService,
+  type ControlPlaneLocalServiceShape,
+  ControlPlaneMembershipsService,
+  type ControlPlaneMembershipsServiceShape,
+  ControlPlaneOrganizationsService,
+  type ControlPlaneOrganizationsServiceShape,
+  ControlPlanePoliciesService,
+  type ControlPlanePoliciesServiceShape,
+  ControlPlaneSourcesService,
+  type ControlPlaneSourcesServiceShape,
+  ControlPlaneWorkspacesService,
+  type ControlPlaneWorkspacesServiceShape,
 } from "#api";
 import {
   SqlControlPlanePersistenceLive,
@@ -39,8 +52,7 @@ import {
   type ResolveSecretMaterial,
 } from "./source-auth-service";
 import {
-  RuntimeControlPlaneServiceLive,
-  createRuntimeControlPlaneService,
+  RuntimeControlPlaneApiServicesLive,
 } from "./services";
 import {
   RuntimeExecutionResolverLive,
@@ -49,7 +61,6 @@ import {
 export {
   ControlPlaneAuthHeaders,
   createHeaderActorResolver,
-  createRuntimeControlPlaneService,
 };
 
 export * from "./execution-state";
@@ -85,6 +96,25 @@ const toLocalInstallationBootstrapError = (
 const closeScope = (scope: Scope.CloseableScope) =>
   Scope.close(scope, Exit.void).pipe(Effect.orDie);
 
+const createRuntimeServicesLayer = (input: {
+  organizationsService: ControlPlaneOrganizationsServiceShape;
+  membershipsService: ControlPlaneMembershipsServiceShape;
+  workspacesService: ControlPlaneWorkspacesServiceShape;
+  sourcesService: ControlPlaneSourcesServiceShape;
+  policiesService: ControlPlanePoliciesServiceShape;
+  localService: ControlPlaneLocalServiceShape;
+  executionsService: ControlPlaneExecutionsServiceShape;
+}): Layer.Layer<ControlPlaneApiServiceContext, never, never> =>
+  Layer.mergeAll(
+    Layer.succeed(ControlPlaneOrganizationsService, input.organizationsService),
+    Layer.succeed(ControlPlaneMembershipsService, input.membershipsService),
+    Layer.succeed(ControlPlaneWorkspacesService, input.workspacesService),
+    Layer.succeed(ControlPlaneSourcesService, input.sourcesService),
+    Layer.succeed(ControlPlanePoliciesService, input.policiesService),
+    Layer.succeed(ControlPlaneLocalService, input.localService),
+    Layer.succeed(ControlPlaneExecutionsService, input.executionsService),
+  );
+
 export const createRuntimeControlPlaneLayer = (
   options: RuntimeControlPlaneOptions = {},
 ) => {
@@ -105,11 +135,12 @@ export const createRuntimeControlPlaneLayer = (
     sourceAuthLayer,
     executionResolverLayer,
   );
+  const apiServicesLayer = RuntimeControlPlaneApiServicesLive.pipe(
+    Layer.provide(runtimeDependenciesLayer),
+  );
 
   return Layer.mergeAll(
-    RuntimeControlPlaneServiceLive.pipe(
-      Layer.provide(runtimeDependenciesLayer),
-    ),
+    apiServicesLayer,
     RuntimeActorResolverLive(options.actorResolver),
     runtimeDependenciesLayer,
   );
@@ -118,15 +149,30 @@ export const createRuntimeControlPlaneLayer = (
 export const createRuntimeControlPlane = (
   input: RuntimeControlPlaneInput,
 ): Effect.Effect<{
-  service: ControlPlaneServiceShape;
+  serviceLayer: Layer.Layer<ControlPlaneApiServiceContext, never, never>;
   actorResolver: ControlPlaneActorResolverShape;
 }> =>
   Effect.gen(function* () {
-    const service = yield* ControlPlaneService;
     const actorResolver = yield* ControlPlaneActorResolver;
+    const organizationsService = yield* ControlPlaneOrganizationsService;
+    const membershipsService = yield* ControlPlaneMembershipsService;
+    const workspacesService = yield* ControlPlaneWorkspacesService;
+    const sourcesService = yield* ControlPlaneSourcesService;
+    const policiesService = yield* ControlPlanePoliciesService;
+    const localService = yield* ControlPlaneLocalService;
+    const executionsService = yield* ControlPlaneExecutionsService;
+    const serviceLayer = createRuntimeServicesLayer({
+      organizationsService,
+      membershipsService,
+      workspacesService,
+      sourcesService,
+      policiesService,
+      localService,
+      executionsService,
+    });
 
     return {
-      service,
+      serviceLayer,
       actorResolver,
     };
   }).pipe(
@@ -143,7 +189,7 @@ export const createRuntimeControlPlane = (
 export type SqlControlPlaneRuntime = {
   persistence: SqlControlPlanePersistence;
   localInstallation: LocalInstallation;
-  service: ControlPlaneServiceShape;
+  serviceLayer: Layer.Layer<ControlPlaneApiServiceContext, never, never>;
   actorResolver: ControlPlaneActorResolverShape;
   close: () => Promise<void>;
 };
@@ -171,8 +217,23 @@ export const createSqlControlPlaneRuntime = (
     );
 
     const persistence = Context.get(context, SqlControlPlanePersistenceService);
-    const service = Context.get(context, ControlPlaneService);
     const actorResolver = Context.get(context, ControlPlaneActorResolver);
+    const organizationsService = Context.get(context, ControlPlaneOrganizationsService);
+    const membershipsService = Context.get(context, ControlPlaneMembershipsService);
+    const workspacesService = Context.get(context, ControlPlaneWorkspacesService);
+    const sourcesService = Context.get(context, ControlPlaneSourcesService);
+    const policiesService = Context.get(context, ControlPlanePoliciesService);
+    const localService = Context.get(context, ControlPlaneLocalService);
+    const executionsService = Context.get(context, ControlPlaneExecutionsService);
+    const serviceLayer = createRuntimeServicesLayer({
+      organizationsService,
+      membershipsService,
+      workspacesService,
+      sourcesService,
+      policiesService,
+      localService,
+      executionsService,
+    });
 
     const localInstallation = yield* getOrProvisionLocalInstallation(
       persistence.rows,
@@ -187,7 +248,7 @@ export const createSqlControlPlaneRuntime = (
     return {
       persistence,
       localInstallation,
-      service,
+      serviceLayer,
       actorResolver,
       close: () => Effect.runPromise(Scope.close(scope, Exit.void)),
     };

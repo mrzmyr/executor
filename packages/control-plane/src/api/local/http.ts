@@ -2,7 +2,7 @@ import { HttpApiBuilder, HttpServerRequest } from "@effect/platform";
 import * as Effect from "effect/Effect";
 
 import { ControlPlaneApi } from "../api";
-import { ControlPlaneService } from "../service";
+import { ControlPlaneLocalService } from "../service";
 
 export const ControlPlaneLocalLive = HttpApiBuilder.group(
   ControlPlaneApi,
@@ -11,13 +11,13 @@ export const ControlPlaneLocalLive = HttpApiBuilder.group(
     handlers
       .handle("installation", () =>
         Effect.gen(function* () {
-          const service = yield* ControlPlaneService;
+          const service = yield* ControlPlaneLocalService;
           return yield* service.getLocalInstallation();
         }),
       )
       .handle("oauthCallback", () =>
         Effect.gen(function* () {
-          const service = yield* ControlPlaneService;
+          const service = yield* ControlPlaneLocalService;
           const request = yield* HttpServerRequest.HttpServerRequest;
           const requestUrl = new URL(request.url, "http://127.0.0.1");
 

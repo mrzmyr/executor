@@ -76,7 +76,7 @@ export const toMcpElicitationResponse = (
       }
     : { action: response.action };
 
-export type McpClientWithElicitationHandler = {
+type McpClientWithElicitationHandler = {
   setRequestHandler: (
     schema: typeof ElicitRequestSchema,
     handler: (request: { params: unknown }) => Promise<unknown>,

@@ -6,7 +6,6 @@ import { HttpApiBuilder, HttpServer } from "@effect/platform";
 import { NodeHttpServer } from "@effect/platform-node";
 import {
   ControlPlaneActorResolver,
-  ControlPlaneService,
   createControlPlaneApiLayer,
   createSqlControlPlaneRuntime,
   type ResolveExecutionEnvironment,
@@ -24,14 +23,14 @@ import {
   DEFAULT_SERVER_PORT,
 } from "./config";
 
-export type LocalExecutorServer = {
+type LocalExecutorServer = {
   readonly runtime: SqlControlPlaneRuntime;
   readonly port: number;
   readonly host: string;
   readonly baseUrl: string;
 };
 
-export type StartLocalExecutorServerOptions = {
+type StartLocalExecutorServerOptions = {
   readonly port?: number;
   readonly host?: string;
   readonly localDataDir?: string;
@@ -47,12 +46,11 @@ const createControlPlaneServerLayer = (input: {
   host: string;
   port: number;
 }) => {
-  const serviceLayer = Layer.succeed(ControlPlaneService, input.runtime.service);
   const actorResolverLayer = Layer.succeed(
     ControlPlaneActorResolver,
     input.runtime.actorResolver,
   );
-  const apiLayer = createControlPlaneApiLayer(serviceLayer, actorResolverLayer);
+  const apiLayer = createControlPlaneApiLayer(input.runtime.serviceLayer, actorResolverLayer);
 
   return HttpApiBuilder.serve().pipe(
     Layer.provide(apiLayer),

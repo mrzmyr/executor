@@ -4,7 +4,7 @@ import {
 } from "@executor-v3/control-plane";
 import * as Effect from "effect/Effect";
 
-export type SeedDemoMcpSourceInput = {
+type SeedDemoMcpSourceInput = {
   client: ControlPlaneClient;
   workspaceId: string;
   endpoint: string;
@@ -12,7 +12,7 @@ export type SeedDemoMcpSourceInput = {
   namespace: string;
 };
 
-export type SeedDemoMcpSourceResult =
+type SeedDemoMcpSourceResult =
   | {
       action: "noop";
       sourceId: string;
@@ -26,7 +26,7 @@ export type SeedDemoMcpSourceResult =
       endpoint: string;
     };
 
-export type SeedGithubOpenApiSourceInput = {
+type SeedGithubOpenApiSourceInput = {
   client: ControlPlaneClient;
   workspaceId: string;
   endpoint: string;

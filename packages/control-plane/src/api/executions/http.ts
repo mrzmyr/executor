@@ -16,7 +16,7 @@ import {
   ControlPlaneForbiddenError,
   ControlPlaneUnauthorizedError,
 } from "../errors";
-import { ControlPlaneService } from "../service";
+import { ControlPlaneExecutionsService } from "../service";
 
 const toForbiddenError = (
   operation: string,
@@ -59,7 +59,7 @@ export const ControlPlaneExecutionsLive = HttpApiBuilder.group(
     handlers
       .handle("create", ({ path, payload }) =>
         Effect.gen(function* () {
-          const service = yield* ControlPlaneService;
+          const service = yield* ControlPlaneExecutionsService;
           const actor = yield* resolveWorkspaceActor(path.workspaceId);
 
           return yield* withPolicy(requireExecuteWorkspace(path.workspaceId))(
@@ -80,7 +80,7 @@ export const ControlPlaneExecutionsLive = HttpApiBuilder.group(
       )
       .handle("get", ({ path }) =>
         Effect.gen(function* () {
-          const service = yield* ControlPlaneService;
+          const service = yield* ControlPlaneExecutionsService;
           const actor = yield* resolveWorkspaceActor(path.workspaceId);
 
           return yield* withPolicy(requireExecuteWorkspace(path.workspaceId))(
@@ -100,7 +100,7 @@ export const ControlPlaneExecutionsLive = HttpApiBuilder.group(
       )
       .handle("resume", ({ path, payload }) =>
         Effect.gen(function* () {
-          const service = yield* ControlPlaneService;
+          const service = yield* ControlPlaneExecutionsService;
           const actor = yield* resolveWorkspaceActor(path.workspaceId);
 
           return yield* withPolicy(requireExecuteWorkspace(path.workspaceId))(

@@ -16,7 +16,7 @@ import {
   ControlPlaneForbiddenError,
   ControlPlaneUnauthorizedError,
 } from "../errors";
-import { ControlPlaneService } from "../service";
+import { ControlPlaneWorkspacesService } from "../service";
 
 const toForbiddenError = (
   operation: string,
@@ -83,7 +83,7 @@ export const ControlPlaneWorkspacesLive = HttpApiBuilder.group(
     handlers
       .handle("list", ({ path }) =>
         Effect.gen(function* () {
-          const service = yield* ControlPlaneService;
+          const service = yield* ControlPlaneWorkspacesService;
           const actor = yield* resolveActor;
 
           return yield* withPolicy(
@@ -102,7 +102,7 @@ export const ControlPlaneWorkspacesLive = HttpApiBuilder.group(
       )
       .handle("create", ({ path, payload }) =>
         Effect.gen(function* () {
-          const service = yield* ControlPlaneService;
+          const service = yield* ControlPlaneWorkspacesService;
           const actor = yield* resolveActor;
 
           return yield* withPolicy(
@@ -125,7 +125,7 @@ export const ControlPlaneWorkspacesLive = HttpApiBuilder.group(
       )
       .handle("get", ({ path }) =>
         Effect.gen(function* () {
-          const service = yield* ControlPlaneService;
+          const service = yield* ControlPlaneWorkspacesService;
           const actor = yield* resolveWorkspaceActor(path.workspaceId);
 
           return yield* withPolicy(requireReadWorkspace(path.workspaceId))(
@@ -142,7 +142,7 @@ export const ControlPlaneWorkspacesLive = HttpApiBuilder.group(
       )
       .handle("update", ({ path, payload }) =>
         Effect.gen(function* () {
-          const service = yield* ControlPlaneService;
+          const service = yield* ControlPlaneWorkspacesService;
           const actor = yield* resolveWorkspaceActor(path.workspaceId);
 
           return yield* withPolicy(requireManageWorkspace(path.workspaceId))(
@@ -159,7 +159,7 @@ export const ControlPlaneWorkspacesLive = HttpApiBuilder.group(
       )
       .handle("remove", ({ path }) =>
         Effect.gen(function* () {
-          const service = yield* ControlPlaneService;
+          const service = yield* ControlPlaneWorkspacesService;
           const actor = yield* resolveWorkspaceActor(path.workspaceId);
 
           return yield* withPolicy(requireManageWorkspace(path.workspaceId))(

@@ -19,9 +19,11 @@
     "zod": "^4.3.6"
   },
   "scripts": {
-    "typecheck": "bun run --filter='*' typecheck"
+    "typecheck": "bun run --filter='*' typecheck",
+    "knip": "knip"
   },
   "devDependencies": {
+    "knip": "^5.85.0",
     "typescript": "^5.9.3"
   }
 }

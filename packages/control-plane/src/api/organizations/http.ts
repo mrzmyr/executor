@@ -16,7 +16,7 @@ import {
   ControlPlaneForbiddenError,
   ControlPlaneUnauthorizedError,
 } from "../errors";
-import { ControlPlaneService } from "../service";
+import { ControlPlaneOrganizationsService } from "../service";
 
 const toForbiddenError = (
   operation: string,
@@ -61,7 +61,7 @@ export const ControlPlaneOrganizationsLive = HttpApiBuilder.group(
     handlers
       .handle("list", () =>
         Effect.gen(function* () {
-          const service = yield* ControlPlaneService;
+          const service = yield* ControlPlaneOrganizationsService;
           const actor = yield* resolveActor;
 
           return yield* withPolicy(requireReadOrganizations)(
@@ -80,7 +80,7 @@ export const ControlPlaneOrganizationsLive = HttpApiBuilder.group(
       )
       .handle("create", ({ payload }) =>
         Effect.gen(function* () {
-          const service = yield* ControlPlaneService;
+          const service = yield* ControlPlaneOrganizationsService;
           const actor = yield* resolveActor;
 
           return yield* service.createOrganization({
@@ -95,7 +95,7 @@ export const ControlPlaneOrganizationsLive = HttpApiBuilder.group(
       )
       .handle("get", ({ path }) =>
         Effect.gen(function* () {
-          const service = yield* ControlPlaneService;
+          const service = yield* ControlPlaneOrganizationsService;
           const actor = yield* resolveActor;
 
           return yield* withPolicy(requireReadOrganizations)(
@@ -115,7 +115,7 @@ export const ControlPlaneOrganizationsLive = HttpApiBuilder.group(
       )
       .handle("update", ({ path, payload }) =>
         Effect.gen(function* () {
-          const service = yield* ControlPlaneService;
+          const service = yield* ControlPlaneOrganizationsService;
           const actor = yield* resolveActor;
 
           return yield* withPolicy(requireManageOrganizations(path.organizationId))(
@@ -135,7 +135,7 @@ export const ControlPlaneOrganizationsLive = HttpApiBuilder.group(
       )
       .handle("remove", ({ path }) =>
         Effect.gen(function* () {
-          const service = yield* ControlPlaneService;
+          const service = yield* ControlPlaneOrganizationsService;
           const actor = yield* resolveActor;
 
           return yield* withPolicy(requireManageOrganizations(path.organizationId))(

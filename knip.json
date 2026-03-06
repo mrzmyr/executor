@@ -1,0 +1,38 @@
+{
+  "$schema": "https://unpkg.com/knip@5/schema.json",
+  "exclude": [
+    "duplicates"
+  ],
+  "ignoreIssues": {
+    "packages/codemode-openapi/src/openapi-extractor-wasm/openapi_extractor.js": [
+      "exports"
+    ]
+  },
+  "workspaces": {
+    ".": {
+      "entry": [],
+      "project": []
+    },
+    "apps/*": {
+      "entry": [
+        "src/index.ts",
+        "src/main.ts",
+        "src/server.ts",
+        "src/cli/main.ts"
+      ],
+      "project": [
+        "src/**/*.{js,mjs,cjs,jsx,ts,tsx,mts,cts}"
+      ]
+    },
+    "packages/*": {
+      "entry": [
+        "src/index.ts",
+        "src/main.ts",
+        "src/playground.ts"
+      ],
+      "project": [
+        "src/**/*.{js,mjs,cjs,jsx,ts,tsx,mts,cts}"
+      ]
+    }
+  }
+}

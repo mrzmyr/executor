@@ -1,6 +1,18 @@
 import {
-  ControlPlaneService,
-  type ControlPlaneServiceShape,
+  ControlPlaneExecutionsService,
+  type ControlPlaneExecutionsServiceShape,
+  ControlPlaneLocalService,
+  type ControlPlaneLocalServiceShape,
+  ControlPlaneMembershipsService,
+  type ControlPlaneMembershipsServiceShape,
+  ControlPlaneOrganizationsService,
+  type ControlPlaneOrganizationsServiceShape,
+  ControlPlanePoliciesService,
+  type ControlPlanePoliciesServiceShape,
+  ControlPlaneSourcesService,
+  type ControlPlaneSourcesServiceShape,
+  ControlPlaneWorkspacesService,
+  type ControlPlaneWorkspacesServiceShape,
   ControlPlaneBadRequestError,
   ControlPlaneNotFoundError,
   ControlPlaneStorageError,
@@ -30,10 +42,8 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 
-import { type ResolveExecutionEnvironment } from "./execution-state";
 import {
   LiveExecutionManagerService,
-  type LiveExecutionManager,
 } from "./live-execution";
 import { createRuntimeExecutionsService } from "./execution-service";
 import { loadLocalInstallation } from "./local-installation";
@@ -204,14 +214,7 @@ const ensureOrganizationExists = (
 
 const createOrganizationsService = (
   rows: SqlControlPlaneRows,
-): Pick<
-  ControlPlaneServiceShape,
-  | "listOrganizations"
-  | "createOrganization"
-  | "getOrganization"
-  | "updateOrganization"
-  | "removeOrganization"
-> => ({
+): ControlPlaneOrganizationsServiceShape => ({
     listOrganizations: ({ accountId }) =>
       Effect.gen(function* () {
         const memberships = yield* mapStorageError(
@@ -363,13 +366,7 @@ const createOrganizationsService = (
 
 const createMembershipsService = (
   rows: SqlControlPlaneRows,
-): Pick<
-  ControlPlaneServiceShape,
-  | "listMemberships"
-  | "createMembership"
-  | "updateMembership"
-  | "removeMembership"
-> => ({
+): ControlPlaneMembershipsServiceShape => ({
     listMemberships: (organizationId) =>
       Effect.gen(function* () {
         yield* ensureOrganizationExists(rows, "memberships.list", organizationId);
@@ -485,14 +482,7 @@ const createMembershipsService = (
 
 const createWorkspacesService = (
   rows: SqlControlPlaneRows,
-): Pick<
-  ControlPlaneServiceShape,
-  | "listWorkspaces"
-  | "createWorkspace"
-  | "getWorkspace"
-  | "updateWorkspace"
-  | "removeWorkspace"
-> => ({
+): ControlPlaneWorkspacesServiceShape => ({
     listWorkspaces: (organizationId) =>
       Effect.gen(function* () {
         yield* ensureOrganizationExists(rows, "workspaces.list", organizationId);
@@ -594,14 +584,7 @@ const createWorkspacesService = (
 
 const createSourcesService = (
   rows: SqlControlPlaneRows,
-): Pick<
-  ControlPlaneServiceShape,
-  | "listSources"
-  | "createSource"
-  | "getSource"
-  | "updateSource"
-  | "removeSource"
-> => ({
+): ControlPlaneSourcesServiceShape => ({
     listSources: (workspaceId) =>
       Effect.gen(function* () {
         const sourceRecords = yield* mapStorageError(
@@ -833,14 +816,7 @@ const createSourcesService = (
 
 const createPoliciesService = (
   rows: SqlControlPlaneRows,
-): Pick<
-  ControlPlaneServiceShape,
-  | "listPolicies"
-  | "createPolicy"
-  | "getPolicy"
-  | "updatePolicy"
-  | "removePolicy"
-> => ({
+): ControlPlanePoliciesServiceShape => ({
     listPolicies: (workspaceId) =>
       mapStorageError(
         "policies.list",
@@ -1003,8 +979,8 @@ const createPoliciesService = (
 
 const createLocalService = (
   rows: SqlControlPlaneRows,
-  sourceAuthService?: RuntimeSourceAuthService,
-): Pick<ControlPlaneServiceShape, "getLocalInstallation" | "completeSourceAuthCallback"> => ({
+  sourceAuthService: RuntimeSourceAuthService,
+): ControlPlaneLocalServiceShape => ({
     getLocalInstallation: () =>
       Effect.gen(function* () {
         const installation = yield* loadLocalInstallation(rows).pipe(
@@ -1034,16 +1010,6 @@ const createLocalService = (
 
     completeSourceAuthCallback: (input) =>
       Effect.gen(function* () {
-        if (!sourceAuthService) {
-          return yield* Effect.fail(
-            badRequest(
-              "local.oauth.callback",
-              "Source auth callback handling is unavailable",
-              "Runtime source auth service is not configured",
-            ),
-          );
-        }
-
         return yield* sourceAuthService.completeSourceAuthCallback(input).pipe(
           Effect.mapError((error) =>
             new ControlPlaneStorageError({
@@ -1056,43 +1022,62 @@ const createLocalService = (
       }),
   });
 
-export const createRuntimeControlPlaneService = (
-  rows: SqlControlPlaneRows,
-  options: {
-    executionResolver?: ResolveExecutionEnvironment;
-    liveExecutionManager?: LiveExecutionManager;
-    sourceAuthService?: RuntimeSourceAuthService;
-  } = {},
-) => ({
-  ...createLocalService(rows, options.sourceAuthService),
-  ...createOrganizationsService(rows),
-  ...createMembershipsService(rows),
-  ...createWorkspacesService(rows),
-  ...createSourcesService(rows),
-  ...createPoliciesService(rows),
-  ...createRuntimeExecutionsService(
-    rows,
-    options.executionResolver,
-    options.liveExecutionManager,
-  ),
-} satisfies ControlPlaneServiceShape);
+const RuntimeOrganizationsServiceLive = Layer.effect(
+  ControlPlaneOrganizationsService,
+  Effect.map(SqlControlPlaneRowsService, createOrganizationsService),
+);
 
-export type RuntimeControlPlaneService = ReturnType<
-  typeof createRuntimeControlPlaneService
->;
+const RuntimeMembershipsServiceLive = Layer.effect(
+  ControlPlaneMembershipsService,
+  Effect.map(SqlControlPlaneRowsService, createMembershipsService),
+);
 
-export const RuntimeControlPlaneServiceLive = Layer.effect(
-  ControlPlaneService,
+const RuntimeWorkspacesServiceLive = Layer.effect(
+  ControlPlaneWorkspacesService,
+  Effect.map(SqlControlPlaneRowsService, createWorkspacesService),
+);
+
+const RuntimeSourcesServiceLive = Layer.effect(
+  ControlPlaneSourcesService,
+  Effect.map(SqlControlPlaneRowsService, createSourcesService),
+);
+
+const RuntimePoliciesServiceLive = Layer.effect(
+  ControlPlanePoliciesService,
+  Effect.map(SqlControlPlaneRowsService, createPoliciesService),
+);
+
+const RuntimeLocalServiceLive = Layer.effect(
+  ControlPlaneLocalService,
+  Effect.gen(function* () {
+    const rows = yield* SqlControlPlaneRowsService;
+    const sourceAuthService = yield* RuntimeSourceAuthServiceTag;
+
+    return createLocalService(rows, sourceAuthService);
+  }),
+);
+
+const RuntimeExecutionsServiceLive = Layer.effect(
+  ControlPlaneExecutionsService,
   Effect.gen(function* () {
     const rows = yield* SqlControlPlaneRowsService;
     const executionResolver = yield* RuntimeExecutionResolverService;
     const liveExecutionManager = yield* LiveExecutionManagerService;
-    const sourceAuthService = yield* RuntimeSourceAuthServiceTag;
 
-    return createRuntimeControlPlaneService(rows, {
+    return createRuntimeExecutionsService(
+      rows,
       executionResolver,
       liveExecutionManager,
-      sourceAuthService,
-    });
+    );
   }),
+);
+
+export const RuntimeControlPlaneApiServicesLive = Layer.mergeAll(
+  RuntimeOrganizationsServiceLive,
+  RuntimeMembershipsServiceLive,
+  RuntimeWorkspacesServiceLive,
+  RuntimeSourcesServiceLive,
+  RuntimePoliciesServiceLive,
+  RuntimeLocalServiceLive,
+  RuntimeExecutionsServiceLive,
 );
