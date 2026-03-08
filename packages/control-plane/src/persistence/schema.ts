@@ -20,6 +20,7 @@ export const tableNames = {
   toolArtifactParameters: "tool_artifact_parameters",
   toolArtifactRequestBodyContentTypes: "tool_artifact_request_body_content_types",
   toolArtifactRefHintKeys: "tool_artifact_ref_hint_keys",
+  credentials: "credentials",
   sourceCredentialBindings: "source_credential_bindings",
   secretMaterials: "secret_materials",
   sourceAuthSessions: "source_auth_sessions",
@@ -131,9 +132,6 @@ export const sourcesTable = pgTable(
     headersJson: text("headers_json"),
     specUrl: text("spec_url"),
     defaultHeadersJson: text("default_headers_json"),
-    authKind: text("auth_kind").notNull(),
-    authHeaderName: text("auth_header_name"),
-    authPrefix: text("auth_prefix"),
     sourceHash: text("source_hash"),
     sourceDocumentText: text("source_document_text"),
     lastError: text("last_error"),
@@ -157,9 +155,33 @@ export const sourcesTable = pgTable(
       "sources_transport_check",
       sql`${table.transport} is null or ${table.transport} in ('auto', 'streamable-http', 'sse')`,
     ),
+  ],
+);
+
+export const credentialsTable = pgTable(
+  tableNames.credentials,
+  {
+    id: text("id").notNull().primaryKey(),
+    workspaceId: text("workspace_id").notNull(),
+    authKind: text("auth_kind").notNull(),
+    authHeaderName: text("auth_header_name").notNull(),
+    authPrefix: text("auth_prefix").notNull(),
+    tokenProviderId: text("token_provider_id").notNull(),
+    tokenHandle: text("token_handle").notNull(),
+    refreshTokenProviderId: text("refresh_token_provider_id"),
+    refreshTokenHandle: text("refresh_token_handle"),
+    createdAt: bigint("created_at", { mode: "number" }).notNull(),
+    updatedAt: bigint("updated_at", { mode: "number" }).notNull(),
+  },
+  (table) => [
+    index("credentials_workspace_idx").on(
+      table.workspaceId,
+      table.updatedAt,
+      table.id,
+    ),
     check(
-      "sources_auth_kind_check",
-      sql`${table.authKind} in ('none', 'bearer', 'oauth2')`,
+      "credentials_auth_kind_check",
+      sql`${table.authKind} in ('bearer', 'oauth2')`,
     ),
   ],
 );
@@ -167,19 +189,18 @@ export const sourcesTable = pgTable(
 export const sourceCredentialBindingsTable = pgTable(
   tableNames.sourceCredentialBindings,
   {
+    id: text("id").notNull().primaryKey(),
     workspaceId: text("workspace_id").notNull(),
     sourceId: text("source_id").notNull(),
-    tokenProviderId: text("token_provider_id"),
-    tokenHandle: text("token_handle"),
-    refreshTokenProviderId: text("refresh_token_provider_id"),
-    refreshTokenHandle: text("refresh_token_handle"),
+    credentialId: text("credential_id").notNull(),
     createdAt: bigint("created_at", { mode: "number" }).notNull(),
     updatedAt: bigint("updated_at", { mode: "number" }).notNull(),
   },
   (table) => [
-    primaryKey({
-      columns: [table.workspaceId, table.sourceId],
-    }),
+    uniqueIndex("source_credential_bindings_workspace_source_idx").on(
+      table.workspaceId,
+      table.sourceId,
+    ),
     index("source_credential_bindings_workspace_idx").on(
       table.workspaceId,
       table.updatedAt,
@@ -493,6 +514,7 @@ export const drizzleSchema = {
   organizationMembershipsTable,
   workspacesTable,
   sourcesTable,
+  credentialsTable,
   toolArtifactsTable,
   toolArtifactParametersTable,
   toolArtifactRequestBodyContentTypesTable,

@@ -33,24 +33,31 @@ import type {
   StoredToolArtifactRecord,
 } from "#schema";
 import * as Context from "effect/Context";
+import * as Either from "effect/Either";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Schema from "effect/Schema";
 
 import type {
   ExecutionEnvironment,
   ResolveExecutionEnvironment,
 } from "./execution-state";
 import { createExecutorToolMap } from "./executor-tools";
-import { projectSourceFromStorage, projectSourcesFromStorage } from "./source-definitions";
+import {
+  loadSourceById as loadStoredSourceById,
+  loadSourcesInWorkspace,
+} from "./source-store";
 import {
   RuntimeSourceAuthServiceTag,
-  createDbBackedSecretMaterialResolver,
-  type ResolveSecretMaterial,
   type RuntimeSourceAuthService,
 } from "./source-auth-service";
 import {
-  createEnvSecretMaterialResolver,
+  createDefaultSecretMaterialResolver,
+  type ResolveSecretMaterial,
+  type SecretMaterialResolveContext,
+} from "./secret-material-providers";
+import {
   namespaceFromSourceName,
   resolveSourceAuthMaterial,
   storedToolIdFromArtifact,
@@ -107,6 +114,32 @@ const hasSubstringMatch = (value: string, queryToken: string): boolean => {
 
   const singular = singularizeToken(queryToken);
   return singular !== queryToken && value.includes(singular);
+};
+
+const SecretResolutionContextEnvelopeSchema = Schema.Struct({
+  params: Schema.optional(
+    Schema.Record({
+      key: Schema.String,
+      value: Schema.String,
+    }),
+  ),
+});
+
+const decodeSecretResolutionContextEnvelope = Schema.decodeUnknownEither(
+  SecretResolutionContextEnvelopeSchema,
+);
+
+const toSecretResolutionContext = (
+  value: unknown,
+): SecretMaterialResolveContext | undefined => {
+  const decoded = decodeSecretResolutionContextEnvelope(value);
+  if (Either.isLeft(decoded) || decoded.right.params === undefined) {
+    return undefined;
+  }
+
+  return {
+    params: decoded.right.params,
+  };
 };
 
 const queryTokenWeight = (token: string): number =>
@@ -236,14 +269,14 @@ const toPersistedDescriptor = (input: {
   outputType:
     input.artifact.providerKind === "openapi"
       ? openApiOutputTypeSignatureFromSchemaJson(
-          input.artifact.outputSchemaJson ?? undefined,
-          320,
-        )
+        input.artifact.outputSchemaJson ?? undefined,
+        320,
+      )
       : typeSignatureFromSchemaJson(
-          input.artifact.outputSchemaJson ?? undefined,
-          "unknown",
-          320,
-        ),
+        input.artifact.outputSchemaJson ?? undefined,
+        "unknown",
+        320,
+      ),
   inputSchemaJson: input.includeSchemas ? input.artifact.inputSchemaJson ?? undefined : undefined,
   outputSchemaJson: input.includeSchemas ? input.artifact.outputSchemaJson ?? undefined : undefined,
   ...(input.artifact.providerKind ? { providerKind: input.artifact.providerKind } : {}),
@@ -265,22 +298,15 @@ const loadOpenApiWorkspaceTools = (input: {
   includeSchemas: boolean;
 }): Effect.Effect<ReadonlyArray<OpenApiWorkspaceTool>, Error, never> =>
   Effect.gen(function* () {
-    const [sourceRecords, credentialBindings] = yield* Effect.all([
-      input.rows.sources.listByWorkspaceId(input.workspaceId),
-      input.rows.sourceCredentialBindings.listByWorkspaceId(input.workspaceId),
-    ]).pipe(
+    const sourceRecords = yield* input.rows.sources.listByWorkspaceId(input.workspaceId).pipe(
       Effect.mapError((cause) =>
         cause instanceof Error ? cause : new Error(String(cause)),
       ),
     );
-
     const documentBySourceId = new Map(
       sourceRecords.map((record) => [record.id, record.sourceDocumentText]),
     );
-    const sources = yield* projectSourcesFromStorage({
-      sourceRecords,
-      credentialBindings,
-    });
+    const sources = yield* loadSourcesInWorkspace(input.rows, input.workspaceId);
 
     const connectedOpenApiSources = sources.filter((source) =>
       source.enabled
@@ -373,35 +399,14 @@ const loadSourceById = (input: {
   workspaceId: Source["workspaceId"];
   sourceId: Source["id"];
 }): Effect.Effect<Source, Error, never> =>
-  Effect.gen(function* () {
-    const sourceRecord = yield* input.rows.sources.getByWorkspaceAndId(
-      input.workspaceId,
-      input.sourceId,
-    ).pipe(
-      Effect.mapError((cause) =>
-        cause instanceof Error ? cause : new Error(String(cause)),
-      ),
-    );
-
-    if (Option.isNone(sourceRecord)) {
-      return yield* Effect.fail(
-        new Error(`Source not found: workspaceId=${input.workspaceId} sourceId=${input.sourceId}`),
-      );
-    }
-
-    const credentialBinding = yield* input.rows.sourceCredentialBindings
-      .getByWorkspaceAndSourceId(input.workspaceId, input.sourceId)
-      .pipe(
-        Effect.mapError((cause) =>
-          cause instanceof Error ? cause : new Error(String(cause)),
-        ),
-      );
-
-    return yield* projectSourceFromStorage({
-      sourceRecord: sourceRecord.value,
-      credentialBinding: Option.isSome(credentialBinding) ? credentialBinding.value : null,
-    });
-  });
+  loadStoredSourceById(input.rows, {
+    workspaceId: input.workspaceId,
+    sourceId: input.sourceId,
+  }).pipe(
+    Effect.mapError((cause) =>
+      cause instanceof Error ? cause : new Error(String(cause)),
+    ),
+  );
 
 const createWorkspaceToolCatalog = (input: {
   workspaceId: Source["workspaceId"];
@@ -460,14 +465,14 @@ const createWorkspaceToolCatalog = (input: {
         namespace?.startsWith("executor")
           ? Effect.succeed([] as readonly StoredToolArtifactRecord[])
           : input.rows.toolArtifacts.listByWorkspaceId(input.workspaceId, {
-              namespace,
-              query,
-              limit,
-            }).pipe(
-              Effect.mapError((cause) =>
-                cause instanceof Error ? cause : new Error(String(cause)),
-              ),
+            namespace,
+            query,
+            limit,
+          }).pipe(
+            Effect.mapError((cause) =>
+              cause instanceof Error ? cause : new Error(String(cause)),
             ),
+          ),
         loadOpenApiWorkspaceTools({
           rows: input.rows,
           workspaceId: input.workspaceId,
@@ -555,13 +560,13 @@ const createWorkspaceToolCatalog = (input: {
         namespace?.startsWith("executor")
           ? Effect.succeed([] as readonly StoredToolArtifactRecord[])
           : input.rows.toolArtifacts.searchByWorkspaceId(input.workspaceId, {
-              namespace,
-              query,
-            }).pipe(
-              Effect.mapError((cause) =>
-                cause instanceof Error ? cause : new Error(String(cause)),
-              ),
+            namespace,
+            query,
+          }).pipe(
+            Effect.mapError((cause) =>
+              cause instanceof Error ? cause : new Error(String(cause)),
             ),
+          ),
         loadOpenApiWorkspaceTools({
           rows: input.rows,
           workspaceId: input.workspaceId,
@@ -653,6 +658,7 @@ const createWorkspaceToolInvoker = (input: {
         const auth = yield* resolveSourceAuthMaterial({
           source: openApiTool.source,
           resolveSecretMaterial: input.resolveSecretMaterial,
+          context: toSecretResolutionContext(invocation.context),
         });
 
         const tools = createOpenApiToolsFromManifest({
@@ -702,6 +708,7 @@ const createWorkspaceToolInvoker = (input: {
       const auth = yield* resolveSourceAuthMaterial({
         source,
         resolveSecretMaterial: input.resolveSecretMaterial,
+        context: toSecretResolutionContext(invocation.context),
       });
 
       if (artifact.providerKind === "mcp") {
@@ -764,9 +771,8 @@ export const createWorkspaceExecutionEnvironmentResolver = (input: {
 }): ResolveExecutionEnvironment => {
   const resolveSecretMaterial =
     input.resolveSecretMaterial
-    ?? createDbBackedSecretMaterialResolver({
+    ?? createDefaultSecretMaterialResolver({
       rows: input.rows,
-      fallback: createEnvSecretMaterialResolver(),
     });
 
   return ({ workspaceId, onElicitation }) =>
@@ -792,7 +798,8 @@ export class RuntimeExecutionResolverService extends Context.Tag(
 )<
   RuntimeExecutionResolverService,
   ReturnType<typeof createWorkspaceExecutionEnvironmentResolver>
->() {}
+>() {
+}
 
 export const RuntimeExecutionResolverLive = (input: {
   executionResolver?: ResolveExecutionEnvironment;
@@ -801,15 +808,15 @@ export const RuntimeExecutionResolverLive = (input: {
   input.executionResolver
     ? Layer.succeed(RuntimeExecutionResolverService, input.executionResolver)
     : Layer.effect(
-        RuntimeExecutionResolverService,
-        Effect.gen(function* () {
-          const rows = yield* SqlControlPlaneRowsService;
-          const sourceAuthService = yield* RuntimeSourceAuthServiceTag;
+      RuntimeExecutionResolverService,
+      Effect.gen(function* () {
+        const rows = yield* SqlControlPlaneRowsService;
+        const sourceAuthService = yield* RuntimeSourceAuthServiceTag;
 
-          return createWorkspaceExecutionEnvironmentResolver({
-            rows,
-            sourceAuthService,
-            resolveSecretMaterial: input.resolveSecretMaterial,
-          });
-        }),
-      );
+        return createWorkspaceExecutionEnvironmentResolver({
+          rows,
+          sourceAuthService,
+          resolveSecretMaterial: input.resolveSecretMaterial,
+        });
+      }),
+    );

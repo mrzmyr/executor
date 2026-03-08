@@ -10,6 +10,9 @@ export const SourceIdSchema = Schema.String.pipe(Schema.brand("SourceId"));
 export const SourceAuthSessionIdSchema = Schema.String.pipe(
   Schema.brand("SourceAuthSessionId"),
 );
+export const CredentialIdSchema = Schema.String.pipe(
+  Schema.brand("CredentialId"),
+);
 export const SecretMaterialIdSchema = Schema.String.pipe(
   Schema.brand("SecretMaterialId"),
 );
@@ -26,6 +29,7 @@ export type OrganizationMemberId = typeof OrganizationMemberIdSchema.Type;
 export type WorkspaceId = typeof WorkspaceIdSchema.Type;
 export type SourceId = typeof SourceIdSchema.Type;
 export type SourceAuthSessionId = typeof SourceAuthSessionIdSchema.Type;
+export type CredentialId = typeof CredentialIdSchema.Type;
 export type SecretMaterialId = typeof SecretMaterialIdSchema.Type;
 export type PolicyId = typeof PolicyIdSchema.Type;
 export type InstallationId = typeof InstallationIdSchema.Type;

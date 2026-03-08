@@ -58,6 +58,42 @@ const serializeJson = (value: unknown): string | null => {
   return JSON.stringify(value);
 };
 
+const SENSITIVE_INTERACTION_CONTENT_KEYS = new Set([
+  "tokenRef",
+  "tokenSecretMaterialId",
+]);
+
+const redactSensitiveInteractionContent = (value: unknown): unknown => {
+  if (Array.isArray(value)) {
+    return value.map(redactSensitiveInteractionContent);
+  }
+
+  if (!value || typeof value !== "object") {
+    return value;
+  }
+
+  const entries = Object.entries(value as Record<string, unknown>)
+    .filter(([key]) => !SENSITIVE_INTERACTION_CONTENT_KEYS.has(key))
+    .map(([key, entry]) => [key, redactSensitiveInteractionContent(entry)]);
+
+  return Object.fromEntries(entries);
+};
+
+export const sanitizePersistedElicitationResponse = (
+  response: ElicitationResponse,
+): ElicitationResponse => {
+  if (response.content === undefined) {
+    return response;
+  }
+
+  const redactedContent = redactSensitiveInteractionContent(response.content);
+  return {
+    ...response,
+    content: redactedContent as Record<string, unknown>,
+  };
+};
+
+
 export const createLiveExecutionManager = () => {
   const runs = new Map<Execution["id"], LiveRunEntry>();
 
@@ -141,7 +177,7 @@ export const createLiveExecutionManager = () => {
 
           yield* rows.executionInteractions.update(interaction.id, {
             status: resolved.action === "cancel" ? "cancelled" : "resolved",
-            responseJson: serializeJson(resolved),
+            responseJson: serializeJson(sanitizePersistedElicitationResponse(resolved)),
             updatedAt: resolvedAt,
           });
           yield* rows.executions.update(executionId, {

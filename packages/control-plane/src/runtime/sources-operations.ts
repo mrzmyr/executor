@@ -25,14 +25,14 @@ import {
 import {
   operationErrors,
 } from "./operation-errors";
-import {
-  createDbBackedSecretMaterialResolver,
-} from "./source-auth-service";
+import { createDefaultSecretMaterialResolver } from "./secret-material-providers";
 import { ControlPlaneStore, type ControlPlaneStoreShape } from "./store";
+import { syncSourceToolArtifacts } from "./tool-artifacts";
 import {
-  createEnvSecretMaterialResolver,
-  syncSourceToolArtifacts,
-} from "./tool-artifacts";
+  loadSourceById,
+  loadSourcesInWorkspace,
+  removeCredentialBindingForSource,
+} from "./source-store";
 
 const sourceOps = {
   list: operationErrors("sources.list"),
@@ -50,9 +50,8 @@ const syncArtifactsForSource = (input: {
     | typeof sourceOps.update;
 }) =>
   Effect.gen(function* () {
-    const resolveSecretMaterial = createDbBackedSecretMaterialResolver({
+    const resolveSecretMaterial = createDefaultSecretMaterialResolver({
       rows: input.store,
-      fallback: createEnvSecretMaterialResolver(),
     });
 
     const synced = yield* Effect.either(
@@ -106,26 +105,14 @@ const syncArtifactsForSource = (input: {
 
 export const listSources = (workspaceId: WorkspaceId) =>
   Effect.flatMap(ControlPlaneStore, (store) =>
-    Effect.gen(function* () {
-      const sourceRecords = yield* sourceOps.list.child("records").mapStorage(
-        store.sources.listByWorkspaceId(workspaceId),
-      );
-      const credentialBindings = yield* sourceOps.list.child("bindings").mapStorage(
-        store.sourceCredentialBindings.listByWorkspaceId(workspaceId),
-      );
-
-      return yield* projectSourcesFromStorage({
-        sourceRecords,
-        credentialBindings,
-      }).pipe(
-        Effect.mapError((error) =>
-          sourceOps.list.unknownStorage(
-            error,
-            "Failed projecting stored sources",
-          ),
+    loadSourcesInWorkspace(store, workspaceId).pipe(
+      Effect.mapError((error) =>
+        sourceOps.list.unknownStorage(
+          error,
+          "Failed projecting stored sources",
         ),
-      );
-    }));
+      ),
+    ));
 
 export const createSource = (input: {
   workspaceId: WorkspaceId;
@@ -149,7 +136,7 @@ export const createSource = (input: {
         ),
       );
 
-      const { sourceRecord, credentialBinding } = splitSourceForStorage({
+      const { sourceRecord, credential, credentialBinding } = splitSourceForStorage({
         source,
       });
 
@@ -157,7 +144,11 @@ export const createSource = (input: {
         sourceOps.create.child("source"),
         store.sources.insert(sourceRecord),
       );
-      if (credentialBinding !== null) {
+      if (credential !== null && credentialBinding !== null) {
+        yield* mapPersistenceError(
+          sourceOps.create.child("credential"),
+          store.credentials.upsert(credential),
+        );
         yield* mapPersistenceError(
           sourceOps.create.child("binding"),
           store.sourceCredentialBindings.upsert(credentialBinding),
@@ -176,39 +167,22 @@ export const getSource = (input: {
   sourceId: SourceId;
 }) =>
   Effect.flatMap(ControlPlaneStore, (store) =>
-    Effect.gen(function* () {
-      const existing = yield* sourceOps.get.mapStorage(
-        store.sources.getByWorkspaceAndId(input.workspaceId, input.sourceId),
-      );
-
-      if (Option.isNone(existing)) {
-        return yield* Effect.fail(
-          sourceOps.get.notFound(
-            "Source not found",
-            `workspaceId=${input.workspaceId} sourceId=${input.sourceId}`,
-          ),
-        );
-      }
-
-      const credentialBinding = yield* sourceOps.get.child("binding").mapStorage(
-        store.sourceCredentialBindings.getByWorkspaceAndSourceId(
-          input.workspaceId,
-          input.sourceId,
-        ),
-      );
-
-      return yield* projectSourceFromStorage({
-        sourceRecord: existing.value,
-        credentialBinding: Option.isSome(credentialBinding) ? credentialBinding.value : null,
-      }).pipe(
-        Effect.mapError((cause) =>
-          sourceOps.get.unknownStorage(
-            cause,
-            "Failed projecting stored source",
-          ),
-        ),
-      );
-    }));
+    loadSourceById(store, {
+      workspaceId: input.workspaceId,
+      sourceId: input.sourceId,
+    }).pipe(
+      Effect.mapError((cause) =>
+        cause instanceof Error && cause.message.startsWith("Source not found:")
+          ? sourceOps.get.notFound(
+              "Source not found",
+              `workspaceId=${input.workspaceId} sourceId=${input.sourceId}`,
+            )
+          : sourceOps.get.unknownStorage(
+              cause,
+              "Failed projecting stored source",
+            ),
+      ),
+    ));
 
 export const updateSource = (input: {
   workspaceId: WorkspaceId;
@@ -237,15 +211,20 @@ export const updateSource = (input: {
         ),
       );
 
-      const existingSource = yield* projectSourceFromStorage({
-        sourceRecord: existing.value,
-        credentialBinding: Option.isSome(existingBinding) ? existingBinding.value : null,
+      const existingSource = yield* loadSourceById(store, {
+        workspaceId: input.workspaceId,
+        sourceId: input.sourceId,
       }).pipe(
         Effect.mapError((cause) =>
-          sourceOps.update.unknownStorage(
-            cause,
-            "Failed projecting stored source",
-          ),
+          cause instanceof Error && cause.message.startsWith("Source not found:")
+            ? sourceOps.update.notFound(
+                "Source not found",
+                `workspaceId=${input.workspaceId} sourceId=${input.sourceId}`,
+              )
+            : sourceOps.update.unknownStorage(
+                cause,
+                "Failed projecting stored source",
+              ),
         ),
       );
 
@@ -262,8 +241,14 @@ export const updateSource = (input: {
         ),
       );
 
-      const { sourceRecord, credentialBinding } = splitSourceForStorage({
+      const { sourceRecord, credential, credentialBinding } = splitSourceForStorage({
         source: updatedSource,
+        existingCredentialId: Option.isSome(existingBinding)
+          ? existingBinding.value.credentialId
+          : null,
+        existingBindingId: Option.isSome(existingBinding)
+          ? existingBinding.value.id
+          : null,
       });
       const { sourceDocumentText: _sourceDocumentText, ...sourcePatch } = sourceRecord;
 
@@ -284,14 +269,23 @@ export const updateSource = (input: {
         );
       }
 
-      if (credentialBinding === null) {
-        yield* sourceOps.update.child("binding.remove").mapStorage(
-          store.sourceCredentialBindings.removeByWorkspaceAndSourceId(
-            input.workspaceId,
-            input.sourceId,
-          ),
-        );
+      if (credential === null || credentialBinding === null) {
+        if (Option.isSome(existingBinding)) {
+          yield* sourceOps.update.child("binding.remove").mapStorage(
+            store.sourceCredentialBindings.removeByWorkspaceAndSourceId(
+              input.workspaceId,
+              input.sourceId,
+            ),
+          );
+          yield* sourceOps.update.child("credential.remove").mapStorage(
+            store.credentials.removeById(existingBinding.value.credentialId),
+          );
+        }
       } else {
+        yield* mapPersistenceError(
+          sourceOps.update.child("credential"),
+          store.credentials.upsert(credential),
+        );
         yield* mapPersistenceError(
           sourceOps.update.child("binding"),
           store.sourceCredentialBindings.upsert(credentialBinding),
@@ -311,6 +305,17 @@ export const removeSource = (input: {
 }) =>
   Effect.flatMap(ControlPlaneStore, (store) =>
     Effect.gen(function* () {
+      yield* sourceOps.remove.child("credential.remove").mapStorage(
+        removeCredentialBindingForSource(store, {
+          workspaceId: input.workspaceId,
+          sourceId: input.sourceId,
+        }),
+      );
+
+      yield* sourceOps.remove.child("artifacts").mapStorage(
+        store.toolArtifacts.removeByWorkspaceAndSourceId(input.workspaceId, input.sourceId),
+      );
+
       yield* sourceOps.remove.child("artifacts").mapStorage(
         store.toolArtifacts.removeByWorkspaceAndSourceId(input.workspaceId, input.sourceId),
       );

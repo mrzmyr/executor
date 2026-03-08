@@ -18,6 +18,10 @@ import {
   operationErrors,
 } from "./operation-errors";
 import { RuntimeSourceAuthServiceTag } from "./source-auth-service";
+import {
+  createSourceCredentialSelectionBearerContent,
+  createSourceCredentialSelectionNoneContent,
+} from "./source-credential-interactions";
 import { ControlPlaneStore } from "./store";
 
 const localOps = {
@@ -253,9 +257,7 @@ export const submitSourceCredentialInteraction = (input: {
         executionId: interaction.executionId,
         response: {
           action: "accept",
-          content: {
-            authKind: "none",
-          },
+          content: createSourceCredentialSelectionNoneContent(),
         },
       });
 
@@ -286,7 +288,7 @@ export const submitSourceCredentialInteraction = (input: {
     }
 
     const sourceAuthService = yield* RuntimeSourceAuthServiceTag;
-    const tokenSecretMaterialId = yield* sourceAuthService.storeSecretMaterial({
+    const tokenRef = yield* sourceAuthService.storeSecretMaterial({
       purpose: "auth_material",
       value: token,
     }).pipe(
@@ -303,10 +305,7 @@ export const submitSourceCredentialInteraction = (input: {
       executionId: interaction.executionId,
       response: {
         action: "accept",
-        content: {
-          authKind: "bearer",
-          tokenSecretMaterialId,
-        },
+        content: createSourceCredentialSelectionBearerContent(tokenRef),
       },
     });
 

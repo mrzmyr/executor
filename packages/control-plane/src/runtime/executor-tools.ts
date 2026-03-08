@@ -26,6 +26,7 @@ import {
   deriveSchemaJson,
   deriveSchemaTypeSignature,
 } from "./schema-type-signature";
+import { decodeSourceCredentialSelectionContent } from "./source-credential-interactions";
 
 const ExecutorMcpSourceAddInputSchema = Schema.Struct({
   kind: Schema.optional(Schema.Literal("mcp")),
@@ -192,29 +193,19 @@ const promptForSourceCredentialSelection = (input: {
       );
     }
 
-    const authKind =
-      response.content && typeof response.content.authKind === "string"
-        ? response.content.authKind.trim()
-        : "";
-
-    if (authKind === "none") {
-      return { kind: "none" } satisfies ExecutorOpenApiSourceAuthInput;
-    }
-
-    const tokenSecretMaterialId =
-      response.content && typeof response.content.tokenSecretMaterialId === "string"
-        ? response.content.tokenSecretMaterialId.trim()
-        : "";
-
-    if (authKind !== "bearer" || tokenSecretMaterialId.length === 0) {
-      return yield* Effect.fail(
+    const content = yield* Effect.try({
+      try: () => decodeSourceCredentialSelectionContent(response.content),
+      catch: () =>
         new Error("Credential capture did not return a valid source auth choice for executor.sources.add"),
-      );
+    });
+
+    if (content.authKind === "none") {
+      return { kind: "none" } satisfies ExecutorOpenApiSourceAuthInput;
     }
 
     return {
       kind: "bearer",
-      tokenSecretMaterialId,
+      tokenRef: content.tokenRef,
     } satisfies ExecutorOpenApiSourceAuthInput;
   });
 

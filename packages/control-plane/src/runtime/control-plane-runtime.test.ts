@@ -17,6 +17,7 @@ import {
   createSqlControlPlaneRuntime,
   LiveExecutionManagerService,
 } from "./index";
+import { decodeSourceCredentialSelectionContent } from "./source-credential-interactions";
 import { withControlPlaneClient } from "./test-http-client";
 
 const makeRuntime = Effect.acquireRelease(
@@ -155,9 +156,6 @@ describe("control-plane-runtime", () => {
         headersJson: null,
         specUrl: "https://example.com/github-openapi.yaml",
         defaultHeadersJson: null,
-        authKind: "none",
-        authHeaderName: null,
-        authPrefix: null,
         sourceHash: null,
         sourceDocumentText: null,
         lastError: null,
@@ -242,10 +240,21 @@ describe("control-plane-runtime", () => {
       const response = yield* Fiber.join(interactionFiber);
       expect(response.action).toBe("accept");
       expect(response.content?.authKind).toBe("bearer");
-      expect(typeof response.content?.tokenSecretMaterialId).toBe("string");
+
+      const decodedCredentialSelection = decodeSourceCredentialSelectionContent(
+        response.content,
+      );
+      expect(decodedCredentialSelection.authKind).toBe("bearer");
+      expect(
+        decodedCredentialSelection.authKind === "bearer"
+          ? decodedCredentialSelection.tokenRef.providerId
+          : null,
+      ).toBe("postgres");
 
       const tokenSecretMaterialId = SecretMaterialIdSchema.make(
-        String(response.content?.tokenSecretMaterialId),
+        decodedCredentialSelection.authKind === "bearer"
+          ? decodedCredentialSelection.tokenRef.handle
+          : "",
       );
       const storedSecret = yield* runtime.persistence.rows.secretMaterials.getById(
         tokenSecretMaterialId,
@@ -258,7 +267,7 @@ describe("control-plane-runtime", () => {
       );
       assertTrue(Option.isSome(storedInteraction));
       expect(storedInteraction.value.responseJson).toContain("\"authKind\":\"bearer\"");
-      expect(storedInteraction.value.responseJson).toContain("tokenSecretMaterialId");
+      expect(storedInteraction.value.responseJson).not.toContain("tokenRef");
       expect(storedInteraction.value.responseJson).not.toContain("ghp_local_test_token");
     }),
   );
@@ -304,9 +313,6 @@ describe("control-plane-runtime", () => {
         headersJson: null,
         specUrl: "https://example.com/github-openapi.yaml",
         defaultHeadersJson: null,
-        authKind: "none",
-        authHeaderName: null,
-        authPrefix: null,
         sourceHash: null,
         sourceDocumentText: null,
         lastError: null,
@@ -381,7 +387,7 @@ describe("control-plane-runtime", () => {
       );
       assertTrue(Option.isSome(storedInteraction));
       expect(storedInteraction.value.responseJson).toContain("\"authKind\":\"none\"");
-      expect(storedInteraction.value.responseJson).not.toContain("tokenSecretMaterialId");
+      expect(storedInteraction.value.responseJson).not.toContain("tokenRef");
     }),
   );
 

@@ -86,6 +86,10 @@ export const createWorkspacesRepo = (
         .where(eq(tables.sourceCredentialBindingsTable.workspaceId, workspaceId));
 
       await tx
+        .delete(tables.credentialsTable)
+        .where(eq(tables.credentialsTable.workspaceId, workspaceId));
+
+      await tx
         .delete(tables.sourcesTable)
         .where(eq(tables.sourcesTable.workspaceId, workspaceId));
 

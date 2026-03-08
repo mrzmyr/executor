@@ -3,10 +3,7 @@ import {
 } from "drizzle-orm/effect-schema";
 import { Schema } from "effect";
 
-import {
-  sourceCredentialBindingsTable,
-  sourcesTable,
-} from "../../persistence/schema";
+import { sourcesTable } from "../../persistence/schema";
 import { TimestampMsSchema } from "../common";
 import { SourceIdSchema, WorkspaceIdSchema } from "../ids";
 
@@ -66,9 +63,6 @@ const sourceRowSchemaOverrides = {
   kind: SourceKindSchema,
   status: SourceStatusSchema,
   transport: Schema.NullOr(SourceTransportSchema),
-  authKind: Schema.Literal("none", "bearer", "oauth2"),
-  authHeaderName: Schema.NullOr(Schema.String),
-  authPrefix: Schema.NullOr(Schema.String),
   createdAt: TimestampMsSchema,
   updatedAt: TimestampMsSchema,
 } as const;
@@ -91,9 +85,6 @@ export const StoredSourceRecordSchema = Schema.transform(
     headersJson: Schema.NullOr(Schema.String),
     specUrl: Schema.NullOr(Schema.String),
     defaultHeadersJson: Schema.NullOr(Schema.String),
-    authKind: Schema.Literal("none", "bearer", "oauth2"),
-    authHeaderName: Schema.NullOr(Schema.String),
-    authPrefix: Schema.NullOr(Schema.String),
     sourceHash: Schema.NullOr(Schema.String),
     sourceDocumentText: Schema.NullOr(Schema.String),
     lastError: Schema.NullOr(Schema.String),
@@ -116,9 +107,6 @@ export const StoredSourceRecordSchema = Schema.transform(
       headersJson: row.headersJson,
       specUrl: row.specUrl,
       defaultHeadersJson: row.defaultHeadersJson,
-      authKind: row.authKind,
-      authHeaderName: row.authHeaderName,
-      authPrefix: row.authPrefix,
       sourceHash: row.sourceHash,
       sourceDocumentText: row.sourceDocumentText,
       lastError: row.lastError,
@@ -139,9 +127,6 @@ export const StoredSourceRecordSchema = Schema.transform(
       headersJson: source.headersJson,
       specUrl: source.specUrl,
       defaultHeadersJson: source.defaultHeadersJson,
-      authKind: source.authKind,
-      authHeaderName: source.authHeaderName,
-      authPrefix: source.authPrefix,
       sourceHash: source.sourceHash,
       sourceDocumentText: source.sourceDocumentText,
       lastError: source.lastError,
@@ -149,22 +134,6 @@ export const StoredSourceRecordSchema = Schema.transform(
       updatedAt: source.updatedAt,
     }),
   },
-);
-
-const sourceCredentialBindingSchemaOverrides = {
-  workspaceId: WorkspaceIdSchema,
-  sourceId: SourceIdSchema,
-  tokenProviderId: Schema.NullOr(Schema.String),
-  tokenHandle: Schema.NullOr(Schema.String),
-  refreshTokenProviderId: Schema.NullOr(Schema.String),
-  refreshTokenHandle: Schema.NullOr(Schema.String),
-  createdAt: TimestampMsSchema,
-  updatedAt: TimestampMsSchema,
-} as const;
-
-export const SourceCredentialBindingSchema = createSelectSchema(
-  sourceCredentialBindingsTable,
-  sourceCredentialBindingSchemaOverrides,
 );
 
 export const SourceSchema = Schema.Struct({
@@ -194,6 +163,5 @@ export type SourceTransport = typeof SourceTransportSchema.Type;
 export type SecretRef = typeof SecretRefSchema.Type;
 export type SourceAuth = typeof SourceAuthSchema.Type;
 export type StoredSourceRecord = typeof StoredSourceRecordSchema.Type;
-export type SourceCredentialBinding = typeof SourceCredentialBindingSchema.Type;
 export type StringMap = typeof StringMapSchema.Type;
 export type Source = typeof SourceSchema.Type;

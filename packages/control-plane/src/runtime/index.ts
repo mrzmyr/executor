@@ -37,8 +37,8 @@ import {
 import {
   RuntimeSourceAuthServiceLive,
   RuntimeSourceAuthServiceTag,
-  type ResolveSecretMaterial,
 } from "./source-auth-service";
+import type { ResolveSecretMaterial } from "./secret-material-providers";
 import {
   RuntimeExecutionResolverLive,
   RuntimeExecutionResolverService,
@@ -55,6 +55,8 @@ export * from "./live-execution";
 export * from "./local-installation";
 export * from "./schema-type-signature";
 export * from "./source-auth-service";
+export * from "./secret-material-providers";
+export * from "./source-credential-interactions";
 export * from "./store";
 export * from "./workspace-execution-environment";
 export * from "./source-inspection";

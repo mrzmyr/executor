@@ -152,6 +152,10 @@ export const createOrganizationsRepo = (
           .where(inArray(tables.sourceCredentialBindingsTable.workspaceId, workspaceIds));
 
         await tx
+          .delete(tables.credentialsTable)
+          .where(inArray(tables.credentialsTable.workspaceId, workspaceIds));
+
+        await tx
           .delete(tables.sourcesTable)
           .where(inArray(tables.sourcesTable.workspaceId, workspaceIds));
 

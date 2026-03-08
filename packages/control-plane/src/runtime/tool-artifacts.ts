@@ -21,9 +21,10 @@ import {
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 
-export type ResolveSourceSecretMaterial = (
-  ref: SecretRef,
-) => Effect.Effect<string, Error, never>;
+import type {
+  ResolveSecretMaterial as ResolveSourceSecretMaterial,
+  SecretMaterialResolveContext,
+} from "./secret-material-providers";
 
 export type ResolvedSourceAuthMaterial = {
   headers: Readonly<Record<string, string>>;
@@ -122,28 +123,10 @@ export const namespaceFromSourceName = (name: string): string => {
   return normalized.length > 0 ? normalized : "source";
 };
 
-export const createEnvSecretMaterialResolver = (): ResolveSourceSecretMaterial =>
-  (ref) =>
-    Effect.gen(function* () {
-      if (ref.providerId !== "env") {
-        return yield* Effect.fail(
-          new Error(`Unsupported secret provider ${ref.providerId}`),
-        );
-      }
-
-      const value = process.env[ref.handle]?.trim();
-      if (!value) {
-        return yield* Effect.fail(
-          new Error(`Environment variable ${ref.handle} is not set`),
-        );
-      }
-
-      return value;
-    });
-
 export const resolveSourceAuthMaterial = (input: {
   source: Source;
   resolveSecretMaterial: ResolveSourceSecretMaterial;
+  context?: SecretMaterialResolveContext;
 }): Effect.Effect<ResolvedSourceAuthMaterial, Error, never> =>
   Effect.gen(function* () {
     if (input.source.auth.kind === "none") {
@@ -155,7 +138,10 @@ export const resolveSourceAuthMaterial = (input: {
         ? input.source.auth.token
         : input.source.auth.accessToken;
 
-    const token = yield* input.resolveSecretMaterial(tokenRef);
+    const token = yield* input.resolveSecretMaterial({
+      ref: tokenRef,
+      context: input.context,
+    });
 
     return {
       headers: {

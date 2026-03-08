@@ -3,6 +3,7 @@ export { createOrganizationsRepo } from "./organizations-repo";
 export { createOrganizationMembershipsRepo } from "./organization-memberships-repo";
 export { createWorkspacesRepo } from "./workspaces-repo";
 export { createSourcesRepo } from "./sources-repo";
+export { createCredentialsRepo } from "./credentials-repo";
 export { createToolArtifactsRepo } from "./tool-artifacts-repo";
 export { createSourceCredentialBindingsRepo } from "./source-credential-bindings-repo";
 export { createSecretMaterialsRepo } from "./secret-materials-repo";

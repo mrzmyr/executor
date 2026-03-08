@@ -21,6 +21,10 @@ export {
   type SourceTransport,
 } from "./models/source";
 export {
+  CredentialAuthKindSchema,
+  type CredentialAuthKind,
+} from "./models/credential";
+export {
   PolicyApprovalModeSchema,
   PolicyEffectSchema,
   PolicyMatchTypeSchema,

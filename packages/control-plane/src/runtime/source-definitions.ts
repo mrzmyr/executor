@@ -3,6 +3,7 @@ import type {
   UpdateSourcePayload,
 } from "#api";
 import type {
+  Credential,
   Source,
   SourceAuth,
   SourceCredentialBinding,
@@ -11,6 +12,7 @@ import type {
   StringMap,
   WorkspaceId,
 } from "#schema";
+import { CredentialIdSchema } from "#schema";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 
@@ -232,8 +234,11 @@ export const updateSourceFromPayload = (input: {
 
 export const splitSourceForStorage = (input: {
   source: Source;
+  existingCredentialId?: Credential["id"] | null;
+  existingBindingId?: SourceCredentialBinding["id"] | null;
 }): {
   sourceRecord: StoredSourceRecord;
+  credential: Credential | null;
   credentialBinding: SourceCredentialBinding | null;
 } => {
   const sourceRecord: StoredSourceRecord = {
@@ -250,10 +255,6 @@ export const splitSourceForStorage = (input: {
     headersJson: serializeStringMap(input.source.headers),
     specUrl: input.source.specUrl,
     defaultHeadersJson: serializeStringMap(input.source.defaultHeaders),
-    authKind: input.source.auth.kind,
-    authHeaderName:
-      input.source.auth.kind === "none" ? null : input.source.auth.headerName,
-    authPrefix: input.source.auth.kind === "none" ? null : input.source.auth.prefix,
     sourceHash: input.source.sourceHash,
     sourceDocumentText: null,
     lastError: input.source.lastError,
@@ -264,31 +265,49 @@ export const splitSourceForStorage = (input: {
   if (input.source.auth.kind === "none") {
     return {
       sourceRecord,
+      credential: null,
       credentialBinding: null,
     };
   }
 
+  const credentialId = input.existingCredentialId
+    ?? CredentialIdSchema.make(`cred_${crypto.randomUUID()}`);
+  const bindingId = input.existingBindingId ?? `src_cred_bind_${crypto.randomUUID()}`;
+
+  const credential: Credential = {
+    id: credentialId,
+    workspaceId: input.source.workspaceId,
+    authKind: input.source.auth.kind,
+    authHeaderName: input.source.auth.headerName,
+    authPrefix: input.source.auth.prefix,
+    tokenProviderId:
+      input.source.auth.kind === "bearer"
+        ? input.source.auth.token.providerId
+        : input.source.auth.accessToken.providerId,
+    tokenHandle:
+      input.source.auth.kind === "bearer"
+        ? input.source.auth.token.handle
+        : input.source.auth.accessToken.handle,
+    refreshTokenProviderId:
+      input.source.auth.kind === "oauth2" && input.source.auth.refreshToken !== null
+        ? input.source.auth.refreshToken.providerId
+        : null,
+    refreshTokenHandle:
+      input.source.auth.kind === "oauth2" && input.source.auth.refreshToken !== null
+        ? input.source.auth.refreshToken.handle
+        : null,
+    createdAt: input.source.createdAt,
+    updatedAt: input.source.updatedAt,
+  };
+
   return {
     sourceRecord,
+    credential,
     credentialBinding: {
+      id: bindingId,
       workspaceId: input.source.workspaceId,
       sourceId: input.source.id,
-      tokenProviderId:
-        input.source.auth.kind === "bearer"
-          ? input.source.auth.token.providerId
-          : input.source.auth.accessToken.providerId,
-      tokenHandle:
-        input.source.auth.kind === "bearer"
-          ? input.source.auth.token.handle
-          : input.source.auth.accessToken.handle,
-      refreshTokenProviderId:
-        input.source.auth.kind === "oauth2" && input.source.auth.refreshToken !== null
-          ? input.source.auth.refreshToken.providerId
-          : null,
-      refreshTokenHandle:
-        input.source.auth.kind === "oauth2" && input.source.auth.refreshToken !== null
-          ? input.source.auth.refreshToken.handle
-          : null,
+      credentialId,
       createdAt: input.source.createdAt,
       updatedAt: input.source.updatedAt,
     },
@@ -298,6 +317,7 @@ export const splitSourceForStorage = (input: {
 export const projectSourceFromStorage = (input: {
   sourceRecord: StoredSourceRecord;
   credentialBinding: SourceCredentialBinding | null;
+  credential: Credential | null;
 }): Effect.Effect<Source, Error, never> =>
   Effect.gen(function* () {
     const queryParams = yield* parseStringMapJson(
@@ -313,44 +333,39 @@ export const projectSourceFromStorage = (input: {
       input.sourceRecord.defaultHeadersJson,
     );
 
-    let auth: SourceAuth;
-    if (input.sourceRecord.authKind === "none") {
-      auth = { kind: "none" };
-    } else {
-      const binding = input.credentialBinding;
-      if (binding === null || binding.tokenProviderId === null || binding.tokenHandle === null) {
+    let auth: SourceAuth = { kind: "none" };
+    if (input.credentialBinding !== null) {
+      const credential = input.credential;
+      if (credential === null) {
         return yield* Effect.fail(
-          new Error(`Missing credential binding for source ${input.sourceRecord.id}`),
+          new Error(`Missing credential ${input.credentialBinding.credentialId} for source ${input.sourceRecord.id}`),
         );
       }
 
-      const headerName = trimOrNull(input.sourceRecord.authHeaderName) ?? "Authorization";
-      const prefix = input.sourceRecord.authPrefix ?? "Bearer ";
-
-      if (input.sourceRecord.authKind === "bearer") {
+      if (credential.authKind === "bearer") {
         auth = {
           kind: "bearer",
-          headerName,
-          prefix,
+          headerName: credential.authHeaderName,
+          prefix: credential.authPrefix,
           token: {
-            providerId: binding.tokenProviderId,
-            handle: binding.tokenHandle,
+            providerId: credential.tokenProviderId,
+            handle: credential.tokenHandle,
           },
         };
       } else {
         auth = {
           kind: "oauth2",
-          headerName,
-          prefix,
+          headerName: credential.authHeaderName,
+          prefix: credential.authPrefix,
           accessToken: {
-            providerId: binding.tokenProviderId,
-            handle: binding.tokenHandle,
+            providerId: credential.tokenProviderId,
+            handle: credential.tokenHandle,
           },
           refreshToken:
-            binding.refreshTokenProviderId !== null && binding.refreshTokenHandle !== null
+            credential.refreshTokenProviderId !== null && credential.refreshTokenHandle !== null
               ? {
-                  providerId: binding.refreshTokenProviderId,
-                  handle: binding.refreshTokenHandle,
+                  providerId: credential.refreshTokenProviderId,
+                  handle: credential.refreshTokenHandle,
                 }
               : null,
         };
@@ -386,15 +401,24 @@ export const projectSourceFromStorage = (input: {
 export const projectSourcesFromStorage = (input: {
   sourceRecords: ReadonlyArray<StoredSourceRecord>;
   credentialBindings: ReadonlyArray<SourceCredentialBinding>;
+  credentials: ReadonlyArray<Credential>;
 }): Effect.Effect<ReadonlyArray<Source>, Error, never> => {
   const bindingsBySourceId = new Map(
     input.credentialBindings.map((binding) => [binding.sourceId, binding]),
   );
-
-  return Effect.forEach(input.sourceRecords, (sourceRecord) =>
-    projectSourceFromStorage({
-      sourceRecord,
-      credentialBinding: bindingsBySourceId.get(sourceRecord.id) ?? null,
-    }),
+  const credentialsById = new Map(
+    input.credentials.map((credential) => [credential.id, credential]),
   );
+
+  return Effect.forEach(input.sourceRecords, (sourceRecord) => {
+    const credentialBinding = bindingsBySourceId.get(sourceRecord.id) ?? null;
+    return projectSourceFromStorage({
+      sourceRecord,
+      credentialBinding,
+      credential:
+        credentialBinding === null
+          ? null
+          : credentialsById.get(credentialBinding.credentialId) ?? null,
+    });
+  });
 };

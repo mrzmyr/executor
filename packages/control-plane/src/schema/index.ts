@@ -5,6 +5,7 @@ export * from "./ids";
 export * from "./models/auth";
 export * from "./models/workspace";
 export * from "./models/source";
+export * from "./models/credential";
 export * from "./models/tool-artifact";
 export * from "./models/secret-material";
 export * from "./models/source-auth-session";

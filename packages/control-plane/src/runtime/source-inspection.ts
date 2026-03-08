@@ -27,7 +27,7 @@ import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 
 import { operationErrors } from "./operation-errors";
-import { projectSourceFromStorage } from "./source-definitions";
+import { loadSourceById as loadStoredSourceById } from "./source-store";
 import { ControlPlaneStore, type ControlPlaneStoreShape } from "./store";
 import { namespaceFromSourceName } from "./tool-artifacts";
 
@@ -97,18 +97,9 @@ const loadSourceRecord = (input: {
         );
       }
 
-      const credentialBinding = yield* sourceInspectOps.bundle.child("binding").mapStorage(
-        store.sourceCredentialBindings.getByWorkspaceAndSourceId(
-          input.workspaceId,
-          input.sourceId,
-        ),
-      );
-
-      const source = yield* projectSourceFromStorage({
-        sourceRecord: sourceRecord.value,
-        credentialBinding: Option.isSome(credentialBinding)
-          ? credentialBinding.value
-          : null,
+      const source = yield* loadStoredSourceById(store, {
+        workspaceId: input.workspaceId,
+        sourceId: input.sourceId,
       }).pipe(
         Effect.mapError((cause) =>
           sourceInspectOps.bundle.unknownStorage(

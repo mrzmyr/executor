@@ -18,8 +18,7 @@ import {
 } from "#persistence";
 import {
   ExecutionIdSchema,
-  type SecretMaterialId,
-  SecretMaterialIdSchema,
+  type SecretMaterialPurpose,
   Source,
   SourceAuthSession,
   SourceAuthSessionIdSchema,
@@ -41,18 +40,23 @@ import {
 } from "./live-execution";
 import {
   createSourceFromPayload,
-  projectSourceFromStorage,
-  projectSourcesFromStorage,
-  splitSourceForStorage,
   updateSourceFromPayload,
 } from "./source-definitions";
 import {
-  createEnvSecretMaterialResolver,
+  createDefaultSecretMaterialResolver,
+  createDefaultSecretMaterialStorer,
+  type ResolveSecretMaterial,
+  type StoreSecretMaterial,
+} from "./secret-material-providers";
+import {
   persistMcpToolArtifactsFromManifest,
   syncSourceToolArtifacts,
 } from "./tool-artifacts";
-
-export const CONTROL_PLANE_SECRET_PROVIDER_ID = "control-plane";
+import {
+  loadSourceById,
+  loadSourcesInWorkspace,
+  persistSource,
+} from "./source-store";
 
 const trimOrNull = (value: string | null | undefined): string | null => {
   if (value === null || value === undefined) {
@@ -119,67 +123,7 @@ const normalizeEndpoint = (endpoint: string): string => {
 const toError = (cause: unknown): Error =>
   cause instanceof Error ? cause : new Error(String(cause));
 
-const loadSourcesInWorkspace = (rows: SqlControlPlaneRows, workspaceId: WorkspaceId) =>
-  Effect.gen(function* () {
-    const sourceRecords = yield* rows.sources.listByWorkspaceId(workspaceId);
-    const credentialBindings = yield* rows.sourceCredentialBindings.listByWorkspaceId(workspaceId);
 
-    return yield* projectSourcesFromStorage({
-      sourceRecords,
-      credentialBindings,
-    });
-  });
-
-const loadSourceById = (rows: SqlControlPlaneRows, input: {
-  workspaceId: WorkspaceId;
-  sourceId: Source["id"];
-}) =>
-  Effect.gen(function* () {
-    const sourceRecord = yield* rows.sources.getByWorkspaceAndId(
-      input.workspaceId,
-      input.sourceId,
-    );
-
-    if (Option.isNone(sourceRecord)) {
-      return yield* Effect.fail(
-        new Error(`Source not found: workspaceId=${input.workspaceId} sourceId=${input.sourceId}`),
-      );
-    }
-
-    const credentialBinding = yield* rows.sourceCredentialBindings.getByWorkspaceAndSourceId(
-      input.workspaceId,
-      input.sourceId,
-    );
-
-    return yield* projectSourceFromStorage({
-      sourceRecord: sourceRecord.value,
-      credentialBinding: Option.isSome(credentialBinding) ? credentialBinding.value : null,
-    });
-  });
-
-const persistSource = (rows: SqlControlPlaneRows, source: Source) =>
-  Effect.gen(function* () {
-    const { sourceRecord, credentialBinding } = splitSourceForStorage({ source });
-    const existing = yield* rows.sources.getByWorkspaceAndId(source.workspaceId, source.id);
-
-    if (Option.isNone(existing)) {
-      yield* rows.sources.insert(sourceRecord);
-    } else {
-      const { id: _id, workspaceId: _workspaceId, createdAt: _createdAt, sourceDocumentText: _sourceDocumentText, ...patch } = sourceRecord;
-      yield* rows.sources.update(source.workspaceId, source.id, patch);
-    }
-
-    if (credentialBinding === null) {
-      yield* rows.sourceCredentialBindings.removeByWorkspaceAndSourceId(
-        source.workspaceId,
-        source.id,
-      );
-    } else {
-      yield* rows.sourceCredentialBindings.upsert(credentialBinding);
-    }
-
-    return source;
-  });
 
 const probeMcpSourceWithoutAuth = (
   source: Source,
@@ -303,7 +247,6 @@ const startOAuthAuthorization = (input: {
 
 type ExchangedTokens = {
   tokens: OAuthTokens;
-  clientInformationJson: string | null;
   resourceMetadataUrl: string | null;
   authorizationServerUrl: string | null;
   resourceMetadataJson: string | null;
@@ -385,7 +328,6 @@ const exchangeOAuthAuthorizationCode = (input: {
 
     return {
       tokens: captured.tokens,
-      clientInformationJson: serializeJson(captured.clientInformation),
       resourceMetadataUrl: captured.discoveryState?.resourceMetadataUrl ?? null,
       authorizationServerUrl: captured.discoveryState?.authorizationServerUrl ?? null,
       resourceMetadataJson: serializeJson(captured.discoveryState?.resourceMetadata),
@@ -394,6 +336,29 @@ const exchangeOAuthAuthorizationCode = (input: {
       ),
     } satisfies ExchangedTokens;
   });
+
+export const createTerminalSourceAuthSessionPatch = (input: {
+  status: Extract<SourceAuthSession["status"], "completed" | "failed" | "cancelled">;
+  now: number;
+  errorText: string | null;
+  resourceMetadataUrl?: string | null;
+  authorizationServerUrl?: string | null;
+  resourceMetadataJson?: string | null;
+  authorizationServerMetadataJson?: string | null;
+}) => ({
+  status: input.status,
+  errorText: input.errorText,
+  completedAt: input.now,
+  updatedAt: input.now,
+  codeVerifier: null,
+  authorizationUrl: null,
+  clientInformationJson: null,
+  resourceMetadataUrl: input.resourceMetadataUrl ?? null,
+  authorizationServerUrl: input.authorizationServerUrl ?? null,
+  resourceMetadataJson: input.resourceMetadataJson ?? null,
+  authorizationServerMetadataJson: input.authorizationServerMetadataJson ?? null,
+}) satisfies Partial<SourceAuthSession>;
+
 
 const completeLiveInteraction = (input: {
   liveExecutionManager: LiveExecutionManager;
@@ -446,24 +411,6 @@ const updateSourceStatus = (rows: SqlControlPlaneRows, source: Source, input: {
     });
   });
 
-const upsertSecretMaterial = (rows: SqlControlPlaneRows, input: {
-  purpose: "auth_material" | "oauth_access_token" | "oauth_refresh_token";
-  value: string;
-}) =>
-  Effect.gen(function* () {
-    const now = Date.now();
-    const materialId = SecretMaterialIdSchema.make(`sec_${crypto.randomUUID()}`);
-    yield* rows.secretMaterials.upsert({
-      id: materialId,
-      purpose: input.purpose,
-      value: input.value,
-      createdAt: now,
-      updatedAt: now,
-    });
-
-    return materialId;
-  });
-
 export type ExecutorSourceAddResult =
   | {
       kind: "connected";
@@ -489,8 +436,7 @@ export type ExecutorOpenApiSourceAuthInput =
       headerName?: string | null;
       prefix?: string | null;
       token?: string | null;
-      tokenEnvVar?: string | null;
-      tokenSecretMaterialId?: string | null;
+      tokenRef?: SecretRef | null;
     };
 
 export type ExecutorAddSourceInput =
@@ -527,9 +473,9 @@ const shouldPromptForOpenApiCredentialSetup = (input: {
 };
 
 const materializeExecutorOpenApiAuth = (input: {
-  rows: SqlControlPlaneRows;
   existing?: Source;
   auth?: ExecutorOpenApiSourceAuthInput | null;
+  storeSecretMaterial: StoreSecretMaterial;
 }): Effect.Effect<Source["auth"], Error, never> =>
   Effect.gen(function* () {
     if (input.auth === undefined && input.existing?.kind === "openapi") {
@@ -544,42 +490,46 @@ const materializeExecutorOpenApiAuth = (input: {
     const headerName = trimOrNull(auth.headerName) ?? "Authorization";
     const prefix = auth.prefix ?? "Bearer ";
     const token = trimOrNull(auth.token);
-    const tokenEnvVar = trimOrNull(auth.tokenEnvVar);
-    const tokenSecretMaterialId = trimOrNull(auth.tokenSecretMaterialId);
+    const tokenRefInput = auth.tokenRef ?? null;
 
     if (
       token === null
-      && tokenEnvVar === null
-      && tokenSecretMaterialId === null
+      && tokenRefInput === null
       && input.existing?.kind === "openapi"
       && input.existing.auth.kind === "bearer"
     ) {
       return input.existing.auth;
     }
 
-    if (token === null && tokenEnvVar === null && tokenSecretMaterialId === null) {
+    if (token === null && tokenRefInput === null) {
       return yield* Effect.fail(
-        new Error("Bearer auth requires token, tokenEnvVar, or tokenSecretMaterialId"),
+        new Error("Bearer auth requires token or tokenRef"),
       );
     }
 
-    const tokenRef: SecretRef = token !== null
-      ? {
-          providerId: CONTROL_PLANE_SECRET_PROVIDER_ID,
-          handle: yield* upsertSecretMaterial(input.rows, {
-            purpose: "auth_material",
-            value: token,
-          }),
-        }
-      : tokenSecretMaterialId !== null
-        ? {
-            providerId: CONTROL_PLANE_SECRET_PROVIDER_ID,
-            handle: tokenSecretMaterialId,
+    const tokenRef = token !== null
+      ? yield* input.storeSecretMaterial({
+          purpose: "auth_material",
+          value: token,
+        })
+      : (() => {
+          const providerId = trimOrNull(tokenRefInput?.providerId);
+          const handle = trimOrNull(tokenRefInput?.handle);
+          if (providerId === null || handle === null) {
+            return null;
           }
-      : {
-          providerId: "env",
-          handle: tokenEnvVar!,
-        };
+
+          return {
+            providerId,
+            handle,
+          } satisfies SecretRef;
+        })();
+
+    if (tokenRef === null) {
+      return yield* Effect.fail(
+        new Error("Bearer auth tokenRef must include providerId and handle"),
+      );
+    }
 
     return {
       kind: "bearer",
@@ -596,9 +546,9 @@ type RuntimeSourceAuthServiceShape = {
   }) => Effect.Effect<Source, Error, never>;
   getLocalServerBaseUrl: () => string | null;
   storeSecretMaterial: (input: {
-    purpose: "auth_material" | "oauth_access_token" | "oauth_refresh_token";
+    purpose: SecretMaterialPurpose;
     value: string;
-  }) => Effect.Effect<SecretMaterialId, Error, never>;
+  }) => Effect.Effect<SecretRef, Error, never>;
   addExecutorSource: (
     input: ExecutorAddSourceInput,
     options?: {
@@ -615,50 +565,23 @@ type RuntimeSourceAuthServiceShape = {
   }) => Effect.Effect<Source, Error, never>;
 };
 
-export type ResolveSecretMaterial = (ref: SecretRef) => Effect.Effect<string, Error, never>;
-
-export const createDbBackedSecretMaterialResolver = (input: {
-  rows: SqlControlPlaneRows;
-  fallback?: ResolveSecretMaterial;
-}): ResolveSecretMaterial =>
-  (ref) =>
-    Effect.gen(function* () {
-      if (ref.providerId === CONTROL_PLANE_SECRET_PROVIDER_ID) {
-        const materialId = SecretMaterialIdSchema.make(ref.handle);
-        const stored = yield* input.rows.secretMaterials.getById(materialId);
-        if (Option.isNone(stored)) {
-          return yield* Effect.fail(
-            new Error(`Secret material not found: ${ref.handle}`),
-          );
-        }
-
-        return stored.value.value;
-      }
-
-      if (input.fallback) {
-        return yield* input.fallback(ref);
-      }
-
-      return yield* Effect.fail(
-        new Error(`Unsupported secret provider ${ref.providerId}`),
-      );
-    });
-
 export const createRuntimeSourceAuthService = (input: {
   rows: SqlControlPlaneRows;
   liveExecutionManager: LiveExecutionManager;
   getLocalServerBaseUrl?: () => string | undefined;
 }) => {
-  const resolveSecretMaterial = createDbBackedSecretMaterialResolver({
+  const resolveSecretMaterial = createDefaultSecretMaterialResolver({
     rows: input.rows,
-    fallback: createEnvSecretMaterialResolver(),
+  });
+  const storeSecretMaterial = createDefaultSecretMaterialStorer({
+    rows: input.rows,
   });
 
   return {
   getLocalServerBaseUrl: () => input.getLocalServerBaseUrl?.() ?? null,
 
   storeSecretMaterial: ({ purpose, value }) =>
-    upsertSecretMaterial(input.rows, {
+    storeSecretMaterial({
       purpose,
       value,
     }),
@@ -739,9 +662,9 @@ export const createRuntimeSourceAuthService = (input: {
           }
 
           const auth = yield* materializeExecutorOpenApiAuth({
-            rows: input.rows,
             existing,
             auth: sourceInput.auth,
+            storeSecretMaterial,
           });
 
           const draftSource = existing
@@ -1015,12 +938,18 @@ export const createRuntimeSourceAuthService = (input: {
         const reason = trimOrNull(errorDescription) ?? trimOrNull(error) ?? "OAuth authorization failed";
         const failedAt = Date.now();
 
-        yield* input.rows.sourceAuthSessions.update(session.id, {
-          status: "failed",
-          errorText: reason,
-          completedAt: failedAt,
-          updatedAt: failedAt,
-        });
+        yield* input.rows.sourceAuthSessions.update(
+          session.id,
+          createTerminalSourceAuthSessionPatch({
+            status: "failed",
+            now: failedAt,
+            errorText: reason,
+            resourceMetadataUrl: session.resourceMetadataUrl,
+            authorizationServerUrl: session.authorizationServerUrl,
+            resourceMetadataJson: session.resourceMetadataJson,
+            authorizationServerMetadataJson: session.authorizationServerMetadataJson,
+          }),
+        );
         const failedSource = yield* updateSourceStatus(input.rows, source, {
           status: "error",
           lastError: reason,
@@ -1052,30 +981,18 @@ export const createRuntimeSourceAuthService = (input: {
         code: authorizationCode,
       });
 
-      const accessTokenId = yield* upsertSecretMaterial(input.rows, {
+      const accessTokenRef = yield* storeSecretMaterial({
         purpose: "oauth_access_token",
         value: exchanged.tokens.access_token,
       });
-      const refreshTokenId = exchanged.tokens.refresh_token
-        ? yield* upsertSecretMaterial(input.rows, {
+      const refreshTokenRef = exchanged.tokens.refresh_token
+        ? yield* storeSecretMaterial({
             purpose: "oauth_refresh_token",
             value: exchanged.tokens.refresh_token,
           })
         : null;
 
       const now = Date.now();
-      yield* input.rows.sourceCredentialBindings.upsert({
-        workspaceId: session.workspaceId,
-        sourceId: session.sourceId,
-        tokenProviderId: CONTROL_PLANE_SECRET_PROVIDER_ID,
-        tokenHandle: accessTokenId,
-        refreshTokenProviderId:
-          refreshTokenId === null ? null : CONTROL_PLANE_SECRET_PROVIDER_ID,
-        refreshTokenHandle: refreshTokenId,
-        createdAt: now,
-        updatedAt: now,
-      });
-
       const connectedSource = yield* updateSourceStatus(input.rows, source, {
         status: "connected",
         lastError: null,
@@ -1083,17 +1000,8 @@ export const createRuntimeSourceAuthService = (input: {
           kind: "oauth2",
           headerName: "Authorization",
           prefix: "Bearer ",
-          accessToken: {
-            providerId: CONTROL_PLANE_SECRET_PROVIDER_ID,
-            handle: accessTokenId,
-          },
-          refreshToken:
-            refreshTokenId === null
-              ? null
-              : {
-                  providerId: CONTROL_PLANE_SECRET_PROVIDER_ID,
-                  handle: refreshTokenId,
-          },
+          accessToken: accessTokenRef,
+          refreshToken: refreshTokenRef,
         },
       });
       const indexed = yield* Effect.either(
@@ -1114,17 +1022,18 @@ export const createRuntimeSourceAuthService = (input: {
         onRight: () => Effect.succeed(undefined),
       });
 
-      yield* input.rows.sourceAuthSessions.update(session.id, {
-        status: "completed",
-        errorText: null,
-        completedAt: now,
-        updatedAt: now,
-        resourceMetadataUrl: exchanged.resourceMetadataUrl,
-        authorizationServerUrl: exchanged.authorizationServerUrl,
-        resourceMetadataJson: exchanged.resourceMetadataJson,
-        authorizationServerMetadataJson: exchanged.authorizationServerMetadataJson,
-        clientInformationJson: exchanged.clientInformationJson,
-      });
+      yield* input.rows.sourceAuthSessions.update(
+        session.id,
+        createTerminalSourceAuthSessionPatch({
+          status: "completed",
+          now,
+          errorText: null,
+          resourceMetadataUrl: exchanged.resourceMetadataUrl,
+          authorizationServerUrl: exchanged.authorizationServerUrl,
+          resourceMetadataJson: exchanged.resourceMetadataJson,
+          authorizationServerMetadataJson: exchanged.authorizationServerMetadataJson,
+        }),
+      );
 
       yield* completeLiveInteraction({
         liveExecutionManager: input.liveExecutionManager,

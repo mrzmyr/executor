@@ -15,6 +15,7 @@ import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/
 import { describe, expect, it } from "@effect/vitest";
 import {
   AccountIdSchema,
+  CredentialIdSchema,
   ExecutionIdSchema,
   SecretMaterialIdSchema,
   SourceIdSchema,
@@ -369,9 +370,6 @@ const persistConnectedEchoTool = (input: {
       headersJson: null,
       specUrl: null,
       defaultHeadersJson: null,
-      authKind: "none",
-      authHeaderName: null,
-      authPrefix: null,
       sourceHash: null,
       sourceDocumentText: null,
       lastError: null,
@@ -423,6 +421,11 @@ const persistConnectedGithubOpenApiSource = (input: {
   persistence: SqlControlPlanePersistence;
   workspaceId: WorkspaceId;
   sourceId: SourceId;
+  endpoint?: string;
+  auth?: {
+    providerId: string;
+    handle: string;
+  } | null;
 }) =>
   Effect.gen(function* () {
     const now = Date.now();
@@ -481,6 +484,28 @@ const persistConnectedGithubOpenApiSource = (input: {
             },
           },
         },
+        "/repos/{owner}/{repo}": {
+          get: {
+            operationId: "repos/get-repo",
+            tags: ["repos"],
+            summary: "Get a repository",
+            description: "Gets a repository by owner and name.",
+            parameters: [
+              { name: "owner", in: "path", required: true, schema: { type: "string" } },
+              { name: "repo", in: "path", required: true, schema: { type: "string" } },
+            ],
+            responses: {
+              200: {
+                description: "ok",
+                content: {
+                  "application/json": {
+                    schema: { type: "object" },
+                  },
+                },
+              },
+            },
+          },
+        },
         "/user": {
           get: {
             operationId: "users/get-authenticated",
@@ -508,7 +533,7 @@ const persistConnectedGithubOpenApiSource = (input: {
       workspaceId: input.workspaceId,
       name: "GitHub",
       kind: "openapi",
-      endpoint: "https://api.github.com",
+      endpoint: input.endpoint ?? "https://api.github.com",
       status: "connected",
       enabled: true,
       namespace: "github",
@@ -517,15 +542,38 @@ const persistConnectedGithubOpenApiSource = (input: {
       headersJson: null,
       specUrl: "https://example.com/github-openapi.json",
       defaultHeadersJson: null,
-      authKind: "none",
-      authHeaderName: null,
-      authPrefix: null,
       sourceHash: null,
       sourceDocumentText: openApiDocumentText,
       lastError: null,
       createdAt: now,
       updatedAt: now,
     });
+
+    if (input.auth) {
+      const credentialId = CredentialIdSchema.make(`cred_${randomUUID()}`);
+      yield* input.persistence.rows.credentials.upsert({
+        id: credentialId,
+        workspaceId: input.workspaceId,
+        authKind: "bearer",
+        authHeaderName: "Authorization",
+        authPrefix: "Bearer ",
+        tokenProviderId: input.auth.providerId,
+        tokenHandle: input.auth.handle,
+        refreshTokenProviderId: null,
+        refreshTokenHandle: null,
+        createdAt: now,
+        updatedAt: now,
+      });
+      yield* input.persistence.rows.sourceCredentialBindings.upsert({
+        id: `src_cred_bind_${randomUUID()}`,
+        workspaceId: input.workspaceId,
+        sourceId: input.sourceId,
+        credentialId,
+        createdAt: now,
+        updatedAt: now,
+      });
+    };
+
   });
 
 const makeResolver = (persistence: SqlControlPlanePersistence) =>
@@ -719,7 +767,10 @@ describe("workspace-execution-environment", () => {
               action: "accept" as const,
               content: {
                 authKind: "bearer",
-                tokenSecretMaterialId,
+                tokenRef: {
+                  providerId: "postgres",
+                  handle: tokenSecretMaterialId,
+                },
               },
             };
           }),
@@ -752,7 +803,7 @@ describe("workspace-execution-environment", () => {
       expect(added.kind).toBe("openapi");
       expect(added.status).toBe("connected");
       expect(added.auth.kind).toBe("bearer");
-      expect(added.auth.token?.providerId).toBe("control-plane");
+      expect(added.auth.token?.providerId).toBe("postgres");
       expect(capturedElicitation).toMatchObject({
         mode: "url",
         url: expect.stringContaining("/v1/workspaces/"),
@@ -809,6 +860,59 @@ describe("workspace-execution-environment", () => {
         full_name: "vercel/ai",
       });
       expect(specServer.seenAuthHeaders).toEqual(["Bearer ghp_test_token"]);
+    }),
+  );
+
+  it.scoped("resolves params-backed source auth from invocation context", () =>
+    Effect.gen(function* () {
+      const specServer = yield* makeOpenApiSpecServer;
+      const persistence = yield* makePersistence;
+      const workspaceId = WorkspaceIdSchema.make("ws_params_auth");
+      const sourceId = SourceIdSchema.make("src_params_auth");
+
+      yield* persistConnectedGithubOpenApiSource({
+        persistence,
+        workspaceId,
+        sourceId,
+        endpoint: specServer.baseUrl,
+        auth: {
+          providerId: "params",
+          handle: "githubToken",
+        },
+      });
+
+      const resolveEnvironment = makeResolver(persistence);
+      const environment = yield* resolveEnvironment({
+        workspaceId,
+        accountId: AccountIdSchema.make("acc_params_auth"),
+        executionId: ExecutionIdSchema.make("exec_params_auth"),
+      });
+
+      const invoked = (yield* environment.toolInvoker.invoke({
+        path: "github.repos.getRepo",
+        args: {
+          owner: "vercel",
+          repo: "ai",
+        },
+        context: {
+          params: {
+            githubToken: "ghp_from_params",
+          },
+        },
+      })) as {
+        status: number;
+        body: {
+          ok: boolean;
+          full_name: string;
+        };
+      };
+
+      expect(invoked.status).toBe(200);
+      expect(invoked.body).toEqual({
+        ok: true,
+        full_name: "vercel/ai",
+      });
+      expect(specServer.seenAuthHeaders).toEqual(["Bearer ghp_from_params"]);
     }),
   );
 

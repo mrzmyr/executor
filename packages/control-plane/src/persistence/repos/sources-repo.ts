@@ -31,9 +31,6 @@ const toSourceUpdateSet = (
   if (patch.defaultHeadersJson !== undefined) {
     set.defaultHeadersJson = patch.defaultHeadersJson;
   }
-  if (patch.authKind !== undefined) set.authKind = patch.authKind;
-  if (patch.authHeaderName !== undefined) set.authHeaderName = patch.authHeaderName;
-  if (patch.authPrefix !== undefined) set.authPrefix = patch.authPrefix;
   if (patch.sourceHash !== undefined) set.sourceHash = patch.sourceHash;
   if (patch.sourceDocumentText !== undefined) set.sourceDocumentText = patch.sourceDocumentText;
   if (patch.lastError !== undefined) set.lastError = patch.lastError;
@@ -169,15 +166,6 @@ export const createSourcesRepo = (
           and(
             eq(tables.toolArtifactsTable.workspaceId, workspaceId),
             eq(tables.toolArtifactsTable.sourceId, sourceId),
-          ),
-        );
-
-      await tx
-        .delete(tables.sourceCredentialBindingsTable)
-        .where(
-          and(
-            eq(tables.sourceCredentialBindingsTable.workspaceId, workspaceId),
-            eq(tables.sourceCredentialBindingsTable.sourceId, sourceId),
           ),
         );
 
