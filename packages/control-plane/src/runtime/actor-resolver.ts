@@ -1,4 +1,5 @@
 import * as PlatformHeaders from "@effect/platform/Headers";
+import { ControlPlaneAuthHeaders } from "../auth-headers";
 import {
   ControlPlaneActorResolver,
   type ControlPlaneActorResolverShape,
@@ -23,13 +24,7 @@ import * as Option from "effect/Option";
 import * as ParseResult from "effect/ParseResult";
 import * as Schema from "effect/Schema";
 
-export const ControlPlaneAuthHeaders = {
-  accountId: "x-executor-account-id",
-  principalProvider: "x-executor-principal-provider",
-  principalSubject: "x-executor-principal-subject",
-  principalEmail: "x-executor-principal-email",
-  principalDisplayName: "x-executor-principal-name",
-} as const;
+export { ControlPlaneAuthHeaders };
 
 const decodePrincipal = Schema.decodeUnknown(PrincipalSchema);
 const decodePrincipalProvider = Schema.decodeUnknown(PrincipalProviderSchema);

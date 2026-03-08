@@ -27,6 +27,7 @@ import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 
 import { operationErrors } from "./operation-errors";
+import { formatJsonIfNeeded, formatWithPrettier } from "./prettier-format";
 import { loadSourceById as loadStoredSourceById } from "./source-store";
 import { ControlPlaneStore, type ControlPlaneStoreShape } from "./store";
 import { namespaceFromSourceName } from "./tool-artifacts";
@@ -78,6 +79,52 @@ type ResolvedSourceInspection = {
   definitionsJson: string | null;
   tools: ReadonlyArray<InspectionToolRecord>;
 };
+
+const formatOptionalJson = (value: string | null) =>
+  value === null
+    ? Effect.succeed<string | null>(null)
+    : Effect.promise(() => formatWithPrettier(value, "json"));
+
+const formatOptionalTypeScript = (value: string | undefined) =>
+  value === undefined
+    ? Effect.succeed<string | undefined>(undefined)
+    : Effect.promise(() => formatWithPrettier(value, "typescript"));
+
+const formatToolSummary = (summary: SourceInspectionToolSummary) =>
+  Effect.all({
+    inputType: formatOptionalTypeScript(summary.inputType),
+    outputType: formatOptionalTypeScript(summary.outputType),
+  }).pipe(
+    Effect.map(({ inputType, outputType }) => ({
+      ...summary,
+      ...(inputType ? { inputType } : {}),
+      ...(outputType ? { outputType } : {}),
+    } satisfies SourceInspectionToolSummary)),
+  );
+
+const formatInspectionToolRecord = (record: InspectionToolRecord) =>
+  Effect.gen(function* () {
+    const summary = yield* formatToolSummary(record.summary);
+    const detailFields = yield* Effect.all({
+      definitionJson: formatOptionalJson(record.detail.definitionJson),
+      documentationJson: formatOptionalJson(record.detail.documentationJson),
+      providerDataJson: formatOptionalJson(record.detail.providerDataJson),
+      inputSchemaJson: formatOptionalJson(record.detail.inputSchemaJson),
+      outputSchemaJson: formatOptionalJson(record.detail.outputSchemaJson),
+      exampleInputJson: formatOptionalJson(record.detail.exampleInputJson),
+      exampleOutputJson: formatOptionalJson(record.detail.exampleOutputJson),
+    });
+
+    return {
+      summary,
+      detail: {
+        ...record.detail,
+        ...detailFields,
+        summary,
+      },
+      searchText: record.searchText,
+    } satisfies InspectionToolRecord;
+  });
 
 const loadSourceRecord = (input: {
   workspaceId: WorkspaceId;
@@ -235,12 +282,12 @@ const loadPersistedInspection = (input: {
       }),
     );
     const namespace = input.source.namespace ?? namespaceFromSourceName(input.source.name);
-    const tools = artifacts.map((artifact) => {
+    const tools = yield* Effect.forEach(artifacts, (artifact) => {
       const summary = persistedToolSummaryFromArtifact({
         source: input.source,
         artifact,
       });
-      return {
+      return formatInspectionToolRecord({
         summary,
         detail: {
           summary,
@@ -253,7 +300,7 @@ const loadPersistedInspection = (input: {
           exampleOutputJson: null,
         },
         searchText: searchTextFromSummary(summary),
-      } satisfies InspectionToolRecord;
+      } satisfies InspectionToolRecord);
     });
 
     return {
@@ -287,22 +334,31 @@ const loadOpenApiInspection = (input: {
     );
     const definitions = compileOpenApiToolDefinitions(manifest);
     const namespace = input.source.namespace ?? namespaceFromSourceName(input.source.name);
-    const tools = definitions.map((definition) =>
-      openApiToolRecord({
+    const tools = yield* Effect.forEach(definitions, (definition) =>
+      formatInspectionToolRecord(openApiToolRecord({
         source: input.source,
         namespace,
         manifest,
         definition,
-      }),
+      })),
+    );
+    const manifestJson = yield* Effect.promise(() =>
+      formatWithPrettier(asPrettyJson(manifest), "json"),
+    );
+    const definitionsJson = yield* Effect.promise(() =>
+      formatWithPrettier(asPrettyJson(definitions), "json"),
+    );
+    const formattedRawDocumentText = yield* Effect.promise(() =>
+      formatJsonIfNeeded(rawDocumentText),
     );
 
     return {
       source: input.source,
       namespace,
       pipelineKind: "openapi",
-      rawDocumentText,
-      manifestJson: asPrettyJson(manifest),
-      definitionsJson: asPrettyJson(definitions),
+      rawDocumentText: formattedRawDocumentText,
+      manifestJson,
+      definitionsJson,
       tools,
     } satisfies ResolvedSourceInspection;
   });

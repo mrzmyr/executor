@@ -7,7 +7,7 @@ import {
 import * as Effect from "effect/Effect";
 
 import { ControlPlaneApi } from "./api/api";
-import { ControlPlaneAuthHeaders } from "./runtime/actor-resolver";
+import { ControlPlaneAuthHeaders } from "./auth-headers";
 
 export const createControlPlaneClient = (input: {
   baseUrl: string;
