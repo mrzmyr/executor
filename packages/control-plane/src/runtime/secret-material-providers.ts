@@ -31,6 +31,7 @@ export type ResolveSecretMaterial = (input: {
 export type StoreSecretMaterial = (input: {
   purpose: SecretMaterialPurpose;
   value: string;
+  name?: string | null;
 }) => Effect.Effect<SecretRef, Error, never>;
 
 export type DeleteSecretMaterial = (
@@ -53,6 +54,7 @@ type SecretMaterialProvider = {
   store?: (input: {
     purpose: SecretMaterialPurpose;
     value: string;
+    name?: string | null;
     runtime: SecretMaterialProviderRuntime;
   }) => Effect.Effect<SecretRef, Error, never>;
   remove?: (input: {
@@ -237,13 +239,13 @@ const createPostgresSecretMaterialProvider = (): SecretMaterialProvider => ({
       return stored.value.value;
     }),
 
-  store: ({ purpose, value, runtime }) =>
+  store: ({ purpose, value, name, runtime }) =>
     Effect.gen(function* () {
       const now = Date.now();
       const id = SecretMaterialIdSchema.make(`sec_${randomUUID()}`);
       yield* runtime.rows.secretMaterials.upsert({
         id,
-        name: null,
+        name: trimOrNull(name),
         purpose,
         value,
         createdAt: now,
@@ -293,7 +295,7 @@ const keychainStoreWithSecurityCli = (): SecretMaterialProvider => ({
     );
   },
 
-  store: ({ value, runtime }) => {
+  store: ({ name, value, runtime }) => {
     const id = randomUUID();
 
     return runCommand({
@@ -306,6 +308,7 @@ const keychainStoreWithSecurityCli = (): SecretMaterialProvider => ({
         runtime.keychainServiceName,
         "-w",
         value,
+        ...(trimOrNull(name) ? ["-l", trimOrNull(name)!] : []),
         "-U",
       ],
       operation: "keychain.put",
@@ -375,7 +378,7 @@ const keychainStoreWithSecretTool = (): SecretMaterialProvider => ({
     );
   },
 
-  store: ({ value, runtime }) => {
+  store: ({ name, value, runtime }) => {
     const id = randomUUID();
 
     return runCommand({
@@ -383,7 +386,7 @@ const keychainStoreWithSecretTool = (): SecretMaterialProvider => ({
       args: [
         "store",
         "--label",
-        runtime.keychainServiceName,
+        trimOrNull(name) ?? runtime.keychainServiceName,
         "service",
         runtime.keychainServiceName,
         "account",
@@ -511,7 +514,7 @@ export const createDefaultSecretMaterialStorer = (input: {
   const runtime = createSecretMaterialProviderRuntime(input);
   const defaultStoreProviderId = resolveSecretStoreProviderId(input.storeProviderId);
 
-  return ({ purpose, value }) =>
+  return ({ purpose, value, name }) =>
     Effect.gen(function* () {
       const provider = yield* getSecretMaterialProvider({
         providers,
@@ -527,6 +530,7 @@ export const createDefaultSecretMaterialStorer = (input: {
       return yield* provider.store({
         purpose,
         value,
+        name,
         runtime,
       });
     });

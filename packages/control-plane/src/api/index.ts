@@ -51,6 +51,16 @@ export {
 } from "./local/api";
 
 export {
+  OAuthApi,
+  StartSourceOAuthPayloadSchema,
+  StartSourceOAuthResultSchema,
+  CompleteSourceOAuthResultSchema,
+  type StartSourceOAuthPayload,
+  type StartSourceOAuthResult,
+  type CompleteSourceOAuthResult,
+} from "./oauth/api";
+
+export {
   CreateOrganizationPayloadSchema,
   UpdateOrganizationPayloadSchema,
   type CreateOrganizationPayload,
@@ -72,13 +82,15 @@ export {
 } from "./workspaces/api";
 
 export {
-  ConnectMcpSourcePayloadSchema,
-  ConnectMcpSourceResultSchema,
+  ConnectSourcePayloadSchema,
+  ConnectSourceResultSchema,
   CreateSourcePayloadSchema,
+  DiscoverSourcePayloadSchema,
   UpdateSourcePayloadSchema,
-  type ConnectMcpSourcePayload,
-  type ConnectMcpSourceResult,
+  type ConnectSourcePayload,
+  type ConnectSourceResult,
   type CreateSourcePayload,
+  type DiscoverSourcePayload,
   type UpdateSourcePayload,
 } from "./sources/api";
 

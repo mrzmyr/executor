@@ -9,6 +9,7 @@ import {
 import { ControlPlaneExecutionsLive } from "./executions/http";
 import { ControlPlaneLocalLive } from "./local/http";
 import { ControlPlaneMembershipsLive } from "./memberships/http";
+import { ControlPlaneOAuthLive } from "./oauth/http";
 import { ControlPlaneOrganizationsLive } from "./organizations/http";
 import { ControlPlanePoliciesLive } from "./policies/http";
 import { ControlPlaneSourcesLive } from "./sources/http";
@@ -16,6 +17,7 @@ import { ControlPlaneWorkspacesLive } from "./workspaces/http";
 
 export const ControlPlaneApiLive = HttpApiBuilder.api(ControlPlaneApi).pipe(
   Layer.provide(ControlPlaneLocalLive),
+  Layer.provide(ControlPlaneOAuthLive),
   Layer.provide(ControlPlaneOrganizationsLive),
   Layer.provide(ControlPlaneMembershipsLive),
   Layer.provide(ControlPlaneWorkspacesLive),

@@ -21,6 +21,22 @@ export {
   type SourceTransport,
 } from "./models/source";
 export {
+  SourceAuthInferenceSchema,
+  SourceDiscoveryAuthKindSchema,
+  SourceDiscoveryAuthParameterLocationSchema,
+  SourceDiscoveryConfidenceSchema,
+  SourceDiscoveryKindSchema,
+  SourceDiscoveryResultSchema,
+  SourceProbeAuthSchema,
+  type SourceAuthInference,
+  type SourceDiscoveryAuthKind,
+  type SourceDiscoveryAuthParameterLocation,
+  type SourceDiscoveryConfidence,
+  type SourceDiscoveryKind,
+  type SourceDiscoveryResult,
+  type SourceProbeAuth,
+} from "./models/source-discovery";
+export {
   CredentialAuthKindSchema,
   type CredentialAuthKind,
 } from "./models/credential";
