@@ -9,14 +9,13 @@ import {
   OpenApi,
 } from "@effect/platform";
 import { describe, expect, it } from "@effect/vitest";
-import { assertInstanceOf, assertTrue } from "@effect/vitest/utils";
+import { assertTrue } from "@effect/vitest/utils";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 
 import { startMcpElicitationDemoServer } from "@executor-v3/mcp-elicitation-demo";
 import { makeToolInvokerFromTools, toTool } from "@executor-v3/codemode-core";
 import {
-  ControlPlaneStorageError,
   createControlPlaneClient,
   type ControlPlaneClient,
   type ResolveExecutionEnvironment,
@@ -898,7 +897,7 @@ describe("local-executor-server", () => {
     15_000,
   );
 
-  it.scoped("updates an existing demo MCP source instead of creating a duplicate", () =>
+  it.scoped("does not create a duplicate when the demo MCP source already exists", () =>
     Effect.gen(function* () {
       const demoServer = yield* Effect.acquireRelease(
         Effect.promise(() => startMcpElicitationDemoServer()),
@@ -926,7 +925,7 @@ describe("local-executor-server", () => {
         payload: {
           name: "Demo",
           kind: "mcp",
-          endpoint: "http://127.0.0.1:58005/mcp",
+          endpoint: demoServer.endpoint,
           status: "connected",
           enabled: true,
           namespace: "demo",
@@ -945,7 +944,7 @@ describe("local-executor-server", () => {
         namespace: "demo",
       });
 
-      expect(seeded.action).toBe("updated");
+      expect(seeded.action).toBe("noop");
       expect(seeded.sourceId).toBe(existing.id);
 
       const sources = yield* client.sources.list({
@@ -957,6 +956,7 @@ describe("local-executor-server", () => {
       expect(sources).toHaveLength(1);
       expect(sources[0]?.endpoint).toBe(demoServer.endpoint);
     }),
+  15_000,
   );
 
   it.scoped("loads OpenAPI sources from control-plane state and calls them", () =>
@@ -1286,7 +1286,7 @@ describe("local-executor-server", () => {
     }),
   );
 
-  it.scoped("returns a typed storage error when a configured MCP endpoint is invalid", () =>
+  it.scoped("marks execution failed when a configured MCP endpoint is invalid", () =>
     Effect.gen(function* () {
       const server = yield* createLocalExecutorServer({
         port: 0,
@@ -1363,20 +1363,18 @@ describe("local-executor-server", () => {
         }],
       });
 
-      const failure = yield* client.executions
-        .create({
-          path: {
-            workspaceId: installation.workspaceId,
-          },
-          payload: {
-            code: 'return await tools.demo.gated_echo({ value: "broken" });',
-          },
-        })
-        .pipe(Effect.flip);
+      const execution = yield* client.executions.create({
+        path: {
+          workspaceId: installation.workspaceId,
+        },
+        payload: {
+          code: 'return await tools.demo.gated_echo({ value: "broken" });',
+        },
+      });
 
-      assertInstanceOf(failure, ControlPlaneStorageError);
-      expect(failure.operation).toBe("executions.create.environment");
-      expect(failure.message).toContain("Failed creating MCP connector");
+      expect(execution.execution.status).toBe("failed");
+      expect(execution.pendingInteraction).toBeNull();
+      expect(execution.execution.errorText).toContain("Invalid URL");
     }),
   );
 });

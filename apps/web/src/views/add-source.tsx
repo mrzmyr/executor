@@ -576,7 +576,7 @@ export function AddSourcePage() {
 
   const applyTemplate = async (template: SourceTemplate) => {
     const discoveryUrl = "specUrl" in template ? template.specUrl : template.endpoint;
-    setUrl(discoveryUrl);
+    setUrl(template.endpoint);
     setStatusBanner(null);
     setPhase("discovering");
 
@@ -587,6 +587,7 @@ export function AddSourcePage() {
       // Prefer the template's own values over whatever discover returned
       form.name = template.name;
       form.endpoint = template.endpoint;
+      form.namespace = namespaceFromUrl(template.endpoint);
       if ("specUrl" in template) {
         form.specUrl = template.specUrl;
       }
