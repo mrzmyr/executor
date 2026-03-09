@@ -1,5 +1,24 @@
 {
   "name": "executor",
+  "version": "0.0.0-local",
+  "description": "Local AI executor with a CLI, local API server, and web UI.",
+  "keywords": [
+    "executor",
+    "ai",
+    "agent",
+    "cli",
+    "automation",
+    "local-first"
+  ],
+  "homepage": "https://github.com/RhysSullivan/executor",
+  "bugs": {
+    "url": "https://github.com/RhysSullivan/executor/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/RhysSullivan/executor.git"
+  },
+  "license": "UNLICENSED",
   "private": true,
   "type": "module",
   "bin": {
@@ -9,7 +28,12 @@
     "typecheck": "bunx tsc --noEmit -p tsconfig.json",
     "test": "vitest run",
     "test:watch": "vitest",
-    "start": "bun src/cli/main.ts"
+    "start": "bun src/cli/main.ts",
+    "build:dist": "bun src/distribution/build-package.ts",
+    "pack:dist": "bun src/distribution/build-package.ts && npm pack ./dist/npm",
+    "publish:dist:dry-run": "bun src/distribution/build-package.ts && npm publish ./dist/npm --dry-run",
+    "publish:dist": "bun src/distribution/build-package.ts && npm publish ./dist/npm",
+    "build:portable": "bun src/distribution/build-portable.ts"
   },
   "dependencies": {
     "@effect/cli": "catalog:",
