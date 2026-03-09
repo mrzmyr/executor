@@ -107,8 +107,8 @@ const createPackageJson = (input: {
     url?: string;
   };
   license?: string;
-}) => JSON.stringify(
-  {
+}) => {
+  const packageJson = {
     name: input.packageName,
     version: input.packageVersion,
     description: input.description,
@@ -119,7 +119,9 @@ const createPackageJson = (input: {
     license: input.license ?? "MIT",
     type: "module",
     private: false,
-    bin: "bin/executor.js",
+    bin: {
+      executor: "./bin/executor.js",
+    },
     files: [
       "bin",
       "resources",
@@ -129,10 +131,10 @@ const createPackageJson = (input: {
     engines: {
       node: ">=20",
     },
-  },
-  null,
-  2,
- ) + "\n";
+  };
+
+  return JSON.stringify(packageJson, null, 2) + "\n";
+};
 
 const createLauncherSource = () => [
   "#!/usr/bin/env node",

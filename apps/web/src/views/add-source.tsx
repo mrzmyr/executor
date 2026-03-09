@@ -571,16 +571,21 @@ export function AddSourcePage() {
   };
 
   const applyTemplate = async (template: SourceTemplate) => {
-    setUrl(template.endpoint);
+    const discoveryUrl = "specUrl" in template ? template.specUrl : template.endpoint;
+    setUrl(discoveryUrl);
     setStatusBanner(null);
     setPhase("discovering");
 
     try {
-      const result = await discoverSource.mutateAsync({ url: template.endpoint });
+      const result = await discoverSource.mutateAsync({ url: discoveryUrl });
       setDiscovery(result);
       const form = defaultConnectForm(result);
-      // Prefer the template's name over whatever discover returned
+      // Prefer the template's own values over whatever discover returned
       form.name = template.name;
+      form.endpoint = template.endpoint;
+      if ("specUrl" in template) {
+        form.specUrl = template.specUrl;
+      }
       setConnectForm(form);
       setPhase("editing");
 

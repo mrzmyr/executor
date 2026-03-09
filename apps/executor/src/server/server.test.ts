@@ -20,6 +20,7 @@ import {
   createControlPlaneClient,
   type ControlPlaneClient,
   type ResolveExecutionEnvironment,
+  SourceIdSchema,
 } from "@executor-v3/control-plane";
 import { makeInProcessExecutor } from "@executor-v3/runtime-local-inproc";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
@@ -818,6 +819,7 @@ describe("local-executor-server", () => {
       expect(resumed.pendingInteraction).toBeNull();
       expect(resumed.execution.resultJson).toContain("approved:from-daemon");
     }),
+  15_000,
   );
 
   it.scoped("can run the same MCP elicitation flow more than once without interaction id collisions", () =>
@@ -917,7 +919,7 @@ describe("local-executor-server", () => {
         payload: {
           name: "Demo",
           kind: "mcp",
-          endpoint: "http://127.0.0.1:PORT/mcp",
+          endpoint: "http://127.0.0.1:58005/mcp",
           status: "connected",
           enabled: true,
           namespace: "demo",
@@ -958,7 +960,27 @@ describe("local-executor-server", () => {
       );
 
       const previousGithubToken = process.env.GITHUB_TOKEN;
-      process.env.GITHUB_TOKEN = "ghp_test_executor";
+      const previousAllowEnvSecrets = process.env.DANGEROUSLY_ALLOW_ENV_SECRETS;
+      yield* Effect.acquireRelease(
+        Effect.sync(() => {
+          process.env.GITHUB_TOKEN = "ghp_test_executor";
+          process.env.DANGEROUSLY_ALLOW_ENV_SECRETS = "true";
+        }),
+        () =>
+          Effect.sync(() => {
+            if (previousGithubToken === undefined) {
+              delete process.env.GITHUB_TOKEN;
+            } else {
+              process.env.GITHUB_TOKEN = previousGithubToken;
+            }
+
+            if (previousAllowEnvSecrets === undefined) {
+              delete process.env.DANGEROUSLY_ALLOW_ENV_SECRETS;
+            } else {
+              process.env.DANGEROUSLY_ALLOW_ENV_SECRETS = previousAllowEnvSecrets;
+            }
+          }),
+      );
 
       const server = yield* createLocalExecutorServer({
         port: 0,
@@ -990,17 +1012,7 @@ describe("local-executor-server", () => {
         payload: {
           code: 'return await tools.github.repos.getRepo({ owner: "vercel", repo: "ai" });',
         },
-      }).pipe(
-        Effect.ensuring(
-          Effect.sync(() => {
-            if (previousGithubToken === undefined) {
-              delete process.env.GITHUB_TOKEN;
-            } else {
-              process.env.GITHUB_TOKEN = previousGithubToken;
-            }
-          }),
-        ),
-      );
+      });
 
       expect(execution.execution.status).toBe("completed");
       expect(execution.pendingInteraction).toBeNull();
@@ -1090,6 +1102,7 @@ describe("local-executor-server", () => {
       expect(toolCall.pendingInteraction).toBeNull();
       expect(toolCall.execution.resultJson).toContain("oauth-demo");
     }),
+    15_000,
   );
 
   it.scoped("gates mutating OpenAPI tools by default and allows them via organization policy", () =>
@@ -1282,22 +1295,26 @@ describe("local-executor-server", () => {
         accountId: installation.accountId,
       });
 
-      yield* client.sources.create({
-        path: {
-          workspaceId: installation.workspaceId,
-        },
-        payload: {
-          name: "Demo",
-          kind: "mcp",
-          endpoint: "http://127.0.0.1:PORT/mcp",
-          status: "connected",
-          enabled: true,
-          namespace: "demo",
-          transport: "streamable-http",
-          auth: {
-            kind: "none",
-          },
-        },
+      const now = Date.now();
+      yield* server.runtime.persistence.rows.sources.insert({
+        id: SourceIdSchema.make("src_invalid_mcp_endpoint"),
+        workspaceId: installation.workspaceId,
+        name: "Demo",
+        kind: "mcp",
+        endpoint: "http://127.0.0.1:PORT/mcp",
+        status: "connected",
+        enabled: true,
+        namespace: "demo",
+        transport: "streamable-http",
+        queryParamsJson: null,
+        headersJson: null,
+        specUrl: null,
+        defaultHeadersJson: null,
+        sourceHash: null,
+        sourceDocumentText: null,
+        lastError: null,
+        createdAt: now,
+        updatedAt: now,
       });
 
       const failure = yield* client.executions

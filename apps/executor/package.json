@@ -1,6 +1,6 @@
 {
   "name": "executor",
-  "version": "1.1.0",
+  "version": "1.1.1",
   "description": "Local AI executor with a CLI, local API server, and web UI.",
   "keywords": [
     "executor",
@@ -41,6 +41,7 @@
     "@effect/platform-node": "catalog:",
     "@executor-v3/codemode-core": "workspace:*",
     "@executor-v3/control-plane": "workspace:*",
+    "@executor-v3/executor-mcp": "workspace:*",
     "@executor-v3/server": "workspace:*",
     "effect": "catalog:"
   },

@@ -1118,9 +1118,7 @@ const invokeGraphqlHttpRequest = (input: GraphqlHttpInvocation) =>
 
     return {
       status: response.status,
-      headers: sanitizeResponseHeaders(
-        Object.fromEntries(response.headers.entries()),
-      ),
+      headers: sanitizeResponseHeaders(Object.fromEntries(response.headers)),
       body,
       isError: response.status >= 400 || hasGraphqlErrors(body),
     };
