@@ -1,0 +1,569 @@
+import type {
+  ExecutionEnvelope,
+  ExecutionInteraction,
+  SqlControlPlaneRuntime,
+} from "@executor-v3/control-plane";
+import {
+  createExecution,
+  getExecution,
+  resumeExecution,
+} from "@executor-v3/control-plane";
+import * as Effect from "effect/Effect";
+import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
+import { z } from "zod/v4";
+
+const pollingIntervalMs = 200;
+
+const executeInputSchema = {
+  code: z.string().trim().min(1),
+};
+
+const resumeInputSchema = {
+  resumePayload: z.object({
+    executionId: z.string().trim().min(1),
+  }),
+  response: z.object({
+    action: z.enum(["accept", "decline", "cancel"]),
+    content: z.record(z.string(), z.unknown()).optional(),
+  }).optional(),
+};
+
+type ParsedInteractionPayload = {
+  mode: "form" | "url";
+  message: string;
+  url?: string;
+  requestedSchema?: Record<string, unknown>;
+  elicitationId?: string;
+};
+
+type ResumePayload = {
+  executionId: string;
+};
+
+type ResumeResponseInput = {
+  action: "accept" | "decline" | "cancel";
+  content?: Record<string, unknown>;
+};
+
+type ExecutorMcpToolResult = {
+  content: Array<{ type: "text"; text: string }>;
+  structuredContent: Record<string, unknown>;
+  isError?: boolean;
+};
+
+export type ExecutorMcpRequestHandler = {
+  handleRequest: (request: Request) => Promise<Response>;
+  close: () => Promise<void>;
+};
+
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === "object" && value !== null && !Array.isArray(value);
+
+const parseJsonValue = (value: string | null): unknown => {
+  if (value === null) {
+    return null;
+  }
+
+  try {
+    return JSON.parse(value);
+  } catch {
+    return value;
+  }
+};
+
+const parseInteractionPayload = (
+  interaction: ExecutionInteraction,
+): ParsedInteractionPayload | null => {
+  try {
+    const parsed = JSON.parse(interaction.payloadJson) as {
+      elicitation?: {
+        mode?: "form" | "url";
+        message?: string;
+        url?: string;
+        requestedSchema?: Record<string, unknown>;
+        elicitationId?: string;
+        id?: string;
+      };
+    };
+
+    if (!parsed.elicitation || typeof parsed.elicitation.message !== "string") {
+      return null;
+    }
+
+    return {
+      mode: parsed.elicitation.mode === "url" ? "url" : "form",
+      message: parsed.elicitation.message,
+      url: parsed.elicitation.url,
+      requestedSchema: isRecord(parsed.elicitation.requestedSchema)
+        ? parsed.elicitation.requestedSchema
+        : undefined,
+      elicitationId:
+        typeof parsed.elicitation.elicitationId === "string"
+          ? parsed.elicitation.elicitationId
+          : typeof parsed.elicitation.id === "string"
+            ? parsed.elicitation.id
+            : undefined,
+    };
+  } catch {
+    return null;
+  }
+};
+
+const runControlPlane = <A, E, R>(
+  runtime: SqlControlPlaneRuntime,
+  effect: Effect.Effect<A, E, R>,
+): Promise<A> =>
+  Effect.runPromise(
+    effect.pipe(Effect.provide(runtime.runtimeLayer)) as Effect.Effect<A, E, never>,
+  );
+
+const sleep = (ms: number) =>
+  new Promise<void>((resolve) => {
+    setTimeout(resolve, ms);
+  });
+
+const supportsManagedElicitation = (server: McpServer): boolean => {
+  const capabilities = server.server.getClientCapabilities();
+  return Boolean(capabilities?.elicitation?.form) && Boolean(capabilities?.elicitation?.url);
+};
+
+const summarizeExecution = (execution: ExecutionEnvelope["execution"]): string => {
+  switch (execution.status) {
+    case "completed":
+      return `Execution ${execution.id} completed.`;
+    case "failed":
+      return execution.errorText
+        ? `Execution ${execution.id} failed: ${execution.errorText}`
+        : `Execution ${execution.id} failed.`;
+    case "waiting_for_interaction":
+      return `Execution ${execution.id} is waiting for interaction.`;
+    default:
+      return `Execution ${execution.id} is ${execution.status}.`;
+  }
+};
+
+const executionStructuredContent = (envelope: ExecutionEnvelope): Record<string, unknown> => ({
+  executionId: envelope.execution.id,
+  status: envelope.execution.status,
+  result: parseJsonValue(envelope.execution.resultJson),
+  errorText: envelope.execution.errorText,
+  logs: parseJsonValue(envelope.execution.logsJson),
+});
+
+const buildFinalResult = (
+  envelope: ExecutionEnvelope,
+  options: { isError?: boolean } = {},
+): ExecutorMcpToolResult => ({
+  content: [{ type: "text", text: summarizeExecution(envelope.execution) }],
+  structuredContent: executionStructuredContent(envelope),
+  ...(options.isError ? { isError: true } : {}),
+});
+
+const buildPausedResult = (envelope: ExecutionEnvelope): ExecutorMcpToolResult => {
+  const interaction = envelope.pendingInteraction;
+  const parsed = interaction ? parseInteractionPayload(interaction) : null;
+
+  return {
+    content: [{
+      type: "text",
+      text: interaction
+        ? `Execution ${envelope.execution.id} paused: ${parsed?.message ?? "Interaction required."}`
+        : `Execution ${envelope.execution.id} is waiting for interaction.`,
+    }],
+    structuredContent: {
+      executionId: envelope.execution.id,
+      status: "waiting_for_interaction",
+      interaction: interaction
+        ? {
+            id: interaction.id,
+            purpose: interaction.purpose,
+            kind: interaction.kind,
+            message: parsed?.message ?? "Interaction required",
+            mode: parsed?.mode ?? (interaction.kind === "url" ? "url" : "form"),
+            url: parsed?.url ?? null,
+            requestedSchema: parsed?.requestedSchema ?? null,
+          }
+        : null,
+      resumePayload: {
+        executionId: envelope.execution.id,
+      } satisfies ResumePayload,
+    },
+  };
+};
+
+const buildToolResult = (envelope: ExecutionEnvelope): ExecutorMcpToolResult => {
+  switch (envelope.execution.status) {
+    case "completed":
+      return buildFinalResult(envelope);
+    case "failed":
+    case "cancelled":
+      return buildFinalResult(envelope, { isError: true });
+    case "waiting_for_interaction":
+      return buildPausedResult(envelope);
+    default:
+      return buildFinalResult(envelope);
+  }
+};
+
+const waitForInteractionProgress = async (input: {
+  runtime: SqlControlPlaneRuntime;
+  workspaceId: string;
+  executionId: string;
+  pendingInteractionId: string;
+}): Promise<ExecutionEnvelope> => {
+  while (true) {
+    const next = await runControlPlane(
+      input.runtime,
+      getExecution({
+        workspaceId: input.workspaceId as never,
+        executionId: input.executionId as never,
+      }),
+    );
+
+    if (
+      next.execution.status !== "waiting_for_interaction"
+      || next.pendingInteraction?.id !== input.pendingInteractionId
+    ) {
+      return next;
+    }
+
+    await sleep(pollingIntervalMs);
+  }
+};
+
+const driveExecutionWithElicitation = async (input: {
+  runtime: SqlControlPlaneRuntime;
+  workspaceId: string;
+  accountId: string;
+  server: McpServer;
+  envelope: ExecutionEnvelope;
+}): Promise<ExecutionEnvelope> => {
+  let current = input.envelope;
+
+  while (current.execution.status === "waiting_for_interaction") {
+    const pending = current.pendingInteraction;
+    if (pending === null) {
+      return current;
+    }
+
+    const parsed = parseInteractionPayload(pending);
+    if (!parsed) {
+      return current;
+    }
+
+    if (parsed.mode === "form") {
+      const response = await input.server.server.elicitInput({
+        mode: "form",
+        message: parsed.message,
+        requestedSchema: (parsed.requestedSchema ?? {
+          type: "object",
+          properties: {},
+        }) as never,
+      });
+
+      current = await runControlPlane(
+        input.runtime,
+        resumeExecution({
+          workspaceId: input.workspaceId as never,
+          executionId: current.execution.id as never,
+          payload: {
+            responseJson: JSON.stringify(response),
+          },
+          resumedByAccountId: input.accountId as never,
+        }),
+      );
+      continue;
+    }
+
+    const response = await input.server.server.elicitInput({
+      mode: "url",
+      message: parsed.message,
+      url: parsed.url ?? "",
+      elicitationId: parsed.elicitationId ?? pending.id,
+    });
+
+    if (response.action !== "accept") {
+      current = await runControlPlane(
+        input.runtime,
+        resumeExecution({
+          workspaceId: input.workspaceId as never,
+          executionId: current.execution.id as never,
+          payload: {
+            responseJson: JSON.stringify(response),
+          },
+          resumedByAccountId: input.accountId as never,
+        }),
+      );
+      continue;
+    }
+
+    current = await waitForInteractionProgress({
+      runtime: input.runtime,
+      workspaceId: input.workspaceId,
+      executionId: current.execution.id,
+      pendingInteractionId: pending.id,
+    });
+  }
+
+  return current;
+};
+
+const driveExecutionWithoutElicitation = async (input: {
+  runtime: SqlControlPlaneRuntime;
+  workspaceId: string;
+  accountId: string;
+  executionId: string;
+  initialResponse?: ResumeResponseInput;
+}): Promise<ExecutionEnvelope> => {
+  let current = await runControlPlane(
+    input.runtime,
+    getExecution({
+      workspaceId: input.workspaceId as never,
+      executionId: input.executionId as never,
+    }),
+  );
+  let response = input.initialResponse;
+
+  while (current.execution.status === "waiting_for_interaction") {
+    const pending = current.pendingInteraction;
+    if (pending === null || response === undefined) {
+      return current;
+    }
+
+    current = await runControlPlane(
+      input.runtime,
+      resumeExecution({
+        workspaceId: input.workspaceId as never,
+        executionId: current.execution.id as never,
+        payload: {
+          responseJson: JSON.stringify(response),
+        },
+        resumedByAccountId: input.accountId as never,
+      }),
+    );
+    response = undefined;
+  }
+
+  return current;
+};
+
+const buildInstallInstructions = (baseUrl: string): string => {
+  const mcpUrl = new URL("/mcp", baseUrl).toString();
+
+  return [
+    "Run once to install for supported MCP clients (via add-mcp):",
+    `npx add-mcp \"${mcpUrl}\" --transport http --name \"executor\"`,
+  ].join("\n");
+};
+
+const createExecutorMcpServer = (config: {
+  runtime: SqlControlPlaneRuntime;
+  baseUrl: string;
+}): McpServer => {
+  const server = new McpServer(
+    { name: "executor", version: "1.0.0" },
+    {
+      capabilities: {
+        tools: {},
+      },
+      instructions: buildInstallInstructions(config.baseUrl),
+    },
+  );
+
+  const workspaceId = config.runtime.localInstallation.workspaceId;
+  const accountId = config.runtime.localInstallation.accountId;
+
+  const executeTool = server.registerTool(
+    "execute",
+    {
+      description: [
+        "Execute TypeScript against the local executor runtime.",
+        "Use the in-sandbox tool catalog via tools.* rather than direct fetch calls.",
+      ].join("\n"),
+      inputSchema: executeInputSchema,
+    },
+    async ({ code }: { code: string }) => {
+      let created = await runControlPlane(
+        config.runtime,
+        createExecution({
+          workspaceId,
+          payload: { code },
+          createdByAccountId: accountId,
+        }),
+      );
+
+      if (supportsManagedElicitation(server)) {
+        created = await driveExecutionWithElicitation({
+          runtime: config.runtime,
+          workspaceId,
+          accountId,
+          server,
+          envelope: created,
+        });
+      }
+
+      return buildToolResult(created);
+    },
+  );
+
+  const resumeTool = server.registerTool(
+    "resume",
+    {
+      description: "Resume a paused executor execution using the resumePayload returned by execute.",
+      inputSchema: resumeInputSchema,
+    },
+    async (
+      input: {
+        resumePayload: ResumePayload;
+        response?: ResumeResponseInput;
+      },
+    ) => {
+      const resumed = await driveExecutionWithoutElicitation({
+        runtime: config.runtime,
+        workspaceId,
+        accountId,
+        executionId: input.resumePayload.executionId,
+        initialResponse: input.response,
+      });
+
+      return buildToolResult(resumed);
+    },
+  );
+
+
+  const syncToolAvailability = () => {
+    if (supportsManagedElicitation(server)) {
+      executeTool.enable();
+      resumeTool.disable();
+      return;
+    }
+
+    executeTool.enable();
+    resumeTool.enable();
+  };
+
+  syncToolAvailability();
+  server.server.oninitialized = syncToolAvailability;
+
+  return server;
+};
+
+const jsonErrorResponse = (status: number, code: number, message: string) =>
+  new Response(JSON.stringify({
+    jsonrpc: "2.0",
+    error: {
+      code,
+      message,
+    },
+    id: null,
+  }), {
+    status,
+    headers: {
+      "content-type": "application/json",
+    },
+  });
+
+export const createExecutorMcpRequestHandler = (
+  runtime: SqlControlPlaneRuntime,
+): ExecutorMcpRequestHandler => {
+  const transports = new Map<string, WebStandardStreamableHTTPServerTransport>();
+  const servers = new Map<string, McpServer>();
+
+  const disposeSession = async (
+    sessionId: string,
+    options: { closeTransport?: boolean; closeServer?: boolean } = {},
+  ) => {
+    const transport = transports.get(sessionId);
+    const server = servers.get(sessionId);
+
+    transports.delete(sessionId);
+    servers.delete(sessionId);
+
+    if (options.closeTransport) {
+      await transport?.close().catch(() => undefined);
+    }
+
+    if (options.closeServer) {
+      await server?.close().catch(() => undefined);
+    }
+  };
+
+  return {
+    handleRequest: async (request) => {
+      const sessionId = request.headers.get("mcp-session-id");
+      if (sessionId) {
+        const transport = transports.get(sessionId);
+        if (!transport) {
+          return jsonErrorResponse(404, -32001, "Session not found");
+        }
+
+        return transport.handleRequest(request);
+      }
+
+      let createdServer: McpServer | undefined;
+      const transport = new WebStandardStreamableHTTPServerTransport({
+        sessionIdGenerator: () => crypto.randomUUID(),
+        enableJsonResponse: true,
+        onsessioninitialized: (newSessionId) => {
+          transports.set(newSessionId, transport);
+          if (createdServer) {
+            servers.set(newSessionId, createdServer);
+          }
+        },
+        onsessionclosed: (closedSessionId) => {
+          void disposeSession(closedSessionId, { closeServer: true });
+        },
+      });
+
+      transport.onclose = () => {
+        const closedSessionId = transport.sessionId;
+        if (closedSessionId) {
+          void disposeSession(closedSessionId, { closeServer: true });
+        }
+      };
+
+      try {
+        createdServer = createExecutorMcpServer({
+          runtime,
+          baseUrl: new URL(request.url).origin,
+        });
+        await createdServer.connect(transport);
+        const response = await transport.handleRequest(request);
+
+        if (!transport.sessionId) {
+          await transport.close().catch(() => undefined);
+          await createdServer.close().catch(() => undefined);
+        }
+
+        return response;
+      } catch (error) {
+        if (!transport.sessionId) {
+          await transport.close().catch(() => undefined);
+          await createdServer?.close().catch(() => undefined);
+        }
+
+        return jsonErrorResponse(
+          500,
+          -32603,
+          error instanceof Error ? error.message : "Internal server error",
+        );
+      }
+    },
+    close: async () => {
+      const sessionIds = new Set<string>([
+        ...transports.keys(),
+        ...servers.keys(),
+      ]);
+
+      await Promise.all(
+        [...sessionIds].map((sessionId) =>
+          disposeSession(sessionId, {
+            closeTransport: true,
+            closeServer: true,
+          }),
+        ),
+      );
+    },
+  };
+};

@@ -12,7 +12,7 @@ import { z } from "zod/v4";
 
 import { makeToolInvokerFromTools } from "@executor-v3/codemode-core";
 import { discoverMcpToolsFromConnector } from "@executor-v3/codemode-mcp";
-import { makeInProcessExecutor } from "@executor-v3/runtime-local-inproc";
+import { makeDenoSubprocessExecutor } from "@executor-v3/runtime-deno-subprocess";
 
 import {
   createSqlControlPlaneRuntime,
@@ -262,7 +262,7 @@ const makeMcpExecutionResolver = (
       });
 
         return {
-          executor: makeInProcessExecutor(),
+          executor: makeDenoSubprocessExecutor(),
           toolInvoker: makeToolInvokerFromTools({
             tools: discovered.tools,
             onElicitation,
@@ -270,7 +270,7 @@ const makeMcpExecutionResolver = (
         };
     }) as Effect.Effect<
       {
-        executor: ReturnType<typeof makeInProcessExecutor>;
+        executor: ReturnType<typeof makeDenoSubprocessExecutor>;
         toolInvoker: ReturnType<typeof makeToolInvokerFromTools>;
       },
       unknown

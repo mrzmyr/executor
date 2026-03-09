@@ -14,7 +14,7 @@ import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 
 import { startMcpElicitationDemoServer } from "@executor-v3/mcp-elicitation-demo";
-import { makeToolInvokerFromTools } from "@executor-v3/codemode-core";
+import { makeToolInvokerFromTools, toTool } from "@executor-v3/codemode-core";
 import {
   ControlPlaneStorageError,
   createControlPlaneClient,
@@ -22,9 +22,12 @@ import {
   type ResolveExecutionEnvironment,
 } from "@executor-v3/control-plane";
 import { makeInProcessExecutor } from "@executor-v3/runtime-local-inproc";
+import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { createMcpExpressApp } from "@modelcontextprotocol/sdk/server/express.js";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
+import { ElicitRequestSchema } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod/v4";
 
 import {
@@ -57,6 +60,79 @@ const makeServer = createLocalExecutorServer({
   localDataDir: ":memory:",
   executionResolver,
 });
+
+const gatedExecutionResolver: ResolveExecutionEnvironment = ({ onElicitation }) =>
+  Effect.succeed({
+    executor: makeInProcessExecutor(),
+    toolInvoker: makeToolInvokerFromTools({
+      tools: {
+        "demo.gated_echo": toTool({
+          tool: {
+            description: "Asks for approval before echoing a value",
+            inputSchema: Schema.standardSchemaV1(
+              Schema.Struct({
+                value: Schema.String,
+                approve: Schema.optional(Schema.Boolean),
+              }),
+            ),
+            execute: ({ value, approve }: { value: string; approve?: boolean }) =>
+              approve === true ? `approved:${value}` : `denied:${value}`,
+          },
+          metadata: {
+            sourceKey: "demo",
+            elicitation: {
+              mode: "form",
+              message: "Approve gated echo?",
+              requestedSchema: {
+                type: "object",
+                properties: {
+                  approve: {
+                    type: "boolean",
+                    title: "Approve",
+                  },
+                },
+                required: ["approve"],
+              },
+            },
+          },
+        }),
+      },
+      onElicitation,
+    }),
+  });
+
+type ExecutorMcpClient = {
+  client: Client;
+  close: () => Promise<void>;
+};
+
+const makeExecutorMcpClient = (input: {
+  baseUrl: string;
+  capabilities?: Record<string, unknown>;
+  onElicitation?: (request: { params: { message?: string } }) => Promise<unknown>;
+}) =>
+  Effect.acquireRelease(
+    Effect.promise<ExecutorMcpClient>(async () => {
+      const client = new Client(
+        { name: "executor-mcp-test-client", version: "1.0.0" },
+        { capabilities: input.capabilities ?? {} },
+      );
+      if (input.onElicitation) {
+        client.setRequestHandler(ElicitRequestSchema, input.onElicitation);
+      }
+
+      const transport = new StreamableHTTPClientTransport(new URL(`${input.baseUrl}/mcp`));
+      await client.connect(transport);
+
+      return {
+        client,
+        close: async () => {
+          await client.close();
+        },
+      };
+    }),
+    ({ close }) => Effect.promise(() => close()).pipe(Effect.orDie),
+  );
 
 const ownerParam = HttpApiSchema.param("owner", Schema.String);
 const repoParam = HttpApiSchema.param("repo", Schema.String);
@@ -544,6 +620,126 @@ describe("local-executor-server", () => {
 
       expect(execution.execution.status).toBe("completed");
       expect(execution.execution.resultJson).toBe(JSON.stringify({ sum: 42 }));
+    }),
+  );
+
+  it.scoped("serves only execute over MCP when elicitation is supported", () =>
+    Effect.gen(function* () {
+      const server = yield* createLocalExecutorServer({
+        port: 0,
+        localDataDir: ":memory:",
+        executionResolver: gatedExecutionResolver,
+      });
+      const mcp = yield* makeExecutorMcpClient({
+        baseUrl: server.baseUrl,
+        capabilities: {
+          elicitation: {
+            form: {},
+            url: {},
+          },
+        },
+        onElicitation: async () => ({
+          action: "accept",
+          content: {
+            approve: true,
+          },
+        }),
+      });
+
+      const listed = yield* Effect.promise(
+        () => mcp.client.listTools() as Promise<{ tools: Array<{ name: string }> }>,
+      );
+      expect(listed.tools.map((tool) => tool.name)).toEqual(["execute"]);
+      expect(mcp.client.getInstructions()).toContain(
+        `npx add-mcp \"${server.baseUrl}/mcp\" --transport http --name \"executor\"`,
+      );
+
+      const executed = yield* Effect.promise(
+        () =>
+          mcp.client.callTool({
+            name: "execute",
+            arguments: {
+              code: 'return await tools.demo.gated_echo({ value: "from-mcp" });',
+            },
+          }) as Promise<{
+            structuredContent?: {
+              status?: string;
+              result?: unknown;
+            };
+          }>,
+      );
+
+      expect(executed.structuredContent?.status).toBe("completed");
+      expect(executed.structuredContent?.result).toBe("approved:from-mcp");
+    }),
+  );
+
+  it.scoped("serves execute and resume over MCP when elicitation is unavailable", () =>
+    Effect.gen(function* () {
+      const server = yield* createLocalExecutorServer({
+        port: 0,
+        localDataDir: ":memory:",
+        executionResolver: gatedExecutionResolver,
+      });
+      const mcp = yield* makeExecutorMcpClient({
+        baseUrl: server.baseUrl,
+      });
+
+      const listed = yield* Effect.promise(
+        () => mcp.client.listTools() as Promise<{ tools: Array<{ name: string }> }>,
+      );
+      expect(listed.tools.map((tool) => tool.name).sort()).toEqual(["execute", "resume"]);
+      expect(mcp.client.getInstructions()).toContain(
+        `npx add-mcp \"${server.baseUrl}/mcp\" --transport http --name \"executor\"`,
+      );
+
+      const executed = yield* Effect.promise(
+        () =>
+          mcp.client.callTool({
+            name: "execute",
+            arguments: {
+              code: 'return await tools.demo.gated_echo({ value: "manual-mcp" });',
+            },
+          }) as Promise<{
+            structuredContent?: {
+              status?: string;
+              interaction?: {
+                message?: string;
+              };
+              resumePayload?: {
+                executionId?: string;
+              };
+            };
+          }>,
+      );
+
+      expect(executed.structuredContent?.status).toBe("waiting_for_interaction");
+      expect(executed.structuredContent?.interaction?.message).toContain("Approve gated echo");
+      expect(executed.structuredContent?.resumePayload?.executionId).toBeTruthy();
+
+      const resumed = yield* Effect.promise(
+        () =>
+          mcp.client.callTool({
+            name: "resume",
+            arguments: {
+              resumePayload: executed.structuredContent?.resumePayload,
+              response: {
+                action: "accept",
+                content: {
+                  approve: true,
+                },
+              },
+            },
+          }) as Promise<{
+            structuredContent?: {
+              status?: string;
+              result?: unknown;
+            };
+          }>,
+      );
+
+      expect(resumed.structuredContent?.status).toBe("completed");
+      expect(resumed.structuredContent?.result).toBe("approved:manual-mcp");
     }),
   );
 

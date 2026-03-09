@@ -23,7 +23,7 @@ import {
   type OpenApiToolDefinition,
   type OpenApiToolManifest,
 } from "@executor-v3/codemode-openapi";
-import { makeInProcessExecutor } from "@executor-v3/runtime-local-inproc";
+import { makeDenoSubprocessExecutor } from "@executor-v3/runtime-deno-subprocess";
 import {
   SqlControlPlaneRowsService,
   type SqlControlPlaneRows,
@@ -1215,7 +1215,7 @@ export const createWorkspaceExecutionEnvironmentResolver = (input: {
       });
 
       return {
-        executor: makeInProcessExecutor(),
+        executor: makeDenoSubprocessExecutor(),
         toolInvoker,
         catalog,
       } satisfies ExecutionEnvironment;

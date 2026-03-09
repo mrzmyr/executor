@@ -16,6 +16,7 @@ import {
   type ResolveSecretMaterial,
   type SqlControlPlaneRuntime,
 } from "@executor-v3/control-plane";
+import { createExecutorMcpRequestHandler } from "@executor-v3/executor-mcp";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import type * as Scope from "effect/Scope";
@@ -243,7 +244,7 @@ const serveUiAsset = async (request: Request, ui: StaticUiOptions): Promise<Resp
 
 const isApiRequest = (request: Request): boolean => {
   const pathname = new URL(request.url).pathname;
-  return pathname === "/v1" || pathname.startsWith("/v1/");
+  return pathname === "/mcp" || pathname === "/v1" || pathname.startsWith("/v1/");
 };
 
 export const createLocalExecutorRequestHandler = (
@@ -277,10 +278,19 @@ export const createLocalExecutorRequestHandler = (
     );
 
     const apiHandler = yield* createControlPlaneWebHandler(runtime);
+    const mcpHandler = yield* Effect.acquireRelease(
+      Effect.sync(() => createExecutorMcpRequestHandler(runtime)),
+      (handler) => Effect.promise(() => handler.close()).pipe(Effect.orDie),
+    );
 
     return {
       runtime,
-      handleApiRequest: (request) => apiHandler.handler(request),
+      handleApiRequest: (request) => {
+        const pathname = new URL(request.url).pathname;
+        return pathname === "/mcp"
+          ? mcpHandler.handleRequest(request)
+          : apiHandler.handler(request);
+      },
       getBaseUrl: () => baseUrlRef,
       setBaseUrl: (baseUrl) => {
         baseUrlRef = baseUrl;

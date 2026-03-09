@@ -12,7 +12,7 @@
     },
     "apps/executor": {
       "name": "executor",
-      "version": "0.0.0-local",
+      "version": "1.1.0",
       "bin": {
         "executor": "./bin/executor",
       },
@@ -146,7 +146,7 @@
         "@executor-v3/codemode-core": "workspace:*",
         "@executor-v3/codemode-mcp": "workspace:*",
         "@executor-v3/codemode-openapi": "workspace:*",
-        "@executor-v3/runtime-local-inproc": "workspace:*",
+        "@executor-v3/runtime-deno-subprocess": "workspace:*",
         "drizzle-orm": "1.0.0-beta.15-859cf75",
         "effect": "catalog:",
         "graphql": "^16.12.0",
@@ -162,6 +162,21 @@
         "drizzle-kit": "1.0.0-beta.15-859cf75",
         "vitest": "catalog:",
         "zod": "catalog:",
+      },
+    },
+    "packages/executor-mcp": {
+      "name": "@executor-v3/executor-mcp",
+      "dependencies": {
+        "@executor-v3/control-plane": "workspace:*",
+        "@modelcontextprotocol/sdk": "^1.26.0",
+        "effect": "catalog:",
+        "zod": "catalog:",
+      },
+      "devDependencies": {
+        "@effect/vitest": "catalog:",
+        "@types/node": "catalog:",
+        "bun-types": "catalog:",
+        "vitest": "catalog:",
       },
     },
     "packages/kitchen-sink": {
@@ -207,6 +222,19 @@
         "react": ">=18 <20",
       },
     },
+    "packages/runtime-deno-subprocess": {
+      "name": "@executor-v3/runtime-deno-subprocess",
+      "dependencies": {
+        "@executor-v3/codemode-core": "workspace:*",
+        "effect": "catalog:",
+      },
+      "devDependencies": {
+        "@effect/vitest": "catalog:",
+        "@types/node": "catalog:",
+        "bun-types": "catalog:",
+        "vitest": "catalog:",
+      },
+    },
     "packages/runtime-local-inproc": {
       "name": "@executor-v3/runtime-local-inproc",
       "dependencies": {
@@ -223,6 +251,7 @@
       "dependencies": {
         "@effect/platform": "catalog:",
         "@executor-v3/control-plane": "workspace:*",
+        "@executor-v3/executor-mcp": "workspace:*",
         "effect": "catalog:",
       },
       "devDependencies": {
@@ -437,11 +466,15 @@
 
     "@executor-v3/control-plane": ["@executor-v3/control-plane@workspace:packages/control-plane"],
 
+    "@executor-v3/executor-mcp": ["@executor-v3/executor-mcp@workspace:packages/executor-mcp"],
+
     "@executor-v3/kitchen-sink": ["@executor-v3/kitchen-sink@workspace:packages/kitchen-sink"],
 
     "@executor-v3/mcp-elicitation-demo": ["@executor-v3/mcp-elicitation-demo@workspace:apps/mcp-elicitation-demo"],
 
     "@executor-v3/react": ["@executor-v3/react@workspace:packages/react"],
+
+    "@executor-v3/runtime-deno-subprocess": ["@executor-v3/runtime-deno-subprocess@workspace:packages/runtime-deno-subprocess"],
 
     "@executor-v3/runtime-local-inproc": ["@executor-v3/runtime-local-inproc@workspace:packages/runtime-local-inproc"],
 

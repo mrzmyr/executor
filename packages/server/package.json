@@ -11,6 +11,7 @@
   "dependencies": {
     "@effect/platform": "catalog:",
     "@executor-v3/control-plane": "workspace:*",
+    "@executor-v3/executor-mcp": "workspace:*",
     "effect": "catalog:"
   },
   "devDependencies": {

@@ -28,7 +28,7 @@
     "@executor-v3/codemode-core": "workspace:*",
     "@executor-v3/codemode-mcp": "workspace:*",
     "@executor-v3/codemode-openapi": "workspace:*",
-    "@executor-v3/runtime-local-inproc": "workspace:*",
+    "@executor-v3/runtime-deno-subprocess": "workspace:*",
     "drizzle-orm": "1.0.0-beta.15-859cf75",
     "effect": "catalog:",
     "graphql": "^16.12.0",

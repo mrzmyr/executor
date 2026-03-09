@@ -3,7 +3,7 @@ import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 
 import { makeToolInvokerFromTools } from "@executor-v3/codemode-core";
-import { makeInProcessExecutor } from "@executor-v3/runtime-local-inproc";
+import { makeDenoSubprocessExecutor } from "@executor-v3/runtime-deno-subprocess";
 
 import {
   createSqlControlPlaneRuntime,
@@ -31,7 +31,7 @@ const makeExecutionResolver = () => {
 
   return () =>
     Effect.succeed({
-      executor: makeInProcessExecutor(),
+      executor: makeDenoSubprocessExecutor(),
       toolInvoker,
     });
 };
