@@ -13,8 +13,6 @@ export type SesExecutorOptions = {
   allowFetch?: boolean;
 };
 
-export type InProcessExecutorOptions = SesExecutorOptions;
-
 const DEFAULT_TIMEOUT_MS = 5 * 60_000;
 const DEFAULT_EVALUATION_ID = "evaluation";
 const WORKER_PATH = fileURLToPath(new URL("./sandbox-worker.mjs", import.meta.url));
@@ -240,4 +238,3 @@ export const makeSesExecutor = (
   execute: (code: string, toolInvoker: ToolInvoker) => runInSes(options, code, toolInvoker),
 });
 
-export const makeInProcessExecutor = makeSesExecutor;

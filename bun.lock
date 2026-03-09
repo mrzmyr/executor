@@ -148,6 +148,7 @@
         "@executor/codemode-mcp": "workspace:*",
         "@executor/codemode-openapi": "workspace:*",
         "@executor/runtime-deno-subprocess": "workspace:*",
+        "@executor/runtime-ses": "workspace:*",
         "drizzle-orm": "1.0.0-beta.15-859cf75",
         "effect": "catalog:",
         "graphql": "^16.12.0",
