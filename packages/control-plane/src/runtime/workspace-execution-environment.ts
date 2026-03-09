@@ -23,7 +23,9 @@ import {
   type OpenApiToolDefinition,
   type OpenApiToolManifest,
 } from "@executor/codemode-openapi";
-import { makeDenoSubprocessExecutor } from "@executor/runtime-deno-subprocess";
+import { isDenoAvailable,
+  makeDenoSubprocessExecutor } from "@executor/runtime-deno-subprocess";
+import { makeSesExecutor } from "@executor/runtime-ses";
 import {
   SqlControlPlaneRowsService,
   type SqlControlPlaneRows,
@@ -389,7 +391,7 @@ const loadOpenApiWorkspaceTools = (input: {
                 description: definition.description,
                 interaction:
                   definition.method.toUpperCase() === "GET"
-                  || definition.method.toUpperCase() === "HEAD"
+                    || definition.method.toUpperCase() === "HEAD"
                     ? "auto"
                     : "required",
                 inputType: presentation.inputType,
@@ -627,13 +629,13 @@ const authorizePersistedToolInvocation = (input: {
     );
     const policies = Option.isSome(workspace)
       ? yield* input.rows.policies.listForWorkspaceContext({
-          organizationId: workspace.value.organizationId,
-          workspaceId: input.workspaceId,
-        }).pipe(
-          Effect.mapError((cause) =>
-            cause instanceof Error ? cause : new Error(String(cause)),
-          ),
-        )
+        organizationId: workspace.value.organizationId,
+        workspaceId: input.workspaceId,
+      }).pipe(
+        Effect.mapError((cause) =>
+          cause instanceof Error ? cause : new Error(String(cause)),
+        ),
+      )
       : [];
 
     const decision = evaluateInvocationPolicy({
@@ -648,7 +650,7 @@ const authorizePersistedToolInvocation = (input: {
         accountId: input.accountId,
         clientId:
           typeof input.context?.clientId === "string"
-          && input.context.clientId.length > 0
+            && input.context.clientId.length > 0
             ? input.context.clientId
             : null,
       },
@@ -1214,8 +1216,12 @@ export const createWorkspaceExecutionEnvironmentResolver = (input: {
         onElicitation,
       });
 
+      const executor = isDenoAvailable()
+        ? makeDenoSubprocessExecutor()
+        : makeSesExecutor();
+
       return {
-        executor: makeDenoSubprocessExecutor(),
+        executor,
         toolInvoker,
         catalog,
       } satisfies ExecutionEnvironment;

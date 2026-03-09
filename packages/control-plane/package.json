@@ -27,6 +27,7 @@
     "@electric-sql/pglite": "^0.3.12",
     "@executor/codemode-core": "workspace:*",
     "@executor/codemode-mcp": "workspace:*",
+    "@executor/runtime-ses": "workspace:*",
     "@executor/codemode-openapi": "workspace:*",
     "@executor/runtime-deno-subprocess": "workspace:*",
     "drizzle-orm": "1.0.0-beta.15-859cf75",
