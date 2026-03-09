@@ -74,6 +74,8 @@ const portableTargets: Record<string, PortableTarget> = {
   },
 };
 
+export const portableTargetIds = Object.freeze(Object.keys(portableTargets));
+
 export type BuildPortableDistributionOptions = {
   outputDir?: string;
   packageName?: string;

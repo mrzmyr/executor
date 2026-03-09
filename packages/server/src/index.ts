@@ -1,13 +1,13 @@
+import { existsSync } from "node:fs";
+import { mkdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import {
   createServer as createNodeServer,
   type IncomingMessage,
   type ServerResponse,
 } from "node:http";
 import type { AddressInfo } from "node:net";
-import { mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
-import { Readable } from "node:stream";
 import { dirname, extname, resolve } from "node:path";
-
+import { Readable } from "node:stream";
 import { HttpApiBuilder, HttpServer } from "@effect/platform";
 import {
   createControlPlaneApiLayer,
@@ -17,11 +17,14 @@ import {
   type SqlControlPlaneRuntime,
 } from "@executor/control-plane";
 import { createExecutorMcpRequestHandler } from "@executor/executor-mcp";
+import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 import type * as Scope from "effect/Scope";
 
 import {
+  DEFAULT_LEGACY_LOCAL_DATA_DIRS,
   DEFAULT_LOCAL_DATA_DIR,
   DEFAULT_SERVER_LOG_FILE,
   DEFAULT_SERVER_PID_FILE,
@@ -79,12 +82,130 @@ export type LocalExecutorRequestHandler = {
   readonly setBaseUrl: (baseUrl: string) => void;
 };
 
+type ControlPlaneWebHandler = ReturnType<typeof HttpApiBuilder.toWebHandler>;
+type ExecutorMcpHandler = ReturnType<typeof createExecutorMcpRequestHandler>;
+
 const disposeRuntime = (runtime: SqlControlPlaneRuntime) =>
   Effect.tryPromise({
     try: () => runtime.close(),
     catch: (cause) =>
       cause instanceof Error ? cause : new Error(String(cause ?? "runtime close failed")),
   }).pipe(Effect.orDie);
+
+const createRuntime = (
+  localDataDir: string,
+  getLocalServerBaseUrl: () => string | undefined,
+  options: StartLocalExecutorServerOptions,
+) =>
+  createSqlControlPlaneRuntime({
+    localDataDir,
+    migrationsFolder: options.migrationsFolder,
+    executionResolver: options.executionResolver,
+    resolveSecretMaterial: options.resolveSecretMaterial,
+    getLocalServerBaseUrl,
+  }).pipe(
+    Effect.mapError((cause) =>
+      cause instanceof Error ? cause : new Error(String(cause)),
+    ),
+  );
+
+const moveLegacyLocalDataDir = (
+  legacyLocalDataDir: string,
+  requestedLocalDataDir: string,
+ ) =>
+  Effect.tryPromise({
+    try: async () => {
+      await mkdir(dirname(requestedLocalDataDir), { recursive: true });
+      if (existsSync(requestedLocalDataDir)) {
+        const backupPath = `${requestedLocalDataDir}.backup-${Date.now()}`;
+        await rename(requestedLocalDataDir, backupPath);
+        console.warn(
+          `[executor] Backed up unreadable local data dir to: ${backupPath}`,
+        );
+      }
+      await rename(legacyLocalDataDir, requestedLocalDataDir);
+      console.warn(
+        `[executor] Moved legacy local data dir to: ${requestedLocalDataDir}`,
+      );
+    },
+    catch: (cause) =>
+      cause instanceof Error ? cause : new Error(String(cause)),
+  });
+
+const createRuntimeWithLegacyMigration = (
+  requestedLocalDataDir: string,
+  legacyLocalDataDirs: ReadonlyArray<string>,
+  getLocalServerBaseUrl: () => string | undefined,
+  options: StartLocalExecutorServerOptions,
+ ) =>
+  Effect.gen(function* () {
+    if (
+      requestedLocalDataDir !== ":memory:"
+      && !existsSync(requestedLocalDataDir)
+      && legacyLocalDataDirs.length > 0
+    ) {
+      for (const legacyLocalDataDir of legacyLocalDataDirs) {
+        const legacyExit = yield* Effect.exit(
+          createRuntime(legacyLocalDataDir, getLocalServerBaseUrl, options),
+        );
+        if (Exit.isFailure(legacyExit)) {
+          continue;
+        }
+        yield* disposeRuntime(legacyExit.value);
+        const migrationExit = yield* Effect.exit(
+          moveLegacyLocalDataDir(legacyLocalDataDir, requestedLocalDataDir),
+        );
+        if (Exit.isFailure(migrationExit)) {
+          continue;
+        }
+        const migratedExit = yield* Effect.exit(
+          createRuntime(requestedLocalDataDir, getLocalServerBaseUrl, options),
+        );
+        if (Exit.isSuccess(migratedExit)) {
+          return migratedExit.value;
+        }
+      }
+    }
+    const primaryExit = yield* Effect.exit(
+      createRuntime(requestedLocalDataDir, getLocalServerBaseUrl, options),
+    );
+    if (Exit.isSuccess(primaryExit)) {
+      return primaryExit.value;
+    }
+    const primaryError = Cause.squash(primaryExit.cause);
+    if (legacyLocalDataDirs.length > 0) {
+      yield* Effect.sync(() => {
+        console.warn(
+          `[executor] Failed to open default local data dir: ${requestedLocalDataDir}`,
+          primaryError instanceof Error ? primaryError.message : String(primaryError),
+        );
+      });
+    }
+    for (const legacyLocalDataDir of legacyLocalDataDirs) {
+      const legacyExit = yield* Effect.exit(
+        createRuntime(legacyLocalDataDir, getLocalServerBaseUrl, options),
+      );
+      if (Exit.isFailure(legacyExit)) {
+        continue;
+      }
+      yield* disposeRuntime(legacyExit.value);
+      const migrationExit = yield* Effect.exit(
+        moveLegacyLocalDataDir(legacyLocalDataDir, requestedLocalDataDir),
+      );
+      if (Exit.isFailure(migrationExit)) {
+        continue;
+      }
+      const migratedExit = yield* Effect.exit(
+        createRuntime(requestedLocalDataDir, getLocalServerBaseUrl, options),
+      );
+      if (Exit.isSuccess(migratedExit)) {
+        return migratedExit.value;
+      }
+    }
+    return yield* Effect.fail(
+      primaryError instanceof Error ? primaryError : new Error(String(primaryError)),
+    );
+  });
 
 const createControlPlaneWebHandler = (runtime: SqlControlPlaneRuntime) =>
   Effect.acquireRelease(
@@ -96,7 +217,7 @@ const createControlPlaneWebHandler = (runtime: SqlControlPlaneRuntime) =>
         ),
       ),
     ),
-    (handler) => Effect.tryPromise({ try: () => handler.dispose(), catch: (cause) => cause instanceof Error ? cause : new Error(String(cause ?? "web handler dispose failed")) }).pipe(Effect.orDie),
+    (handler: ControlPlaneWebHandler) => Effect.tryPromise({ try: () => handler.dispose(), catch: (cause) => cause instanceof Error ? cause : new Error(String(cause ?? "web handler dispose failed")) }).pipe(Effect.orDie),
   );
 
 const safeFilePath = (assetsDir: string, pathname: string): string | null => {
@@ -255,11 +376,15 @@ export const createLocalExecutorRequestHandler = (
   options: StartLocalExecutorServerOptions = {},
 ): Effect.Effect<LocalExecutorRequestHandler, Error, Scope.Scope> =>
   Effect.gen(function* () {
-    const localDataDir = options.localDataDir ?? DEFAULT_LOCAL_DATA_DIR;
+    const requestedLocalDataDir = options.localDataDir ?? DEFAULT_LOCAL_DATA_DIR;
+    const legacyLocalDataDirs =
+      options.localDataDir === undefined
+        ? DEFAULT_LEGACY_LOCAL_DATA_DIRS.filter((candidate) => existsSync(candidate))
+        : [];
 
-    if (localDataDir !== ":memory:") {
+    if (requestedLocalDataDir !== ":memory:") {
       yield* Effect.tryPromise({
-        try: () => mkdir(dirname(localDataDir), { recursive: true }),
+        try: () => mkdir(dirname(requestedLocalDataDir), { recursive: true }),
         catch: (cause) => (cause instanceof Error ? cause : new Error(String(cause))),
       });
     }
@@ -267,16 +392,11 @@ export const createLocalExecutorRequestHandler = (
     let baseUrlRef: string | undefined;
 
     const runtime = yield* Effect.acquireRelease(
-      createSqlControlPlaneRuntime({
-        localDataDir,
-        migrationsFolder: options.migrationsFolder,
-        executionResolver: options.executionResolver,
-        resolveSecretMaterial: options.resolveSecretMaterial,
-        getLocalServerBaseUrl: () => baseUrlRef,
-      }).pipe(
-        Effect.mapError((cause) =>
-          cause instanceof Error ? cause : new Error(String(cause)),
-        ),
+      createRuntimeWithLegacyMigration(
+        requestedLocalDataDir,
+        legacyLocalDataDirs,
+        () => baseUrlRef,
+        options,
       ),
       disposeRuntime,
     );
@@ -284,7 +404,14 @@ export const createLocalExecutorRequestHandler = (
     const apiHandler = yield* createControlPlaneWebHandler(runtime);
     const mcpHandler = yield* Effect.acquireRelease(
       Effect.sync(() => createExecutorMcpRequestHandler(runtime)),
-      (handler) => Effect.tryPromise({ try: () => handler.close(), catch: (cause) => cause instanceof Error ? cause : new Error(String(cause ?? "mcp handler close failed")) }).pipe(Effect.orDie),
+      (handler: ExecutorMcpHandler) =>
+        Effect.tryPromise({
+          try: () => handler.close(),
+          catch: (cause) =>
+            cause instanceof Error
+              ? cause
+              : new Error(String(cause ?? "mcp handler close failed")),
+        }).pipe(Effect.orDie),
     );
 
     return {

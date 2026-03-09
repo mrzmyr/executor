@@ -5,7 +5,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
   id-token: write
 
 concurrency:
@@ -19,6 +19,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Require default branch
         if: github.ref_name != github.event.repository.default_branch
@@ -53,15 +55,50 @@ jobs:
           fi
 
           echo "version=${version}" >> "$GITHUB_OUTPUT"
+          echo "tag=v${version}" >> "$GITHUB_OUTPUT"
           echo "Publishing executor@${version}"
 
-      - name: Ensure version is unpublished
+      - name: Inspect existing publish state
+        id: state
         shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
+          version="${{ steps.version.outputs.version }}"
+          tag="${{ steps.version.outputs.tag }}"
+          package_published=false
+          release_exists=false
+          tag_exists=false
 
-          if npm view "executor@${{ steps.version.outputs.version }}" version >/dev/null 2>&1; then
-            echo "executor@${{ steps.version.outputs.version }} is already published" >&2
+          if npm view "executor@${version}" version >/dev/null 2>&1; then
+            package_published=true
+          fi
+
+          if gh release view "${tag}" --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1; then
+            release_exists=true
+          fi
+
+          if git rev-parse -q --verify "refs/tags/${tag}" >/dev/null || git ls-remote --exit-code --tags origin "refs/tags/${tag}" >/dev/null 2>&1; then
+            tag_exists=true
+          fi
+
+          echo "package_published=${package_published}" >> "$GITHUB_OUTPUT"
+          echo "release_exists=${release_exists}" >> "$GITHUB_OUTPUT"
+          echo "tag_exists=${tag_exists}" >> "$GITHUB_OUTPUT"
+
+          if [[ "${package_published}" == true && "${release_exists}" == true ]]; then
+            echo "executor@${version} is already published and ${tag} already exists" >&2
+            exit 1
+          fi
+
+          if [[ "${package_published}" == false && "${release_exists}" == true ]]; then
+            echo "GitHub release ${tag} exists, but executor@${version} is not published to npm" >&2
+            exit 1
+          fi
+
+          if [[ "${package_published}" == false && "${tag_exists}" == true && "${release_exists}" == false ]]; then
+            echo "Release tag ${tag} already exists without a GitHub release; resolve that before publishing executor@${version}" >&2
             exit 1
           fi
 
@@ -70,9 +107,38 @@ jobs:
           bun run --cwd apps/executor typecheck
           bun run --cwd apps/executor test
 
-      - name: Build distribution package
-        run: bun run --cwd apps/executor build:dist
+      - name: Build release artifacts
+        run: bun run --cwd apps/executor build:release
 
       - name: Publish to npm
+        if: steps.state.outputs.package_published != 'true'
         working-directory: apps/executor
         run: npm publish ./dist/npm --access public --provenance
+
+      - name: Create GitHub release
+        if: steps.state.outputs.release_exists != 'true'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          assets=(
+            apps/executor/dist/release/*.tgz
+            apps/executor/dist/release/checksums.txt
+            apps/executor/dist/release/portable/*.tar.gz
+            apps/executor/dist/release/portable/*.zip
+          )
+
+          if [[ ${#assets[@]} -lt 3 ]]; then
+            echo "Missing release assets under apps/executor/dist/release" >&2
+            exit 1
+          fi
+
+          gh release create "${{ steps.version.outputs.tag }}" \
+            "${assets[@]}" \
+            --repo "${GITHUB_REPOSITORY}" \
+            --target "${GITHUB_SHA}" \
+            --title "${{ steps.version.outputs.tag }}" \
+            --generate-notes \
+            --latest

@@ -33,7 +33,8 @@
     "pack:dist": "bun src/distribution/build-package.ts && npm pack ./dist/npm",
     "publish:dist:dry-run": "bun src/distribution/build-package.ts && npm publish ./dist/npm --dry-run",
     "publish:dist": "bun src/distribution/build-package.ts && npm publish ./dist/npm",
-    "build:portable": "bun src/distribution/build-portable.ts"
+    "build:portable": "bun src/distribution/build-portable.ts",
+    "build:release": "bun src/distribution/build-release.ts"
   },
   "dependencies": {
     "@effect/cli": "catalog:",
