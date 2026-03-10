@@ -61,8 +61,8 @@ const makeSource = (overrides: Partial<Source> = {}): Source => ({
 });
 
 const makeOperation = (
-  overrides: Partial<StoredSourceRecipeOperationRecord> = {},
-): StoredSourceRecipeOperationRecord => ({
+  overrides: Partial<Extract<StoredSourceRecipeOperationRecord, { providerKind: "openapi" }>> = {},
+): Extract<StoredSourceRecipeOperationRecord, { providerKind: "openapi" }> => ({
   id: "src_recipe_op_runtime",
   recipeRevisionId: SourceRecipeRevisionIdSchema.make("src_recipe_rev_runtime"),
   operationKey: "getRepo",
@@ -93,6 +93,80 @@ const makeOperation = (
   openApiRawToolId: "repos_getRepo",
   openApiOperationId: "repos.getRepo",
   openApiTagsJson: JSON.stringify(["repos"]),
+  openApiRequestBodyRequired: null,
+  graphqlOperationType: null,
+  graphqlOperationName: null,
+  createdAt: 1000,
+  updatedAt: 1000,
+  ...overrides,
+});
+
+const makeGraphqlOperation = (
+  overrides: Partial<Extract<StoredSourceRecipeOperationRecord, { providerKind: "graphql" }>> = {},
+): Extract<StoredSourceRecipeOperationRecord, { providerKind: "graphql" }> => ({
+  id: "src_recipe_op_graphql_runtime",
+  recipeRevisionId: SourceRecipeRevisionIdSchema.make("src_recipe_rev_runtime"),
+  operationKey: "viewer",
+  transportKind: "graphql",
+  toolId: "viewer",
+  title: "Viewer",
+  description: "Query the current viewer",
+  operationKind: "read",
+  searchText: "viewer graphql query",
+  inputSchemaJson: JSON.stringify({
+    type: "object",
+    additionalProperties: false,
+  }),
+  outputSchemaJson: JSON.stringify({
+    type: "object",
+    properties: {
+      login: { type: "string" },
+    },
+  }),
+  providerKind: "graphql",
+  providerDataJson: JSON.stringify({
+    kind: "graphql",
+  }),
+  mcpToolName: null,
+  openApiMethod: null,
+  openApiPathTemplate: null,
+  openApiOperationHash: null,
+  openApiRawToolId: null,
+  openApiOperationId: null,
+  openApiTagsJson: null,
+  openApiRequestBodyRequired: null,
+  graphqlOperationType: "query",
+  graphqlOperationName: "viewer",
+  createdAt: 1000,
+  updatedAt: 1000,
+  ...overrides,
+});
+
+const makeMcpOperation = (
+  overrides: Partial<Extract<StoredSourceRecipeOperationRecord, { providerKind: "mcp" }>> = {},
+): Extract<StoredSourceRecipeOperationRecord, { providerKind: "mcp" }> => ({
+  id: "src_recipe_op_mcp_runtime",
+  recipeRevisionId: SourceRecipeRevisionIdSchema.make("src_recipe_rev_runtime"),
+  operationKey: "echo",
+  transportKind: "mcp",
+  toolId: "echo",
+  title: "Echo",
+  description: "Echo a value",
+  operationKind: "unknown",
+  searchText: "echo mcp",
+  inputSchemaJson: null,
+  outputSchemaJson: null,
+  providerKind: "mcp",
+  providerDataJson: JSON.stringify({
+    kind: "mcp",
+  }),
+  mcpToolName: "echo",
+  openApiMethod: null,
+  openApiPathTemplate: null,
+  openApiOperationHash: null,
+  openApiRawToolId: null,
+  openApiOperationId: null,
+  openApiTagsJson: null,
   openApiRequestBodyRequired: null,
   graphqlOperationType: null,
   graphqlOperationName: null,
@@ -174,10 +248,7 @@ describe("source-recipes-runtime", () => {
       expect(recipeToolSearchNamespace({
         source: graphqlSource,
         path: "ignored.path",
-        operation: makeOperation({
-          providerKind: "graphql",
-          transportKind: "graphql",
-          openApiMethod: null,
+        operation: makeGraphqlOperation({
           graphqlOperationType: "query",
           graphqlOperationName: "viewer",
         }),
@@ -209,10 +280,7 @@ describe("source-recipes-runtime", () => {
           endpoint: "https://example.com/graphql",
           specUrl: null,
         }),
-        operation: makeOperation({
-          providerKind: "graphql",
-          transportKind: "graphql",
-          openApiMethod: null,
+        operation: makeGraphqlOperation({
           graphqlOperationType: "query",
           graphqlOperationName: "viewer",
         }),
@@ -226,10 +294,7 @@ describe("source-recipes-runtime", () => {
           endpoint: "https://example.com/graphql",
           specUrl: null,
         }),
-        operation: makeOperation({
-          providerKind: "graphql",
-          transportKind: "graphql",
-          openApiMethod: null,
+        operation: makeGraphqlOperation({
           graphqlOperationType: "mutation",
           graphqlOperationName: "createIssue",
         }),
@@ -244,15 +309,7 @@ describe("source-recipes-runtime", () => {
           specUrl: null,
           transport: "streamable-http",
         }),
-        operation: makeOperation({
-          providerKind: "mcp",
-          transportKind: "mcp",
-          openApiMethod: null,
-          openApiPathTemplate: null,
-          openApiOperationHash: null,
-          openApiRawToolId: null,
-          openApiOperationId: null,
-          openApiTagsJson: null,
+        operation: makeMcpOperation({
           mcpToolName: "echo",
         }),
         path: "mcp.echo",

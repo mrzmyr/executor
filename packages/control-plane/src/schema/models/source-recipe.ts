@@ -67,6 +67,23 @@ export const SourceRecipeOperationProviderKindSchema = Schema.Literal(
   "internal",
 );
 
+export const SourceRecipeOpenApiMethodSchema = Schema.Literal(
+  "get",
+  "put",
+  "post",
+  "delete",
+  "patch",
+  "head",
+  "options",
+  "trace",
+);
+
+export const SourceRecipeGraphqlOperationTypeSchema = Schema.Literal(
+  "query",
+  "mutation",
+  "subscription",
+);
+
 const recipeRowSchemaOverrides = {
   id: SourceRecipeIdSchema,
   kind: SourceRecipeKindSchema,
@@ -93,14 +110,13 @@ const recipeDocumentRowSchemaOverrides = {
   updatedAt: TimestampMsSchema,
 } as const;
 
-const recipeOperationRowSchemaOverrides = {
+const sourceRecipeOperationRowSchemaOverrides = {
   recipeRevisionId: SourceRecipeRevisionIdSchema,
   transportKind: SourceRecipeTransportKindSchema,
   operationKind: SourceRecipeOperationKindSchema,
   providerKind: SourceRecipeOperationProviderKindSchema,
-  openApiMethod: Schema.NullOr(
-    Schema.Literal("get", "put", "post", "delete", "patch", "head", "options", "trace"),
-  ),
+  openApiMethod: Schema.NullOr(SourceRecipeOpenApiMethodSchema),
+  graphqlOperationType: Schema.NullOr(SourceRecipeGraphqlOperationTypeSchema),
   createdAt: TimestampMsSchema,
   updatedAt: TimestampMsSchema,
 } as const;
@@ -120,10 +136,99 @@ export const StoredSourceRecipeDocumentRecordSchema = createSelectSchema(
   recipeDocumentRowSchemaOverrides,
 );
 
-export const StoredSourceRecipeOperationRecordSchema = createSelectSchema(
+export const StoredSourceRecipeOperationRowSchema = createSelectSchema(
   sourceRecipeOperationsTable,
-  recipeOperationRowSchemaOverrides,
+  sourceRecipeOperationRowSchemaOverrides,
 );
+
+const sourceRecipeOperationCommonFields = {
+  id: Schema.String,
+  recipeRevisionId: SourceRecipeRevisionIdSchema,
+  operationKey: Schema.String,
+  toolId: Schema.String,
+  title: Schema.NullOr(Schema.String),
+  description: Schema.NullOr(Schema.String),
+  operationKind: SourceRecipeOperationKindSchema,
+  searchText: Schema.String,
+  inputSchemaJson: Schema.NullOr(Schema.String),
+  outputSchemaJson: Schema.NullOr(Schema.String),
+  providerDataJson: Schema.NullOr(Schema.String),
+  createdAt: TimestampMsSchema,
+  updatedAt: TimestampMsSchema,
+} as const;
+
+export const StoredOpenApiSourceRecipeOperationRecordSchema = Schema.Struct({
+  ...sourceRecipeOperationCommonFields,
+  transportKind: Schema.Literal("http"),
+  providerKind: Schema.Literal("openapi"),
+  mcpToolName: Schema.Null,
+  openApiMethod: SourceRecipeOpenApiMethodSchema,
+  openApiPathTemplate: Schema.String,
+  openApiOperationHash: Schema.String,
+  openApiRawToolId: Schema.String,
+  openApiOperationId: Schema.NullOr(Schema.String),
+  openApiTagsJson: Schema.String,
+  openApiRequestBodyRequired: Schema.NullOr(Schema.Boolean),
+  graphqlOperationType: Schema.Null,
+  graphqlOperationName: Schema.Null,
+});
+
+export const StoredGraphqlSourceRecipeOperationRecordSchema = Schema.Struct({
+  ...sourceRecipeOperationCommonFields,
+  transportKind: Schema.Literal("graphql"),
+  providerKind: Schema.Literal("graphql"),
+  mcpToolName: Schema.Null,
+  openApiMethod: Schema.Null,
+  openApiPathTemplate: Schema.Null,
+  openApiOperationHash: Schema.Null,
+  openApiRawToolId: Schema.Null,
+  openApiOperationId: Schema.Null,
+  openApiTagsJson: Schema.Null,
+  openApiRequestBodyRequired: Schema.Null,
+  graphqlOperationType: Schema.NullOr(SourceRecipeGraphqlOperationTypeSchema),
+  graphqlOperationName: Schema.NullOr(Schema.String),
+});
+
+export const StoredMcpSourceRecipeOperationRecordSchema = Schema.Struct({
+  ...sourceRecipeOperationCommonFields,
+  transportKind: Schema.Literal("mcp"),
+  providerKind: Schema.Literal("mcp"),
+  mcpToolName: Schema.String,
+  openApiMethod: Schema.Null,
+  openApiPathTemplate: Schema.Null,
+  openApiOperationHash: Schema.Null,
+  openApiRawToolId: Schema.Null,
+  openApiOperationId: Schema.Null,
+  openApiTagsJson: Schema.Null,
+  openApiRequestBodyRequired: Schema.Null,
+  graphqlOperationType: Schema.Null,
+  graphqlOperationName: Schema.Null,
+});
+
+export const StoredInternalSourceRecipeOperationRecordSchema = Schema.Struct({
+  ...sourceRecipeOperationCommonFields,
+  transportKind: Schema.Literal("internal"),
+  providerKind: Schema.Literal("internal"),
+  mcpToolName: Schema.Null,
+  openApiMethod: Schema.Null,
+  openApiPathTemplate: Schema.Null,
+  openApiOperationHash: Schema.Null,
+  openApiRawToolId: Schema.Null,
+  openApiOperationId: Schema.Null,
+  openApiTagsJson: Schema.Null,
+  openApiRequestBodyRequired: Schema.Null,
+  graphqlOperationType: Schema.Null,
+  graphqlOperationName: Schema.Null,
+});
+
+export const StoredSourceRecipeOperationRecordSchema = Schema.Union(
+  StoredOpenApiSourceRecipeOperationRecordSchema,
+  StoredGraphqlSourceRecipeOperationRecordSchema,
+  StoredMcpSourceRecipeOperationRecordSchema,
+  StoredInternalSourceRecipeOperationRecordSchema,
+).annotations({
+  identifier: "StoredSourceRecipeOperationRecord",
+});
 
 export type SourceRecipeKind = typeof SourceRecipeKindSchema.Type;
 export type SourceRecipeImporterKind = typeof SourceRecipeImporterKindSchema.Type;
@@ -133,8 +238,20 @@ export type SourceRecipeTransportKind = typeof SourceRecipeTransportKindSchema.T
 export type SourceRecipeOperationKind = typeof SourceRecipeOperationKindSchema.Type;
 export type SourceRecipeOperationProviderKind =
   typeof SourceRecipeOperationProviderKindSchema.Type;
+export type SourceRecipeOpenApiMethod = typeof SourceRecipeOpenApiMethodSchema.Type;
+export type SourceRecipeGraphqlOperationType =
+  typeof SourceRecipeGraphqlOperationTypeSchema.Type;
 export type StoredSourceRecipeRecord = typeof StoredSourceRecipeRecordSchema.Type;
 export type StoredSourceRecipeRevisionRecord = typeof StoredSourceRecipeRevisionRecordSchema.Type;
 export type StoredSourceRecipeDocumentRecord = typeof StoredSourceRecipeDocumentRecordSchema.Type;
+export type StoredSourceRecipeOperationRow = typeof StoredSourceRecipeOperationRowSchema.Type;
+export type StoredOpenApiSourceRecipeOperationRecord =
+  typeof StoredOpenApiSourceRecipeOperationRecordSchema.Type;
+export type StoredGraphqlSourceRecipeOperationRecord =
+  typeof StoredGraphqlSourceRecipeOperationRecordSchema.Type;
+export type StoredMcpSourceRecipeOperationRecord =
+  typeof StoredMcpSourceRecipeOperationRecordSchema.Type;
+export type StoredInternalSourceRecipeOperationRecord =
+  typeof StoredInternalSourceRecipeOperationRecordSchema.Type;
 export type StoredSourceRecipeOperationRecord =
   typeof StoredSourceRecipeOperationRecordSchema.Type;
