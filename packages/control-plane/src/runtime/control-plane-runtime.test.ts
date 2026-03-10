@@ -12,6 +12,8 @@ import {
   ExecutionInteractionIdSchema,
   SecretMaterialIdSchema,
   SourceIdSchema,
+  SourceRecipeIdSchema,
+  SourceRecipeRevisionIdSchema,
 } from "#schema";
 import type { ToolPath } from "@executor/codemode-core";
 
@@ -278,12 +280,15 @@ describe("control-plane-runtime", () => {
       yield* runtime.persistence.rows.sources.insert({
         id: sourceId,
         workspaceId: installation.workspaceId,
+        recipeId: SourceRecipeIdSchema.make(`src_recipe_${sourceId}`),
+        recipeRevisionId: SourceRecipeRevisionIdSchema.make(`src_recipe_rev_${sourceId}`),
         name: "GitHub",
         kind: "openapi",
         endpoint: "https://api.github.com",
         status: "auth_required",
         enabled: true,
         namespace: "github",
+        bindingConfigJson: null,
         transport: null,
         queryParamsJson: null,
         headersJson: null,
@@ -435,12 +440,15 @@ describe("control-plane-runtime", () => {
       yield* runtime.persistence.rows.sources.insert({
         id: sourceId,
         workspaceId: installation.workspaceId,
+        recipeId: SourceRecipeIdSchema.make(`src_recipe_${sourceId}`),
+        recipeRevisionId: SourceRecipeRevisionIdSchema.make(`src_recipe_rev_${sourceId}`),
         name: "GitHub",
         kind: "openapi",
         endpoint: "https://api.github.com",
         status: "auth_required",
         enabled: true,
         namespace: "github",
+        bindingConfigJson: null,
         transport: null,
         queryParamsJson: null,
         headersJson: null,

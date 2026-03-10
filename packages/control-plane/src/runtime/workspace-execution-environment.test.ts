@@ -32,6 +32,8 @@ import {
   ExecutionIdSchema,
   SecretMaterialIdSchema,
   SourceIdSchema,
+  SourceRecipeIdSchema,
+  SourceRecipeRevisionIdSchema,
   WorkspaceIdSchema,
 } from "#schema";
 import * as Context from "effect/Context";
@@ -271,7 +273,8 @@ const testGraphqlSchema = new GraphQLSchema({
 const closeScope = (scope: Scope.CloseableScope) =>
   Scope.close(scope, Exit.void).pipe(Effect.orDie);
 
-const makePersistence = Effect.acquireRelease(
+const makePersistence: Effect.Effect<SqlControlPlanePersistence, unknown, Scope.Scope> =
+  Effect.acquireRelease(
   createSqlControlPlanePersistence({
     localDataDir: ":memory:",
   }),
@@ -280,7 +283,7 @@ const makePersistence = Effect.acquireRelease(
       try: () => persistence.close(),
       catch: (cause) => (cause instanceof Error ? cause : new Error(String(cause))),
     }).pipe(Effect.orDie),
-);
+  );
 
 const makeCountedMcpServer = Effect.acquireRelease(
   Effect.promise<CountedMcpServer>(
@@ -644,12 +647,15 @@ const persistConnectedEchoTool = (input: {
     yield* input.persistence.rows.sources.insert({
       id: input.sourceId,
       workspaceId: input.workspaceId,
+      recipeId: SourceRecipeIdSchema.make(`src_recipe_${input.sourceId}`),
+      recipeRevisionId: SourceRecipeRevisionIdSchema.make(`src_recipe_rev_${input.sourceId}`),
       name: "Counted MCP",
       kind: "mcp",
       endpoint: input.endpoint,
       status: "connected",
       enabled: true,
       namespace: "counted",
+      bindingConfigJson: null,
       transport: "auto",
       queryParamsJson: null,
       headersJson: null,
@@ -816,12 +822,15 @@ const persistConnectedGithubOpenApiSource = (input: {
     yield* input.persistence.rows.sources.insert({
       id: input.sourceId,
       workspaceId: input.workspaceId,
+      recipeId: SourceRecipeIdSchema.make(`src_recipe_${input.sourceId}`),
+      recipeRevisionId: SourceRecipeRevisionIdSchema.make(`src_recipe_rev_${input.sourceId}`),
       name: "GitHub",
       kind: "openapi",
       endpoint: input.endpoint ?? "https://api.github.com",
       status: "connected",
       enabled: true,
       namespace: "github",
+      bindingConfigJson: null,
       transport: null,
       queryParamsJson: null,
       headersJson: null,
@@ -839,6 +848,8 @@ const persistConnectedGithubOpenApiSource = (input: {
       yield* input.persistence.rows.credentials.upsert({
         id: credentialId,
         workspaceId: input.workspaceId,
+        sourceId: input.sourceId,
+        actorAccountId: null,
         authKind: "bearer",
         authHeaderName: "Authorization",
         authPrefix: "Bearer ",
@@ -846,14 +857,6 @@ const persistConnectedGithubOpenApiSource = (input: {
         tokenHandle: input.auth.handle,
         refreshTokenProviderId: null,
         refreshTokenHandle: null,
-        createdAt: now,
-        updatedAt: now,
-      });
-      yield* input.persistence.rows.sourceCredentialBindings.upsert({
-        id: `src_cred_bind_${randomUUID()}`,
-        workspaceId: input.workspaceId,
-        sourceId: input.sourceId,
-        credentialId,
         createdAt: now,
         updatedAt: now,
       });
