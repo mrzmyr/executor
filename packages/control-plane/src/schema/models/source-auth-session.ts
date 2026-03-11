@@ -11,12 +11,13 @@ import {
   SourceIdSchema,
   WorkspaceIdSchema,
 } from "../ids";
-import { CredentialSlotSchema } from "./credential";
+import {
+  CredentialSlotSchema,
+  OAuth2ClientAuthenticationMethodSchema,
+  SecretRefSchema,
+} from "./auth-artifact";
 
-export const SourceAuthSessionProviderKindSchema = Schema.Literal(
-  "mcp_oauth",
-  "oauth2_pkce",
-);
+export const SourceAuthSessionProviderKindSchema = Schema.String;
 
 export const SourceAuthSessionStatusSchema = Schema.Literal(
   "pending",
@@ -74,6 +75,30 @@ export const McpSourceAuthSessionDataJsonSchema = Schema.parseJson(
   McpSourceAuthSessionDataSchema,
 );
 
+export const OAuth2PkceSourceAuthSessionDataSchema = Schema.Struct({
+  kind: Schema.Literal("oauth2_pkce"),
+  providerKey: Schema.String,
+  authorizationEndpoint: Schema.String,
+  tokenEndpoint: Schema.String,
+  redirectUri: Schema.String,
+  clientId: Schema.String,
+  clientAuthentication: OAuth2ClientAuthenticationMethodSchema,
+  clientSecret: Schema.NullOr(SecretRefSchema),
+  scopes: Schema.Array(Schema.String),
+  headerName: Schema.String,
+  prefix: Schema.String,
+  authorizationParams: Schema.Record({
+    key: Schema.String,
+    value: Schema.String,
+  }),
+  codeVerifier: Schema.NullOr(Schema.String),
+  authorizationUrl: Schema.NullOr(Schema.String),
+});
+
+export const OAuth2PkceSourceAuthSessionDataJsonSchema = Schema.parseJson(
+  OAuth2PkceSourceAuthSessionDataSchema,
+);
+
 const sourceAuthSessionSchemaOverrides = {
   id: SourceAuthSessionIdSchema,
   workspaceId: WorkspaceIdSchema,
@@ -97,4 +122,6 @@ export const SourceAuthSessionSchema = createSelectSchema(
 export type SourceAuthSessionProviderKind = typeof SourceAuthSessionProviderKindSchema.Type;
 export type SourceAuthSessionStatus = typeof SourceAuthSessionStatusSchema.Type;
 export type McpSourceAuthSessionData = typeof McpSourceAuthSessionDataSchema.Type;
+export type OAuth2PkceSourceAuthSessionData =
+  typeof OAuth2PkceSourceAuthSessionDataSchema.Type;
 export type SourceAuthSession = typeof SourceAuthSessionSchema.Type;

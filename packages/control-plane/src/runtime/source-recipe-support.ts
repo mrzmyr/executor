@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { sha256Hex } from "@executor/codemode-core";
 
 import type {
   Source,
@@ -28,7 +28,7 @@ export const normalizeSearchText = (
     .toLowerCase();
 
 export const contentHash = (value: string): string =>
-  createHash("sha256").update(value).digest("hex");
+  sha256Hex(value);
 
 export const loadSourceBindingRecord = (input: {
   rows: SqlControlPlaneRows;

@@ -687,7 +687,9 @@ const createWorkspaceToolInvoker = (input: {
       });
 
       const auth = yield* resolveSourceAuthMaterial({
+        rows: input.rows,
         source: recipeTool.source,
+        actorAccountId: input.accountId,
         resolveSecretMaterial: input.resolveSecretMaterial,
         context: toSecretResolutionContext(invocation.context),
       });

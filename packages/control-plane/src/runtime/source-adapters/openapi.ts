@@ -5,6 +5,8 @@ import {
 } from "@effect/platform";
 import type { SqlControlPlaneRows } from "#persistence";
 import {
+  applyCookiePlacementsToHeaders,
+  applyHttpQueryPlacementsToUrl,
   makeToolInvokerFromTools,
 } from "@executor/codemode-core";
 import {
@@ -152,11 +154,23 @@ const openApiBindingConfigFromSource = (
 const fetchOpenApiDocumentWithHeaders = (input: {
   url: string;
   headers?: Readonly<Record<string, string>>;
+  queryParams?: Readonly<Record<string, string>>;
+  cookies?: Readonly<Record<string, string>>;
 }): Effect.Effect<string, Error, never> =>
   Effect.gen(function* () {
     const client = yield* HttpClient.HttpClient;
-    const request = HttpClientRequest.get(input.url).pipe(
-      HttpClientRequest.setHeaders(input.headers ?? {}),
+    const request = HttpClientRequest.get(
+      applyHttpQueryPlacementsToUrl({
+        url: input.url,
+        queryParams: input.queryParams,
+      }).toString(),
+    ).pipe(
+      HttpClientRequest.setHeaders(
+        applyCookiePlacementsToHeaders({
+          headers: input.headers ?? {},
+          cookies: input.cookies,
+        }),
+      ),
     );
     const response = yield* client.execute(request).pipe(
       Effect.mapError((cause) =>
@@ -522,6 +536,8 @@ export const openApiSourceAdapter: SourceAdapter = {
           ...(bindingConfig.defaultHeaders ?? {}),
           ...auth.headers,
         },
+        queryParams: auth.queryParams,
+        cookies: auth.cookies,
       }).pipe(
         Effect.mapError(
           (cause) =>
@@ -609,7 +625,7 @@ export const openApiSourceAdapter: SourceAdapter = {
         sourceKey: source.id,
         baseUrl: source.endpoint,
         defaultHeaders: bindingConfig.defaultHeaders ?? {},
-        credentialHeaders: auth.headers,
+        credentialPlacements: auth,
         refHintTable: refHintTable.right,
       });
 

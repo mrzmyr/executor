@@ -8,7 +8,7 @@ import type { DrizzleTables } from "../schema";
 import {
   cleanupOrphanedSourceRecipes,
   firstOption,
-  postgresSecretHandlesFromCredentials,
+  postgresSecretHandlesFromAuthArtifacts,
 } from "./shared";
 
 const decodeWorkspace = Schema.decodeUnknownSync(WorkspaceSchema);
@@ -83,16 +83,14 @@ export const createWorkspacesRepo = (
       const executionIds = executionRows.map((execution) => execution.id);
       const recipeIds = sourceRows.map((source) => source.recipeId);
       const recipeRevisionIds = sourceRows.map((source) => source.recipeRevisionId);
-      const credentials = await tx
+      const authArtifacts = await tx
         .select({
-          tokenProviderId: tables.credentialsTable.tokenProviderId,
-          tokenHandle: tables.credentialsTable.tokenHandle,
-          refreshTokenProviderId: tables.credentialsTable.refreshTokenProviderId,
-          refreshTokenHandle: tables.credentialsTable.refreshTokenHandle,
+          artifactKind: tables.authArtifactsTable.artifactKind,
+          configJson: tables.authArtifactsTable.configJson,
         })
-        .from(tables.credentialsTable)
-        .where(eq(tables.credentialsTable.workspaceId, workspaceId));
-      const postgresSecretHandles = postgresSecretHandlesFromCredentials(credentials);
+        .from(tables.authArtifactsTable)
+        .where(eq(tables.authArtifactsTable.workspaceId, workspaceId));
+      const postgresSecretHandles = postgresSecretHandlesFromAuthArtifacts(authArtifacts);
 
       if (executionIds.length > 0) {
         await tx
@@ -105,6 +103,10 @@ export const createWorkspacesRepo = (
         .where(eq(tables.executionsTable.workspaceId, workspaceId));
 
       await tx
+        .delete(tables.authLeasesTable)
+        .where(eq(tables.authLeasesTable.workspaceId, workspaceId));
+
+      await tx
         .delete(tables.sourceAuthSessionsTable)
         .where(eq(tables.sourceAuthSessionsTable.workspaceId, workspaceId));
 
@@ -113,8 +115,8 @@ export const createWorkspacesRepo = (
         .where(eq(tables.workspaceSourceOauthClientsTable.workspaceId, workspaceId));
 
       await tx
-        .delete(tables.credentialsTable)
-        .where(eq(tables.credentialsTable.workspaceId, workspaceId));
+        .delete(tables.authArtifactsTable)
+        .where(eq(tables.authArtifactsTable.workspaceId, workspaceId));
 
       await tx
         .delete(tables.sourcesTable)

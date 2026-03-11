@@ -2,6 +2,7 @@ import type { Source, StoredSourceRecipeOperationRecord } from "#schema";
 import * as Schema from "effect/Schema";
 
 import { graphqlSourceAdapter } from "./graphql";
+import { googleDiscoverySourceAdapter } from "./google-discovery";
 import { internalSourceAdapter } from "./internal";
 import { mcpSourceAdapter } from "./mcp";
 import { openApiSourceAdapter } from "./openapi";
@@ -10,6 +11,7 @@ import type { SourceAdapter } from "./types";
 export const builtInSourceAdapters = [
   openApiSourceAdapter,
   graphqlSourceAdapter,
+  googleDiscoverySourceAdapter,
   mcpSourceAdapter,
   internalSourceAdapter,
 ] as const satisfies readonly SourceAdapter[];
@@ -18,12 +20,14 @@ export const connectableSourceAdapters = [
   mcpSourceAdapter,
   openApiSourceAdapter,
   graphqlSourceAdapter,
+  googleDiscoverySourceAdapter,
 ] as const;
 
 export const ConnectSourcePayloadSchema = Schema.Union(
   mcpSourceAdapter.connectPayloadSchema!,
   openApiSourceAdapter.connectPayloadSchema!,
   graphqlSourceAdapter.connectPayloadSchema!,
+  googleDiscoverySourceAdapter.connectPayloadSchema!,
 );
 
 export type ConnectSourcePayload = typeof ConnectSourcePayloadSchema.Type;
@@ -32,12 +36,14 @@ export const executorAddableSourceAdapters = [
   mcpSourceAdapter,
   openApiSourceAdapter,
   graphqlSourceAdapter,
+  googleDiscoverySourceAdapter,
 ] as const;
 
 export const ExecutorAddSourceInputSchema = Schema.Union(
   mcpSourceAdapter.executorAddInputSchema!,
   openApiSourceAdapter.executorAddInputSchema!,
   graphqlSourceAdapter.executorAddInputSchema!,
+  googleDiscoverySourceAdapter.executorAddInputSchema!,
 );
 
 export type ExecutorAddSourceInput = typeof ExecutorAddSourceInputSchema.Type;

@@ -9,6 +9,7 @@ import {
   McpSourceAuthSessionDataJsonSchema,
   OrganizationIdSchema,
   SourceAuthSessionIdSchema,
+  decodeAuthLeasePlacementTemplates,
   SourceIdSchema,
   SourceRecipeIdSchema,
   SourceRecipeRevisionIdSchema,
@@ -746,6 +747,186 @@ describe("code-migrations", () => {
         upgradedPersistence.rows.sourceRecipes.getById(mcp.recipeId),
       );
       expect(Option.getOrNull(mcpRecipe)?.adapterKey).toBe("mcp");
+    } finally {
+      await legacyPersistence?.close().catch(() => undefined);
+      await upgradedPersistence?.close().catch(() => undefined);
+      rmSync(localDataDir, { recursive: true, force: true });
+      rmSync(legacyMigrationsDir, { recursive: true, force: true });
+    }
+  });
+
+  it("upgrades auth leases into template-based placement storage", async () => {
+    const localDataDir = mkdtempSync(path.join(tmpdir(), "executor-cp-db-"));
+    const legacyMigrationsDir = copyMigrationsBefore(
+      "20260312143000_auth_lease_template_placements",
+    );
+    const workspaceId = WorkspaceIdSchema.make("ws_legacy_auth_lease");
+    const accountId = AccountIdSchema.make("acc_legacy_auth_lease");
+    const organizationId = OrganizationIdSchema.make("org_legacy_auth_lease");
+    const sourceId = SourceIdSchema.make("src_legacy_auth_lease");
+    const recipeId = SourceRecipeIdSchema.make("src_recipe_legacy_auth_lease");
+    const recipeRevisionId = SourceRecipeRevisionIdSchema.make(
+      "src_recipe_rev_legacy_auth_lease",
+    );
+    const authArtifactId = "auth_art_legacy_auth_lease";
+    const now = Date.now();
+    let legacyPersistence: SqlControlPlanePersistence | null = null;
+    let upgradedPersistence: SqlControlPlanePersistence | null = null;
+
+    try {
+      legacyPersistence = await Effect.runPromise(
+        createSqlControlPlanePersistence({
+          localDataDir,
+          migrationsFolder: legacyMigrationsDir,
+          runCodeMigrations: false,
+        }),
+      );
+
+      await Effect.runPromise(legacyPersistence.rows.organizations.insert({
+        id: organizationId,
+        slug: "org-legacy-auth-lease",
+        name: "Legacy Org",
+        status: "active",
+        createdByAccountId: accountId,
+        createdAt: now,
+        updatedAt: now,
+      }));
+      await Effect.runPromise(legacyPersistence.rows.workspaces.insert({
+        id: workspaceId,
+        organizationId,
+        name: "Legacy Workspace",
+        createdByAccountId: accountId,
+        createdAt: now,
+        updatedAt: now,
+      }));
+      await Effect.runPromise(legacyPersistence.rows.sourceRecipes.upsert({
+        id: recipeId,
+        kind: "http_api",
+        adapterKey: "openapi",
+        providerKey: "generic_http",
+        name: "Legacy OpenAPI",
+        summary: null,
+        visibility: "workspace",
+        latestRevisionId: recipeRevisionId,
+        createdAt: now,
+        updatedAt: now,
+      }));
+      await Effect.runPromise(legacyPersistence.rows.sourceRecipeRevisions.upsert(baseRevisionRecord({
+        id: recipeRevisionId,
+        recipeId,
+        revisionNumber: 1,
+        sourceConfigJson: JSON.stringify({
+          kind: "openapi",
+          endpoint: "https://api.example.com",
+          specUrl: "https://api.example.com/openapi.json",
+        }),
+        createdAt: now,
+        updatedAt: now,
+      })));
+      await Effect.runPromise(legacyPersistence.rows.sources.insert({
+        id: sourceId,
+        workspaceId,
+        recipeId,
+        recipeRevisionId,
+        name: "Legacy OpenAPI",
+        kind: "openapi",
+        endpoint: "https://api.example.com",
+        status: "connected",
+        enabled: true,
+        namespace: "legacy.openapi",
+        importAuthPolicy: "reuse_runtime",
+        bindingConfigJson: openApiBindingConfigJson("https://api.example.com/openapi.json"),
+        sourceHash: null,
+        lastError: null,
+        createdAt: now,
+        updatedAt: now,
+      }));
+      await Effect.runPromise(legacyPersistence.rows.authArtifacts.upsert({
+        id: authArtifactId as any,
+        workspaceId,
+        sourceId,
+        actorAccountId: accountId,
+        slot: "runtime",
+        artifactKind: "static_bearer",
+        configJson: JSON.stringify({
+          headerName: "Authorization",
+          prefix: "Bearer ",
+          token: {
+            providerId: "postgres",
+            handle: "sec_legacy_auth_lease_token",
+          },
+        }),
+        grantSetJson: null,
+        createdAt: now,
+        updatedAt: now,
+      }));
+
+      await legacyPersistence.db.execute(sql`
+        INSERT INTO "workspace_source_auth_leases" (
+          "id",
+          "auth_artifact_id",
+          "workspace_id",
+          "source_id",
+          "actor_account_id",
+          "slot",
+          "placements_json",
+          "expires_at",
+          "refresh_after",
+          "created_at",
+          "updated_at"
+        ) VALUES (
+          'auth_lease_legacy_auth_lease',
+          ${authArtifactId},
+          ${workspaceId},
+          ${sourceId},
+          ${accountId},
+          'runtime',
+          '[{"location":"header","name":"Authorization","value":"Bearer abc"},{"location":"query","name":"api_key","value":"q123"},{"location":"cookie","name":"sid","value":"cookie123"},{"location":"body","path":"auth.token","value":"body123"}]',
+          NULL,
+          NULL,
+          ${now},
+          ${now}
+        );
+      `);
+
+      await legacyPersistence.close();
+      legacyPersistence = null;
+
+      upgradedPersistence = await Effect.runPromise(
+        createSqlControlPlanePersistence({
+          localDataDir,
+        }),
+      );
+
+      const leaseOption = await Effect.runPromise(
+        upgradedPersistence.rows.authLeases.getByAuthArtifactId(authArtifactId as any),
+      );
+      expect(Option.isSome(leaseOption)).toBe(true);
+      const lease = Option.getOrNull(leaseOption);
+      expect(lease).not.toBeNull();
+      expect(lease?.placementsTemplateJson).not.toBeNull();
+      expect(decodeAuthLeasePlacementTemplates(lease!)).toEqual([
+        {
+          location: "header",
+          name: "Authorization",
+          parts: [{ kind: "literal", value: "Bearer abc" }],
+        },
+        {
+          location: "query",
+          name: "api_key",
+          parts: [{ kind: "literal", value: "q123" }],
+        },
+        {
+          location: "cookie",
+          name: "sid",
+          parts: [{ kind: "literal", value: "cookie123" }],
+        },
+        {
+          location: "body",
+          path: "auth.token",
+          parts: [{ kind: "literal", value: "body123" }],
+        },
+      ]);
     } finally {
       await legacyPersistence?.close().catch(() => undefined);
       await upgradedPersistence?.close().catch(() => undefined);

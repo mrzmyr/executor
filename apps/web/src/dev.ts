@@ -5,19 +5,35 @@
  * control-plane handler. Everything else (frontend assets, HMR) is
  * handled by Vite itself.
  */
+import { join } from "node:path";
 import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Runtime from "effect/Runtime";
 import * as Scope from "effect/Scope";
-import { createLocalExecutorRequestHandler } from "@executor/server";
+import {
+  createLocalExecutorRequestHandler,
+  DEFAULT_EXECUTOR_DATA_DIR,
+} from "@executor/server";
 
 const MAX_LOGGED_ERROR_BODY_LENGTH = 4_000;
+const EXECUTOR_WEB_DEV_LOCAL_DATA_DIR_ENV = "EXECUTOR_WEB_DEV_LOCAL_DATA_DIR";
+const DEFAULT_WEB_DEV_LOCAL_DATA_DIR = join(
+  DEFAULT_EXECUTOR_DATA_DIR,
+  "control-plane-web-dev",
+);
 
 const truncateForLog = (value: string): string =>
   value.length > MAX_LOGGED_ERROR_BODY_LENGTH
     ? `${value.slice(0, MAX_LOGGED_ERROR_BODY_LENGTH)}... [truncated]`
     : value;
+
+const resolveWebDevLocalDataDir = (): string => {
+  const configured = process.env[EXECUTOR_WEB_DEV_LOCAL_DATA_DIR_ENV]?.trim();
+  return configured && configured.length > 0
+    ? configured
+    : DEFAULT_WEB_DEV_LOCAL_DATA_DIR;
+};
 
 /**
  * Extract a detailed, human-readable description from an error.
@@ -45,7 +61,9 @@ const handlerPromise = (async () => {
   const exit = await Effect.runPromiseExit(
     Effect.gen(function* () {
       const scope = yield* Scope.make();
-      const handler = yield* createLocalExecutorRequestHandler().pipe(
+      const handler = yield* createLocalExecutorRequestHandler({
+        localDataDir: resolveWebDevLocalDataDir(),
+      }).pipe(
         Effect.provideService(Scope.Scope, scope),
       );
       return handler;

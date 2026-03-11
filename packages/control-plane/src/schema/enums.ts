@@ -9,20 +9,22 @@ export {
   type Role,
 } from "./models/auth/organization-membership";
 export {
-  SecretRefSchema,
   SourceAuthSchema,
   SourceBindingSchema,
   SourceBindingVersionSchema,
   SourceKindSchema,
   SourceStatusSchema,
   SourceTransportSchema,
-  type SecretRef,
   type SourceAuth,
   type SourceBinding,
   type SourceKind,
   type SourceStatus,
   type SourceTransport,
 } from "./models/source";
+export {
+  SecretRefSchema,
+  type SecretRef,
+} from "./models/auth-artifact";
 export {
   SourceRecipeAdapterKeySchema,
   SourceRecipeDocumentKindSchema,
@@ -56,9 +58,13 @@ export {
   type SourceProbeAuth,
 } from "./models/source-discovery";
 export {
-  CredentialAuthKindSchema,
-  type CredentialAuthKind,
-} from "./models/credential";
+  AuthArtifactKindSchema,
+  AuthArtifactSlotSchema,
+  BuiltInAuthArtifactKindSchema,
+  type AuthArtifactKind,
+  type AuthArtifactSlot,
+  type BuiltInAuthArtifactKind,
+} from "./models/auth-artifact";
 export {
   SourceAuthSessionProviderKindSchema,
   SourceAuthSessionStatusSchema,

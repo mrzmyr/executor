@@ -22,7 +22,8 @@ export const tableNames = {
   sourceRecipeSchemaBundles: "source_recipe_schema_bundles",
   sourceRecipeOperations: "source_recipe_operations",
   codeMigrations: "control_plane_code_migrations",
-  credentials: "workspace_source_credentials",
+  authArtifacts: "workspace_source_auth_artifacts",
+  authLeases: "workspace_source_auth_leases",
   workspaceSourceOauthClients: "workspace_source_oauth_clients",
   secretMaterials: "secret_materials",
   sourceAuthSessions: "source_auth_sessions",
@@ -351,48 +352,72 @@ export const codeMigrationsTable = pgTable(
   },
 );
 
-export const credentialsTable = pgTable(
-  tableNames.credentials,
+export const authArtifactsTable = pgTable(
+  tableNames.authArtifacts,
   {
     id: text("id").notNull().primaryKey(),
     workspaceId: text("workspace_id").notNull(),
     sourceId: text("source_id").notNull(),
     actorAccountId: text("actor_account_id"),
     slot: text("slot").notNull(),
-    authKind: text("auth_kind").notNull(),
-    authHeaderName: text("auth_header_name").notNull(),
-    authPrefix: text("auth_prefix").notNull(),
-    tokenProviderId: text("token_provider_id").notNull(),
-    tokenHandle: text("token_handle").notNull(),
-    refreshTokenProviderId: text("refresh_token_provider_id"),
-    refreshTokenHandle: text("refresh_token_handle"),
+    artifactKind: text("artifact_kind").notNull(),
+    configJson: text("config_json").notNull(),
+    grantSetJson: text("grant_set_json"),
     createdAt: bigint("created_at", { mode: "number" }).notNull(),
     updatedAt: bigint("updated_at", { mode: "number" }).notNull(),
   },
   (table) => [
-    index("credentials_workspace_idx").on(
+    index("auth_artifacts_workspace_idx").on(
       table.workspaceId,
       table.updatedAt,
       table.id,
     ),
-    uniqueIndex("credentials_workspace_source_actor_idx").on(
+    uniqueIndex("auth_artifacts_workspace_source_actor_idx").on(
       table.workspaceId,
       table.sourceId,
       table.actorAccountId,
       table.slot,
     ),
-    index("credentials_workspace_source_idx").on(
+    index("auth_artifacts_workspace_source_idx").on(
       table.workspaceId,
       table.sourceId,
       table.updatedAt,
       table.id,
     ),
     check(
-      "credentials_auth_kind_check",
-      sql`${table.authKind} in ('bearer', 'oauth2')`,
+      "auth_artifacts_slot_check",
+      sql`${table.slot} in ('runtime', 'import')`,
+    ),
+  ],
+);
+
+export const authLeasesTable = pgTable(
+  tableNames.authLeases,
+  {
+    id: text("id").notNull().primaryKey(),
+    authArtifactId: text("auth_artifact_id").notNull(),
+    workspaceId: text("workspace_id").notNull(),
+    sourceId: text("source_id").notNull(),
+    actorAccountId: text("actor_account_id"),
+    slot: text("slot").notNull(),
+    placementsTemplateJson: text("placements_template_json").notNull(),
+    expiresAt: bigint("expires_at", { mode: "number" }),
+    refreshAfter: bigint("refresh_after", { mode: "number" }),
+    createdAt: bigint("created_at", { mode: "number" }).notNull(),
+    updatedAt: bigint("updated_at", { mode: "number" }).notNull(),
+  },
+  (table) => [
+    uniqueIndex("auth_leases_auth_artifact_idx").on(table.authArtifactId),
+    index("auth_leases_workspace_source_idx").on(
+      table.workspaceId,
+      table.sourceId,
+      table.actorAccountId,
+      table.slot,
+      table.updatedAt,
+      table.id,
     ),
     check(
-      "credentials_slot_check",
+      "auth_leases_slot_check",
       sql`${table.slot} in ('runtime', 'import')`,
     ),
   ],
@@ -638,7 +663,8 @@ export const drizzleSchema = {
   sourceRecipeSchemaBundlesTable,
   sourceRecipeOperationsTable,
   codeMigrationsTable,
-  credentialsTable,
+  authArtifactsTable,
+  authLeasesTable,
   workspaceSourceOauthClientsTable,
   secretMaterialsTable,
   sourceAuthSessionsTable,

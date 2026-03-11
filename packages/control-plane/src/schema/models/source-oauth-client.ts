@@ -9,6 +9,19 @@ import {
   WorkspaceSourceOauthClientIdSchema,
 } from "../ids";
 
+export const WorkspaceSourceOauthClientRedirectModeSchema = Schema.Literal(
+  "app_callback",
+  "loopback",
+);
+
+export const WorkspaceSourceOauthClientMetadataSchema = Schema.Struct({
+  redirectMode: Schema.optional(WorkspaceSourceOauthClientRedirectModeSchema),
+});
+
+export const WorkspaceSourceOauthClientMetadataJsonSchema = Schema.parseJson(
+  WorkspaceSourceOauthClientMetadataSchema,
+);
+
 export const WorkspaceSourceOauthClientSchema = createSelectSchema(
   workspaceSourceOauthClientsTable,
   {
@@ -21,3 +34,7 @@ export const WorkspaceSourceOauthClientSchema = createSelectSchema(
 );
 
 export type WorkspaceSourceOauthClient = typeof WorkspaceSourceOauthClientSchema.Type;
+export type WorkspaceSourceOauthClientRedirectMode =
+  typeof WorkspaceSourceOauthClientRedirectModeSchema.Type;
+export type WorkspaceSourceOauthClientMetadata =
+  typeof WorkspaceSourceOauthClientMetadataSchema.Type;

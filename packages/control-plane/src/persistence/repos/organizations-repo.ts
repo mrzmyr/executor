@@ -13,7 +13,7 @@ import type { DrizzleTables } from "../schema";
 import {
   cleanupOrphanedSourceRecipes,
   firstOption,
-  postgresSecretHandlesFromCredentials,
+  postgresSecretHandlesFromAuthArtifacts,
   withoutCreatedAt,
 } from "./shared";
 
@@ -144,20 +144,18 @@ export const createOrganizationsRepo = (
           })
           .from(tables.sourcesTable)
           .where(inArray(tables.sourcesTable.workspaceId, workspaceIds));
-        const credentials = await tx
+        const authArtifacts = await tx
           .select({
-            tokenProviderId: tables.credentialsTable.tokenProviderId,
-            tokenHandle: tables.credentialsTable.tokenHandle,
-            refreshTokenProviderId: tables.credentialsTable.refreshTokenProviderId,
-            refreshTokenHandle: tables.credentialsTable.refreshTokenHandle,
+            artifactKind: tables.authArtifactsTable.artifactKind,
+            configJson: tables.authArtifactsTable.configJson,
           })
-          .from(tables.credentialsTable)
-          .where(inArray(tables.credentialsTable.workspaceId, workspaceIds));
+          .from(tables.authArtifactsTable)
+          .where(inArray(tables.authArtifactsTable.workspaceId, workspaceIds));
 
         const executionIds = executionRows.map((execution) => execution.id);
         const recipeIds = sourceRows.map((source) => source.recipeId);
         const recipeRevisionIds = sourceRows.map((source) => source.recipeRevisionId);
-        const postgresSecretHandles = postgresSecretHandlesFromCredentials(credentials);
+        const postgresSecretHandles = postgresSecretHandlesFromAuthArtifacts(authArtifacts);
 
         if (executionIds.length > 0) {
           await tx
@@ -172,6 +170,10 @@ export const createOrganizationsRepo = (
           .where(inArray(tables.executionsTable.workspaceId, workspaceIds));
 
         await tx
+          .delete(tables.authLeasesTable)
+          .where(inArray(tables.authLeasesTable.workspaceId, workspaceIds));
+
+        await tx
           .delete(tables.sourceAuthSessionsTable)
           .where(inArray(tables.sourceAuthSessionsTable.workspaceId, workspaceIds));
 
@@ -180,8 +182,8 @@ export const createOrganizationsRepo = (
           .where(inArray(tables.workspaceSourceOauthClientsTable.workspaceId, workspaceIds));
 
         await tx
-          .delete(tables.credentialsTable)
-          .where(inArray(tables.credentialsTable.workspaceId, workspaceIds));
+          .delete(tables.authArtifactsTable)
+          .where(inArray(tables.authArtifactsTable.workspaceId, workspaceIds));
 
         await tx
           .delete(tables.sourcesTable)

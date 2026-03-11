@@ -106,11 +106,6 @@ const trimOrNull = (value: string | null | undefined): string | null => {
   return trimmed.length > 0 ? trimmed : null;
 };
 
-const resolveOpenApiSourceLabel = (input: {
-  name?: string | null;
-  endpoint: string;
-}): string => trimOrNull(input.name) ?? input.endpoint;
-
 const resolveLocalCredentialUrl = (input: {
   baseUrl: string;
   workspaceId: WorkspaceId;
@@ -127,9 +122,12 @@ const promptForSourceCredentialSelection = (input: {
   args: {
     workspaceId: WorkspaceId;
     sourceId: Source["id"];
-    kind: "openapi" | "graphql";
-    endpoint: string;
+    kind: "openapi" | "graphql" | "google_discovery";
+    endpoint?: string;
     specUrl?: string;
+    service?: string;
+    version?: string;
+    discoveryUrl?: string | null;
     name?: string | null;
     namespace?: string | null;
   };
@@ -233,6 +231,14 @@ export const createExecutorToolMap = (input: {
             endpoint: string;
             name?: string | null;
             namespace?: string | null;
+          }
+          | {
+            kind: "google_discovery";
+            service: string;
+            version: string;
+            discoveryUrl?: string | null;
+            name?: string | null;
+            namespace?: string | null;
           },
         context,
       ): Promise<Source> => {
@@ -241,27 +247,19 @@ export const createExecutorToolMap = (input: {
           `executor.sources.add:${crypto.randomUUID()}`,
         );
         const preparedArgs: ExecutorAddSourceInput =
-          args.kind === "openapi"
+          args.kind === undefined || args.kind === "mcp"
             ? {
-              ...args,
+              kind: args.kind,
+              endpoint: args.endpoint,
+              name: args.name ?? null,
+              namespace: args.namespace ?? null,
               workspaceId: input.workspaceId,
               actorAccountId: input.accountId,
               executionId,
               interactionId,
             }
-            : args.kind === "graphql"
-              ? {
-                ...args,
-                workspaceId: input.workspaceId,
-                actorAccountId: input.accountId,
-                executionId,
-                interactionId,
-              }
             : {
-              kind: args.kind,
-              endpoint: args.endpoint,
-              name: args.name ?? null,
-              namespace: args.namespace ?? null,
+              ...args,
               workspaceId: input.workspaceId,
               actorAccountId: input.accountId,
               executionId,
@@ -293,7 +291,7 @@ export const createExecutorToolMap = (input: {
           let pendingResult = result;
           let pendingArgs = preparedArgs as Extract<
             ExecutorAddSourceInput,
-            { kind: "openapi" | "graphql" }
+            { kind: "openapi" | "graphql" | "google_discovery" }
           >;
 
           while (pendingResult.kind === "credential_required") {

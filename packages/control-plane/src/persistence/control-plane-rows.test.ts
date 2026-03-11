@@ -8,6 +8,9 @@ import {
   OrganizationMemberIdSchema,
   PolicyIdSchema,
   SecretMaterialIdSchema,
+  StaticBearerAuthArtifactConfigJsonSchema,
+  StaticOAuth2AuthArtifactConfigJsonSchema,
+  decodeBuiltInAuthArtifactConfig,
   SourceAuthSessionIdSchema,
   SourceIdSchema,
   SourceRecipeIdSchema,
@@ -39,6 +42,12 @@ const makePersistence: Effect.Effect<SqlControlPlanePersistence, unknown, Scope.
   );
 
 const encodeSessionDataJson = Schema.encodeSync(McpSourceAuthSessionDataJsonSchema);
+const encodeStaticBearerArtifactConfig = Schema.encodeSync(
+  StaticBearerAuthArtifactConfigJsonSchema,
+);
+const encodeStaticOAuth2ArtifactConfig = Schema.encodeSync(
+  StaticOAuth2AuthArtifactConfigJsonSchema,
+);
 
 const openApiBindingConfigJson = (specUrl: string): string =>
   JSON.stringify({
@@ -148,7 +157,7 @@ const seedWorkspaceSourceState = (input: {
     });
   });
 
-const seedWorkspaceCredentialState = (input: {
+const seedWorkspaceAuthArtifactState = (input: {
   persistence: SqlControlPlanePersistence;
   accountId: ReturnType<typeof AccountIdSchema.make>;
   organizationId: ReturnType<typeof OrganizationIdSchema.make>;
@@ -160,7 +169,7 @@ const seedWorkspaceCredentialState = (input: {
 }, unknown, never> =>
   Effect.gen(function* () {
     const now = Date.now();
-    const credentialId = CredentialIdSchema.make(`cred_${input.workspaceId}`);
+    const authArtifactId = CredentialIdSchema.make(`cred_${input.workspaceId}`);
     const tokenId = SecretMaterialIdSchema.make(`sec_${input.workspaceId}_token`);
     const refreshId = SecretMaterialIdSchema.make(`sec_${input.workspaceId}_refresh`);
 
@@ -181,19 +190,26 @@ const seedWorkspaceCredentialState = (input: {
       createdAt: now,
       updatedAt: now,
     });
-    yield* input.persistence.rows.credentials.upsert({
-      id: credentialId,
+    yield* input.persistence.rows.authArtifacts.upsert({
+      id: authArtifactId,
       workspaceId: input.workspaceId,
       sourceId: input.sourceId,
       actorAccountId: input.accountId,
       slot: "runtime",
-      authKind: "oauth2",
-      authHeaderName: "Authorization",
-      authPrefix: "Bearer ",
-      tokenProviderId: "postgres",
-      tokenHandle: tokenId,
-      refreshTokenProviderId: "postgres",
-      refreshTokenHandle: refreshId,
+      artifactKind: "static_oauth2",
+      configJson: encodeStaticOAuth2ArtifactConfig({
+        headerName: "Authorization",
+        prefix: "Bearer ",
+        accessToken: {
+          providerId: "postgres",
+          handle: tokenId,
+        },
+        refreshToken: {
+          providerId: "postgres",
+          handle: refreshId,
+        },
+      }),
+      grantSetJson: null,
       createdAt: now,
       updatedAt: now,
     });
@@ -463,20 +479,23 @@ describe("control-plane-persistence-drizzle", () => {
       });
 
       yield* Effect.tryPromise(async () => {
-        await persistence.db.insert(drizzleSchema.credentialsTable).values([
+        await persistence.db.insert(drizzleSchema.authArtifactsTable).values([
           {
             id: nullCredentialA,
             workspaceId,
             sourceId,
             actorAccountId: null,
             slot: "runtime",
-            authKind: "bearer",
-            authHeaderName: "Authorization",
-            authPrefix: "Bearer ",
-            tokenProviderId: "postgres",
-            tokenHandle: "sec_null_a",
-            refreshTokenProviderId: null,
-            refreshTokenHandle: null,
+            artifactKind: "static_bearer",
+            configJson: encodeStaticBearerArtifactConfig({
+              headerName: "Authorization",
+              prefix: "Bearer ",
+              token: {
+                providerId: "postgres",
+                handle: "sec_null_a",
+              },
+            }),
+            grantSetJson: null,
             createdAt: now,
             updatedAt: now,
           },
@@ -486,79 +505,95 @@ describe("control-plane-persistence-drizzle", () => {
             sourceId,
             actorAccountId: null,
             slot: "runtime",
-            authKind: "bearer",
-            authHeaderName: "Authorization",
-            authPrefix: "Bearer ",
-            tokenProviderId: "postgres",
-            tokenHandle: "sec_null_b",
-            refreshTokenProviderId: null,
-            refreshTokenHandle: null,
+            artifactKind: "static_bearer",
+            configJson: encodeStaticBearerArtifactConfig({
+              headerName: "Authorization",
+              prefix: "Bearer ",
+              token: {
+                providerId: "postgres",
+                handle: "sec_null_b",
+              },
+            }),
+            grantSetJson: null,
             createdAt: now + 1,
             updatedAt: now + 1,
           },
         ]);
       }).pipe(Effect.orDie);
 
-      yield* persistence.rows.credentials.upsert({
+      yield* persistence.rows.authArtifacts.upsert({
         id: CredentialIdSchema.make("cred_null_credentials_replacement"),
         workspaceId,
         sourceId,
         actorAccountId: null,
         slot: "runtime",
-        authKind: "oauth2",
-        authHeaderName: "X-Auth",
-        authPrefix: "Token ",
-        tokenProviderId: "postgres",
-        tokenHandle: "sec_null_replacement",
-        refreshTokenProviderId: "postgres",
-        refreshTokenHandle: "sec_null_refresh",
+        artifactKind: "static_oauth2",
+        configJson: encodeStaticOAuth2ArtifactConfig({
+          headerName: "X-Auth",
+          prefix: "Token ",
+          accessToken: {
+            providerId: "postgres",
+            handle: "sec_null_replacement",
+          },
+          refreshToken: {
+            providerId: "postgres",
+            handle: "sec_null_refresh",
+          },
+        }),
+        grantSetJson: null,
         createdAt: now + 2,
         updatedAt: now + 2,
       });
 
-      yield* persistence.rows.credentials.upsert({
+      yield* persistence.rows.authArtifacts.upsert({
         id: actorCredentialId,
         workspaceId,
         sourceId,
         actorAccountId: accountId,
         slot: "runtime",
-        authKind: "bearer",
-        authHeaderName: "Authorization",
-        authPrefix: "Bearer ",
-        tokenProviderId: "postgres",
-        tokenHandle: "sec_actor",
-        refreshTokenProviderId: null,
-        refreshTokenHandle: null,
+        artifactKind: "static_bearer",
+        configJson: encodeStaticBearerArtifactConfig({
+          headerName: "Authorization",
+          prefix: "Bearer ",
+          token: {
+            providerId: "postgres",
+            handle: "sec_actor",
+          },
+        }),
+        grantSetJson: null,
         createdAt: now + 3,
         updatedAt: now + 3,
       });
 
-      const allCredentials = yield* persistence.rows.credentials.listByWorkspaceAndSourceId({
+      const allAuthArtifacts = yield* persistence.rows.authArtifacts.listByWorkspaceAndSourceId({
         workspaceId,
         sourceId,
       });
-      expect(allCredentials).toHaveLength(2);
-      const nullActorCredentials = allCredentials.filter((credential) => credential.actorAccountId === null);
-      expect(nullActorCredentials).toHaveLength(1);
-      expect(nullActorCredentials[0]?.id).toBe(nullCredentialA);
-      expect(nullActorCredentials[0]?.authKind).toBe("oauth2");
-      expect(nullActorCredentials[0]?.authHeaderName).toBe("X-Auth");
-      expect(nullActorCredentials[0]?.tokenHandle).toBe("sec_null_replacement");
-      expect(allCredentials.map((credential) => credential.id).sort()).toEqual(
+      expect(allAuthArtifacts).toHaveLength(2);
+      const nullActorArtifacts = allAuthArtifacts.filter((artifact) => artifact.actorAccountId === null);
+      expect(nullActorArtifacts).toHaveLength(1);
+      expect(nullActorArtifacts[0]?.id).toBe(nullCredentialA);
+      const nullActorConfig = decodeBuiltInAuthArtifactConfig(nullActorArtifacts[0]!);
+      expect(nullActorConfig?.artifactKind).toBe("static_oauth2");
+      if (nullActorConfig !== null && nullActorConfig.artifactKind === "static_oauth2") {
+        expect(nullActorConfig.config.headerName).toBe("X-Auth");
+        expect(nullActorConfig.config.accessToken.handle).toBe("sec_null_replacement");
+      }
+      expect(allAuthArtifacts.map((artifact) => artifact.id).sort()).toEqual(
         [actorCredentialId, nullCredentialA].sort(),
       );
 
-      const forActor = yield* persistence.rows.credentials.listByWorkspaceSourceAndActor({
+      const forActor = yield* persistence.rows.authArtifacts.listByWorkspaceSourceAndActor({
         workspaceId,
         sourceId,
         actorAccountId: accountId,
       });
       expect(forActor).toHaveLength(2);
-      expect(new Set(forActor.map((credential) => credential.id))).toEqual(
+      expect(new Set(forActor.map((artifact) => artifact.id))).toEqual(
         new Set([actorCredentialId, nullCredentialA]),
       );
 
-      const nullActorOnly = yield* persistence.rows.credentials.getByWorkspaceSourceAndActor({
+      const nullActorOnly = yield* persistence.rows.authArtifacts.getByWorkspaceSourceAndActor({
         workspaceId,
         sourceId,
         actorAccountId: null,
@@ -569,7 +604,7 @@ describe("control-plane-persistence-drizzle", () => {
         expect(nullActorOnly.value.id).toBe(nullCredentialA);
       }
 
-      const missingActor = yield* persistence.rows.credentials.getByWorkspaceSourceAndActor({
+      const missingActor = yield* persistence.rows.authArtifacts.getByWorkspaceSourceAndActor({
         workspaceId,
         sourceId,
         actorAccountId: AccountIdSchema.make("acc_missing_credentials"),
@@ -588,7 +623,7 @@ describe("control-plane-persistence-drizzle", () => {
       const sourceId = SourceIdSchema.make("src_ws_cleanup");
       const recipeRevisionId = SourceRecipeRevisionIdSchema.make(`src_recipe_rev_${sourceId}`);
 
-      const { tokenId, refreshId } = yield* seedWorkspaceCredentialState({
+      const { tokenId, refreshId } = yield* seedWorkspaceAuthArtifactState({
         persistence,
         accountId,
         organizationId,
@@ -670,7 +705,7 @@ describe("control-plane-persistence-drizzle", () => {
       const removed = yield* persistence.rows.workspaces.removeById(workspaceId);
       expect(removed).toBe(true);
       expect(Option.isNone(yield* persistence.rows.workspaces.getById(workspaceId))).toBe(true);
-      expect(yield* persistence.rows.credentials.listByWorkspaceId(workspaceId)).toHaveLength(0);
+      expect(yield* persistence.rows.authArtifacts.listByWorkspaceId(workspaceId)).toHaveLength(0);
       expect(yield* persistence.rows.sourceAuthSessions.listByWorkspaceId(workspaceId)).toHaveLength(0);
       expect(
         yield* persistence.rows.sourceRecipeDocuments.listByRevisionId(recipeRevisionId),
@@ -892,7 +927,7 @@ describe("control-plane-persistence-drizzle", () => {
       const workspaceId = WorkspaceIdSchema.make("ws_org_cleanup");
       const sourceId = SourceIdSchema.make("src_org_cleanup");
 
-      const { tokenId, refreshId } = yield* seedWorkspaceCredentialState({
+      const { tokenId, refreshId } = yield* seedWorkspaceAuthArtifactState({
         persistence,
         accountId,
         organizationId,
@@ -903,7 +938,7 @@ describe("control-plane-persistence-drizzle", () => {
       const removed = yield* persistence.rows.organizations.removeTreeById(organizationId);
       expect(removed).toBe(true);
       expect(Option.isNone(yield* persistence.rows.workspaces.getById(workspaceId))).toBe(true);
-      expect(yield* persistence.rows.credentials.listByWorkspaceId(workspaceId)).toHaveLength(0);
+      expect(yield* persistence.rows.authArtifacts.listByWorkspaceId(workspaceId)).toHaveLength(0);
       expect(yield* persistence.rows.sourceAuthSessions.listByWorkspaceId(workspaceId)).toHaveLength(0);
       expect(Option.isNone(yield* persistence.rows.secretMaterials.getById(tokenId))).toBe(true);
       expect(Option.isNone(yield* persistence.rows.secretMaterials.getById(refreshId))).toBe(true);

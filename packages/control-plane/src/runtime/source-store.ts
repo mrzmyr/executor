@@ -1,8 +1,7 @@
 import type {
   AccountId,
-  Credential,
+  AuthArtifact,
   CredentialSlot,
-  SecretRef,
   Source,
   SourceRecipeId,
   SourceRecipeRevisionId,
@@ -22,25 +21,15 @@ import {
   splitSourceForStorage,
 } from "./source-definitions";
 import { createDefaultSecretMaterialDeleter } from "./secret-material-providers";
+import { authArtifactSecretMaterialRefs } from "./auth-artifacts";
+import { removeAuthLeaseAndSecrets } from "./auth-leases";
 
-const credentialSecretRefs = (credential: Credential): ReadonlyArray<SecretRef> => [
-  {
-    providerId: credential.tokenProviderId,
-    handle: credential.tokenHandle,
-  },
-  ...(credential.refreshTokenProviderId !== null && credential.refreshTokenHandle !== null
-    ? [{
-        providerId: credential.refreshTokenProviderId,
-        handle: credential.refreshTokenHandle,
-      } satisfies SecretRef]
-    : []),
-];
+const secretRefKey = (ref: { providerId: string; handle: string }): string =>
+  `${ref.providerId}:${ref.handle}`;
 
-const secretRefKey = (ref: SecretRef): string => `${ref.providerId}:${ref.handle}`;
-
-const cleanupCredentialSecretRefs = (rows: SqlControlPlaneRows, input: {
-  previous: Credential | null;
-  next: Credential | null;
+const cleanupAuthArtifactSecretRefs = (rows: SqlControlPlaneRows, input: {
+  previous: AuthArtifact | null;
+  next: AuthArtifact | null;
 }) =>
   Effect.gen(function* () {
     if (input.previous === null) {
@@ -49,9 +38,9 @@ const cleanupCredentialSecretRefs = (rows: SqlControlPlaneRows, input: {
 
     const deleteSecretMaterial = createDefaultSecretMaterialDeleter({ rows });
     const nextRefKeys = new Set(
-      (input.next === null ? [] : credentialSecretRefs(input.next)).map(secretRefKey),
+      (input.next === null ? [] : authArtifactSecretMaterialRefs(input.next)).map(secretRefKey),
     );
-    const refsToDelete = credentialSecretRefs(input.previous).filter(
+    const refsToDelete = authArtifactSecretMaterialRefs(input.previous).filter(
       (ref) => !nextRefKeys.has(secretRefKey(ref)),
     );
 
@@ -62,32 +51,32 @@ const cleanupCredentialSecretRefs = (rows: SqlControlPlaneRows, input: {
     );
   });
 
-const selectPreferredCredential = (input: {
-  credentials: ReadonlyArray<Credential>;
+const selectPreferredAuthArtifact = (input: {
+  authArtifacts: ReadonlyArray<AuthArtifact>;
   actorAccountId?: AccountId | null;
   slot: CredentialSlot;
-}): Credential | null => {
-  const matchingSlot = input.credentials.filter((credential) => credential.slot === input.slot);
+}): AuthArtifact | null => {
+  const matchingSlot = input.authArtifacts.filter((artifact) => artifact.slot === input.slot);
 
   if (input.actorAccountId !== undefined) {
-    const exact = matchingSlot.find((credential) => credential.actorAccountId === input.actorAccountId);
+    const exact = matchingSlot.find((artifact) => artifact.actorAccountId === input.actorAccountId);
     if (exact) {
       return exact;
     }
   }
 
-  return matchingSlot.find((credential) => credential.actorAccountId === null) ?? null;
+  return matchingSlot.find((artifact) => artifact.actorAccountId === null) ?? null;
 };
 
-const selectExactCredential = (input: {
-  credentials: ReadonlyArray<Credential>;
+const selectExactAuthArtifact = (input: {
+  authArtifacts: ReadonlyArray<AuthArtifact>;
   actorAccountId?: AccountId | null;
   slot: CredentialSlot;
-}): Credential | null =>
-  input.credentials.find(
-    (credential) =>
-      credential.slot === input.slot
-      && credential.actorAccountId === (input.actorAccountId ?? null),
+}): AuthArtifact | null =>
+  input.authArtifacts.find(
+    (artifact) =>
+      artifact.slot === input.slot
+      && artifact.actorAccountId === (input.actorAccountId ?? null),
   ) ?? null;
 
 export const loadSourcesInWorkspace = (
@@ -99,27 +88,27 @@ export const loadSourcesInWorkspace = (
 ) =>
   Effect.gen(function* () {
     const sourceRecords = yield* rows.sources.listByWorkspaceId(workspaceId);
-    const credentials = yield* rows.credentials.listByWorkspaceId(workspaceId);
-    const filteredCredentials = sourceRecords.flatMap((sourceRecord) => {
-      const matches = credentials.filter((credential) => credential.sourceId === sourceRecord.id);
-      const preferred = selectPreferredCredential({
-        credentials: matches,
+    const authArtifacts = yield* rows.authArtifacts.listByWorkspaceId(workspaceId);
+    const filteredAuthArtifacts = sourceRecords.flatMap((sourceRecord) => {
+      const matches = authArtifacts.filter((artifact) => artifact.sourceId === sourceRecord.id);
+      const preferred = selectPreferredAuthArtifact({
+        authArtifacts: matches,
         actorAccountId: options.actorAccountId,
         slot: "runtime",
       });
-      const preferredImport = selectPreferredCredential({
-        credentials: matches,
+      const preferredImport = selectPreferredAuthArtifact({
+        authArtifacts: matches,
         actorAccountId: options.actorAccountId,
         slot: "import",
       });
       return [preferred, preferredImport].filter(
-        (credential): credential is Credential => credential !== null,
+        (artifact): artifact is AuthArtifact => artifact !== null,
       );
     });
 
     return yield* projectSourcesFromStorage({
       sourceRecords,
-      credentials: filteredCredentials,
+      authArtifacts: filteredAuthArtifacts,
     });
   });
 
@@ -140,54 +129,63 @@ export const loadSourceById = (rows: SqlControlPlaneRows, input: {
       );
     }
 
-    const credentials = yield* rows.credentials.listByWorkspaceAndSourceId({
+    const authArtifacts = yield* rows.authArtifacts.listByWorkspaceAndSourceId({
       workspaceId: input.workspaceId,
       sourceId: input.sourceId,
     });
-    const credential = selectPreferredCredential({
-      credentials,
+    const authArtifact = selectPreferredAuthArtifact({
+      authArtifacts,
       actorAccountId: input.actorAccountId,
       slot: "runtime",
     });
-    const importCredential = selectPreferredCredential({
-      credentials,
+    const importAuthArtifact = selectPreferredAuthArtifact({
+      authArtifacts,
       actorAccountId: input.actorAccountId,
       slot: "import",
     });
 
     return yield* projectSourceFromStorage({
       sourceRecord: sourceRecord.value,
-      runtimeCredential: credential,
-      importCredential,
+      runtimeAuthArtifact: authArtifact,
+      importAuthArtifact,
     });
   });
 
-const removeCredentialsForSource = (rows: SqlControlPlaneRows, input: {
+const removeAuthArtifactsForSource = (rows: SqlControlPlaneRows, input: {
   workspaceId: WorkspaceId;
   sourceId: Source["id"];
 }) =>
   Effect.gen(function* () {
-    const existingCredentials = yield* rows.credentials.listByWorkspaceAndSourceId({
+    const existingAuthArtifacts = yield* rows.authArtifacts.listByWorkspaceAndSourceId({
       workspaceId: input.workspaceId,
       sourceId: input.sourceId,
     });
 
-    yield* rows.credentials.removeByWorkspaceAndSourceId({
+    yield* rows.authArtifacts.removeByWorkspaceAndSourceId({
       workspaceId: input.workspaceId,
       sourceId: input.sourceId,
     });
 
     yield* Effect.forEach(
-      existingCredentials,
-      (credential) =>
-        cleanupCredentialSecretRefs(rows, {
-          previous: credential,
+      existingAuthArtifacts,
+      (artifact) =>
+        removeAuthLeaseAndSecrets(rows, {
+          authArtifactId: artifact.id,
+        }),
+      { discard: true },
+    );
+
+    yield* Effect.forEach(
+      existingAuthArtifacts,
+      (artifact) =>
+        cleanupAuthArtifactSecretRefs(rows, {
+          previous: artifact,
           next: null,
         }),
       { discard: true },
     );
 
-    return existingCredentials.length;
+    return existingAuthArtifacts.length;
   });
 
 const cleanupOrphanedRecipeData = (rows: SqlControlPlaneRows, input: {
@@ -242,7 +240,7 @@ export const removeSourceById = (rows: SqlControlPlaneRows, input: {
       workspaceId: input.workspaceId,
       sourceId: input.sourceId,
     });
-    yield* removeCredentialsForSource(rows, input);
+    yield* removeAuthArtifactsForSource(rows, input);
     const removed = yield* rows.sources.removeByWorkspaceAndId(input.workspaceId, input.sourceId);
     if (!removed) {
       return false;
@@ -265,17 +263,17 @@ export const persistSource = (
 ) =>
   Effect.gen(function* () {
     const existing = yield* rows.sources.getByWorkspaceAndId(source.workspaceId, source.id);
-    const existingCredentials = yield* rows.credentials.listByWorkspaceAndSourceId({
+    const existingAuthArtifacts = yield* rows.authArtifacts.listByWorkspaceAndSourceId({
       workspaceId: source.workspaceId,
       sourceId: source.id,
     });
-    const existingCredential = selectExactCredential({
-      credentials: existingCredentials,
+    const existingRuntimeAuthArtifact = selectExactAuthArtifact({
+      authArtifacts: existingAuthArtifacts,
       actorAccountId: options.actorAccountId,
       slot: "runtime",
     });
-    const existingImportCredential = selectExactCredential({
-      credentials: existingCredentials,
+    const existingImportAuthArtifact = selectExactAuthArtifact({
+      authArtifacts: existingAuthArtifacts,
       actorAccountId: options.actorAccountId,
       slot: "import",
     });
@@ -309,13 +307,13 @@ export const persistSource = (
       latestRevisionId: nextRevision.id,
     });
 
-    const { sourceRecord, runtimeCredential, importCredential } = splitSourceForStorage({
+    const { sourceRecord, runtimeAuthArtifact, importAuthArtifact } = splitSourceForStorage({
       source,
       recipeId: nextRecipe.id,
       recipeRevisionId: nextRevision.id,
       actorAccountId: options.actorAccountId,
-      existingRuntimeCredentialId: existingCredential?.id ?? null,
-      existingImportCredentialId: existingImportCredential?.id ?? null,
+      existingRuntimeAuthArtifactId: existingRuntimeAuthArtifact?.id ?? null,
+      existingImportAuthArtifactId: existingImportAuthArtifact?.id ?? null,
     });
 
     if (Option.isNone(existing)) {
@@ -346,36 +344,62 @@ export const persistSource = (
       });
     }
 
-    if (runtimeCredential === null) {
-      yield* rows.credentials.removeByWorkspaceSourceAndActor({
+    if (runtimeAuthArtifact === null) {
+      if (existingRuntimeAuthArtifact !== null) {
+        yield* removeAuthLeaseAndSecrets(rows, {
+          authArtifactId: existingRuntimeAuthArtifact.id,
+        });
+      }
+      yield* rows.authArtifacts.removeByWorkspaceSourceAndActor({
         workspaceId: source.workspaceId,
         sourceId: source.id,
         actorAccountId: options.actorAccountId ?? null,
         slot: "runtime",
       });
     } else {
-      yield* rows.credentials.upsert(runtimeCredential);
+      yield* rows.authArtifacts.upsert(runtimeAuthArtifact);
+      if (
+        existingRuntimeAuthArtifact !== null
+        && existingRuntimeAuthArtifact.id !== runtimeAuthArtifact.id
+      ) {
+        yield* removeAuthLeaseAndSecrets(rows, {
+          authArtifactId: existingRuntimeAuthArtifact.id,
+        });
+      }
     }
 
-    yield* cleanupCredentialSecretRefs(rows, {
-      previous: existingCredential ?? null,
-      next: runtimeCredential,
+    yield* cleanupAuthArtifactSecretRefs(rows, {
+      previous: existingRuntimeAuthArtifact ?? null,
+      next: runtimeAuthArtifact,
     });
 
-    if (importCredential === null) {
-      yield* rows.credentials.removeByWorkspaceSourceAndActor({
+    if (importAuthArtifact === null) {
+      if (existingImportAuthArtifact !== null) {
+        yield* removeAuthLeaseAndSecrets(rows, {
+          authArtifactId: existingImportAuthArtifact.id,
+        });
+      }
+      yield* rows.authArtifacts.removeByWorkspaceSourceAndActor({
         workspaceId: source.workspaceId,
         sourceId: source.id,
         actorAccountId: options.actorAccountId ?? null,
         slot: "import",
       });
     } else {
-      yield* rows.credentials.upsert(importCredential);
+      yield* rows.authArtifacts.upsert(importAuthArtifact);
+      if (
+        existingImportAuthArtifact !== null
+        && existingImportAuthArtifact.id !== importAuthArtifact.id
+      ) {
+        yield* removeAuthLeaseAndSecrets(rows, {
+          authArtifactId: existingImportAuthArtifact.id,
+        });
+      }
     }
 
-    yield* cleanupCredentialSecretRefs(rows, {
-      previous: existingImportCredential ?? null,
-      next: importCredential,
+    yield* cleanupAuthArtifactSecretRefs(rows, {
+      previous: existingImportAuthArtifact ?? null,
+      next: importAuthArtifact,
     });
 
     return source;

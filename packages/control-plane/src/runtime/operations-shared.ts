@@ -23,14 +23,21 @@ const isUniqueViolation = (error: ControlPlanePersistenceError): boolean =>
 
 export const mapPersistenceError = <A>(
   operation: OperationErrorsLike,
-  effect: Effect.Effect<A, ControlPlanePersistenceError>,
+  effect: Effect.Effect<A, ControlPlanePersistenceError | Error>,
 ): Effect.Effect<A, ControlPlaneBadRequestError | ControlPlaneStorageError> =>
   effect.pipe(
     Effect.mapError((error) => {
       const errors = asOperationErrors(operation);
-      return isUniqueViolation(error)
-        ? errors.badRequest("Unique constraint violation", error.details ?? "duplicate key")
-        : errors.storage(error);
+      if (error instanceof ControlPlanePersistenceError) {
+        return isUniqueViolation(error)
+          ? errors.badRequest("Unique constraint violation", error.details ?? "duplicate key")
+          : errors.storage(error);
+      }
+
+      return errors.unknownStorage(
+        error,
+        error.message,
+      );
     }),
   );
 

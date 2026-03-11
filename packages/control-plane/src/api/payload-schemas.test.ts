@@ -64,9 +64,23 @@ describe("control-plane payload schemas", () => {
         specUrl: "  https://example.com/openapi.json  ",
       }),
     ).toEqual({
-      kind: "openapi",
-      endpoint: "https://api.github.com",
-      specUrl: "https://example.com/openapi.json",
+        kind: "openapi",
+        endpoint: "https://api.github.com",
+        specUrl: "https://example.com/openapi.json",
+      });
+
+    expect(
+      Schema.decodeUnknownSync(ConnectSourcePayloadSchema)({
+        kind: "google_discovery",
+        service: "  sheets  ",
+        version: "  v4  ",
+        discoveryUrl: "  https://www.googleapis.com/discovery/v1/apis/sheets/v4/rest  ",
+      }),
+    ).toEqual({
+      kind: "google_discovery",
+      service: "sheets",
+      version: "v4",
+      discoveryUrl: "https://www.googleapis.com/discovery/v1/apis/sheets/v4/rest",
     });
 
     expect(

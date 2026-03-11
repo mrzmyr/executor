@@ -6,7 +6,8 @@ import * as Layer from "effect/Layer";
 import { createDrizzleClient, type DrizzleClient } from "./client";
 import {
   createAccountsRepo,
-  createCredentialsRepo,
+  createAuthArtifactsRepo,
+  createAuthLeasesRepo,
   createCodeMigrationsRepo,
   createExecutionInteractionsRepo,
   createExecutionsRepo,
@@ -64,7 +65,8 @@ const createRows = (client: DrizzleClient, tables: DrizzleTables = drizzleSchema
   sourceRecipeSchemaBundles: createSourceRecipeSchemaBundlesRepo(client, tables),
   sourceRecipeOperations: createSourceRecipeOperationsRepo(client, tables),
   codeMigrations: createCodeMigrationsRepo(client, tables),
-  credentials: createCredentialsRepo(client, tables),
+  authArtifacts: createAuthArtifactsRepo(client, tables),
+  authLeases: createAuthLeasesRepo(client, tables),
   sourceOauthClients: createSourceOauthClientsRepo(client, tables),
   secretMaterials: createSecretMaterialsRepo(client, tables),
   sourceAuthSessions: createSourceAuthSessionsRepo(client, tables),

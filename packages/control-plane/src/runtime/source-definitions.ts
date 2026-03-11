@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { sha256Hex } from "@executor/codemode-core";
 
 import type {
   CreateSourcePayload,
@@ -6,7 +6,7 @@ import type {
 } from "#api";
 import type {
   AccountId,
-  Credential,
+  AuthArtifact,
   CredentialSlot,
   Source,
   SourceAuth,
@@ -21,13 +21,17 @@ import type {
   WorkspaceId,
 } from "#schema";
 import {
-  CredentialIdSchema,
+  AuthArtifactIdSchema,
   SourceRecipeIdSchema,
   SourceRecipeRevisionIdSchema,
 } from "#schema";
 import * as Effect from "effect/Effect";
  
 import { getSourceAdapter, getSourceAdapterForSource } from "./source-adapters";
+import {
+  authArtifactFromSourceAuth,
+  sourceAuthFromAuthArtifact,
+} from "./auth-artifacts";
 
 const trimOrNull = (value: string | null | undefined): string | null => {
   if (value === null || value === undefined) {
@@ -57,7 +61,7 @@ const sourceRecipeProviderKeyFromSource = (source: Source): string => {
 };
 
 const stableHash = (value: string): string =>
-  createHash("sha256").update(value).digest("hex").slice(0, 24);
+  sha256Hex(value).slice(0, 24);
 
 const sourceRecipeSignature = (source: Source): string =>
   JSON.stringify({
@@ -89,7 +93,7 @@ const normalizeAuth = (
     const headerName = trimOrNull(auth.headerName) ?? "Authorization";
     const prefix = auth.prefix ?? "Bearer ";
 
-    if (auth.kind === "bearer") {
+  if (auth.kind === "bearer") {
       const providerId = trimOrNull(auth.token.providerId);
       const handle = trimOrNull(auth.token.handle);
       if (providerId === null || handle === null) {
@@ -104,6 +108,54 @@ const normalizeAuth = (
           providerId,
           handle,
         },
+      } satisfies SourceAuth;
+    }
+
+    if (auth.kind === "oauth2_authorized_user") {
+      const refreshProviderId = trimOrNull(auth.refreshToken.providerId);
+      const refreshHandle = trimOrNull(auth.refreshToken.handle);
+      if (refreshProviderId === null || refreshHandle === null) {
+        return yield* Effect.fail(
+          new Error("OAuth2 authorized-user auth requires a refresh token secret ref"),
+        );
+      }
+
+      let clientSecret: { providerId: string; handle: string } | null = null;
+      if (auth.clientSecret !== null) {
+        const clientSecretProviderId = trimOrNull(auth.clientSecret.providerId);
+        const clientSecretHandle = trimOrNull(auth.clientSecret.handle);
+        if (clientSecretProviderId === null || clientSecretHandle === null) {
+          return yield* Effect.fail(
+            new Error("OAuth2 authorized-user client secret ref must include providerId and handle"),
+          );
+        }
+        clientSecret = {
+          providerId: clientSecretProviderId,
+          handle: clientSecretHandle,
+        };
+      }
+
+      const tokenEndpoint = trimOrNull(auth.tokenEndpoint);
+      const clientId = trimOrNull(auth.clientId);
+      if (tokenEndpoint === null || clientId === null) {
+        return yield* Effect.fail(
+          new Error("OAuth2 authorized-user auth requires tokenEndpoint and clientId"),
+        );
+      }
+
+      return {
+        kind: "oauth2_authorized_user",
+        headerName,
+        prefix,
+        tokenEndpoint,
+        clientId,
+        clientAuthentication: auth.clientAuthentication,
+        clientSecret,
+        refreshToken: {
+          providerId: refreshProviderId,
+          handle: refreshHandle,
+        },
+        grantSet: auth.grantSet ?? null,
       } satisfies SourceAuth;
     }
 
@@ -145,86 +197,6 @@ const normalizeImportAuthPolicy = (
   sourceKind: Source["kind"],
   policy: SourceImportAuthPolicy | undefined,
 ): SourceImportAuthPolicy => policy ?? getSourceAdapter(sourceKind).defaultImportAuthPolicy;
-
-const credentialFromAuth = (input: {
-  source: Source;
-  auth: SourceAuth;
-  slot: CredentialSlot;
-  actorAccountId?: AccountId | null;
-  existingCredentialId?: Credential["id"] | null;
-}): Credential | null => {
-  if (input.auth.kind === "none") {
-    return null;
-  }
-
-  const credentialId = input.existingCredentialId
-    ?? CredentialIdSchema.make(`cred_${crypto.randomUUID()}`);
-
-  return {
-    id: credentialId,
-    workspaceId: input.source.workspaceId,
-    sourceId: input.source.id,
-    actorAccountId: input.actorAccountId ?? null,
-    slot: input.slot,
-    authKind: input.auth.kind,
-    authHeaderName: input.auth.headerName,
-    authPrefix: input.auth.prefix,
-    tokenProviderId:
-      input.auth.kind === "bearer"
-        ? input.auth.token.providerId
-        : input.auth.accessToken.providerId,
-    tokenHandle:
-      input.auth.kind === "bearer"
-        ? input.auth.token.handle
-        : input.auth.accessToken.handle,
-    refreshTokenProviderId:
-      input.auth.kind === "oauth2" && input.auth.refreshToken !== null
-        ? input.auth.refreshToken.providerId
-        : null,
-    refreshTokenHandle:
-      input.auth.kind === "oauth2" && input.auth.refreshToken !== null
-        ? input.auth.refreshToken.handle
-        : null,
-    createdAt: input.source.createdAt,
-    updatedAt: input.source.updatedAt,
-  } satisfies Credential;
-};
-
-const authFromCredential = (credential: Credential | null): SourceAuth => {
-  if (credential === null) {
-    return { kind: "none" };
-  }
-
-  if (credential.authKind === "bearer") {
-    return {
-      kind: "bearer",
-      headerName: credential.authHeaderName,
-      prefix: credential.authPrefix,
-      token: {
-        providerId: credential.tokenProviderId,
-        handle: credential.tokenHandle,
-      },
-    };
-  }
-
-  return {
-    kind: "oauth2",
-    headerName: credential.authHeaderName,
-    prefix: credential.authPrefix,
-    accessToken: {
-      providerId: credential.tokenProviderId,
-      handle: credential.tokenHandle,
-    },
-    refreshToken:
-      credential.refreshTokenProviderId !== null
-      && credential.refreshTokenHandle !== null
-        ? {
-            providerId: credential.refreshTokenProviderId,
-            handle: credential.refreshTokenHandle,
-          }
-        : null,
-  };
-};
 
 const validateSourceImportAuth = (source: Source): Effect.Effect<Source, Error, never> =>
   Effect.gen(function* () {
@@ -370,12 +342,12 @@ export const splitSourceForStorage = (input: {
   recipeId: SourceRecipeId;
   recipeRevisionId: SourceRecipeRevisionId;
   actorAccountId?: AccountId | null;
-  existingRuntimeCredentialId?: Credential["id"] | null;
-  existingImportCredentialId?: Credential["id"] | null;
+  existingRuntimeAuthArtifactId?: AuthArtifact["id"] | null;
+  existingImportAuthArtifactId?: AuthArtifact["id"] | null;
 }): {
   sourceRecord: StoredSourceRecord;
-  runtimeCredential: Credential | null;
-  importCredential: Credential | null;
+  runtimeAuthArtifact: AuthArtifact | null;
+  importAuthArtifact: AuthArtifact | null;
 } => {
   const sourceRecord: StoredSourceRecord = {
     id: input.source.id,
@@ -398,20 +370,22 @@ export const splitSourceForStorage = (input: {
 
   return {
     sourceRecord,
-    runtimeCredential: credentialFromAuth({
+    runtimeAuthArtifact: authArtifactFromSourceAuth({
       source: input.source,
       auth: input.source.auth,
       slot: "runtime",
       actorAccountId: input.actorAccountId,
-      existingCredentialId: input.existingRuntimeCredentialId,
+      existingAuthArtifactId: input.existingRuntimeAuthArtifactId
+        ?? AuthArtifactIdSchema.make(`auth_art_${crypto.randomUUID()}`),
     }),
-    importCredential: input.source.importAuthPolicy === "separate"
-      ? credentialFromAuth({
+    importAuthArtifact: input.source.importAuthPolicy === "separate"
+      ? authArtifactFromSourceAuth({
           source: input.source,
           auth: input.source.importAuth,
           slot: "import",
           actorAccountId: input.actorAccountId,
-          existingCredentialId: input.existingImportCredentialId,
+          existingAuthArtifactId: input.existingImportAuthArtifactId
+            ?? AuthArtifactIdSchema.make(`auth_art_${crypto.randomUUID()}`),
         })
       : null,
   };
@@ -419,8 +393,8 @@ export const splitSourceForStorage = (input: {
 
 export const projectSourceFromStorage = (input: {
   sourceRecord: StoredSourceRecord;
-  runtimeCredential: Credential | null;
-  importCredential: Credential | null;
+  runtimeAuthArtifact: AuthArtifact | null;
+  importAuthArtifact: AuthArtifact | null;
 }): Effect.Effect<Source, Error, never> =>
   Effect.gen(function* () {
     const adapter = getSourceAdapter(input.sourceRecord.kind);
@@ -443,9 +417,9 @@ export const projectSourceFromStorage = (input: {
       importAuthPolicy: input.sourceRecord.importAuthPolicy,
       importAuth:
         input.sourceRecord.importAuthPolicy === "separate"
-          ? authFromCredential(input.importCredential)
+          ? sourceAuthFromAuthArtifact(input.importAuthArtifact)
           : { kind: "none" },
-      auth: authFromCredential(input.runtimeCredential),
+      auth: sourceAuthFromAuthArtifact(input.runtimeAuthArtifact),
       sourceHash: input.sourceRecord.sourceHash,
       lastError: input.sourceRecord.lastError,
       createdAt: input.sourceRecord.createdAt,
@@ -459,23 +433,23 @@ export const projectSourceFromStorage = (input: {
 
 export const projectSourcesFromStorage = (input: {
   sourceRecords: ReadonlyArray<StoredSourceRecord>;
-  credentials: ReadonlyArray<Credential>;
+  authArtifacts: ReadonlyArray<AuthArtifact>;
 }): Effect.Effect<ReadonlyArray<Source>, Error, never> => {
-  const credentialsBySourceId = new Map<string, {
-    runtime: Credential | null;
-    import: Credential | null;
+  const authArtifactsBySourceId = new Map<string, {
+    runtime: AuthArtifact | null;
+    import: AuthArtifact | null;
   }>();
 
-  for (const credential of input.credentials) {
-    const existing = credentialsBySourceId.get(credential.sourceId) ?? {
+  for (const authArtifact of input.authArtifacts) {
+    const existing = authArtifactsBySourceId.get(authArtifact.sourceId) ?? {
       runtime: null,
       import: null,
     };
-    const current = credential.slot === "runtime" ? existing.runtime : existing.import;
-    if (current === null || (current.actorAccountId === null && credential.actorAccountId !== null)) {
-      credentialsBySourceId.set(credential.sourceId, {
+    const current = authArtifact.slot === "runtime" ? existing.runtime : existing.import;
+    if (current === null || (current.actorAccountId === null && authArtifact.actorAccountId !== null)) {
+      authArtifactsBySourceId.set(authArtifact.sourceId, {
         ...existing,
-        [credential.slot]: credential,
+        [authArtifact.slot]: authArtifact,
       });
     }
   }
@@ -483,7 +457,7 @@ export const projectSourcesFromStorage = (input: {
   return Effect.forEach(input.sourceRecords, (sourceRecord) =>
     projectSourceFromStorage({
       sourceRecord,
-      runtimeCredential: credentialsBySourceId.get(sourceRecord.id)?.runtime ?? null,
-      importCredential: credentialsBySourceId.get(sourceRecord.id)?.import ?? null,
+      runtimeAuthArtifact: authArtifactsBySourceId.get(sourceRecord.id)?.runtime ?? null,
+      importAuthArtifact: authArtifactsBySourceId.get(sourceRecord.id)?.import ?? null,
     }));
 };

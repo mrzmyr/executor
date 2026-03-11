@@ -30,6 +30,7 @@ type TestServer = {
     path: string;
     query: string;
     body: string;
+    headers: Record<string, string>;
   }>;
   close: () => Promise<void>;
 };
@@ -53,6 +54,7 @@ const makeEffectServerHandler = (
               path: `/repos/${path.owner}/${path.repo}`,
               query: include ? `?include=${encodeURIComponent(include)}` : "",
               body: "",
+              headers: {},
             });
 
             return {
@@ -69,6 +71,7 @@ const makeEffectServerHandler = (
               path: `/repos/${path.owner}/${path.repo}/issues`,
               query: "",
               body: bodyText,
+              headers: {},
             });
 
             return {
@@ -207,10 +210,20 @@ const makeTestServer = Effect.acquireRelease(
       catch: (error: unknown) =>
         error instanceof Error ? error : new Error(String(error)),
     }).pipe(Effect.orDie),
-);
+  );
 
 const ownerParam = HttpApiSchema.param("owner", Schema.String);
 const repoParam = HttpApiSchema.param("repo", Schema.String);
+
+const requestHeadersFromNode = (
+  request: IncomingMessage,
+): Record<string, string> =>
+  Object.fromEntries(
+    Object.entries(request.headers).flatMap(([key, value]) =>
+      value === undefined
+        ? []
+        : [[key, Array.isArray(value) ? value.join(",") : value]]),
+  );
 
 class GeneratedReposApi extends HttpApiGroup.make("repos")
   .add(
@@ -472,6 +485,117 @@ describe("openapi-tools", () => {
       });
 
       expect(capturedUrl).toBe("https://example.com/api/v3/repos/octocat/hello-world");
+    }),
+  );
+
+  it.scoped("applies credential placements for query params, cookies, and body values", () =>
+    Effect.gen(function* () {
+      const requests: TestServer["requests"] = [];
+      const server = yield* Effect.acquireRelease(
+        Effect.promise<TestServer>(
+          () =>
+            new Promise<TestServer>((resolve, reject) => {
+              const httpServer = createServer((request, response) => {
+                const url = new URL(
+                  request.url ?? "/",
+                  `http://${request.headers.host ?? "127.0.0.1"}`,
+                );
+                let body = "";
+
+                request.setEncoding("utf8");
+                request.on("data", (chunk) => {
+                  body += chunk;
+                });
+                request.on("end", () => {
+                  requests.push({
+                    method: request.method ?? "GET",
+                    path: url.pathname,
+                    query: url.search,
+                    body,
+                    headers: requestHeadersFromNode(request),
+                  });
+                  response.statusCode = 200;
+                  response.setHeader("content-type", "application/json");
+                  response.end(JSON.stringify({ ok: true }));
+                });
+              });
+
+              httpServer.once("error", reject);
+              httpServer.listen(0, "127.0.0.1", () => {
+                const address = httpServer.address();
+                if (!address || typeof address === "string") {
+                  reject(new Error("failed to resolve test server address"));
+                  return;
+                }
+
+                resolve({
+                  baseUrl: `http://127.0.0.1:${address.port}`,
+                  requests,
+                  close: async () => {
+                    await new Promise<void>((closeResolve, closeReject) => {
+                      httpServer.close((error: Error | undefined) => {
+                        if (error) {
+                          closeReject(error);
+                          return;
+                        }
+                        closeResolve();
+                      });
+                    });
+                  },
+                });
+              });
+            }),
+        ),
+        (resource) =>
+          Effect.tryPromise({
+            try: () => resource.close(),
+            catch: (error: unknown) =>
+              error instanceof Error ? error : new Error(String(error)),
+          }).pipe(Effect.orDie),
+      );
+      const extracted = yield* createOpenApiToolsFromSpec({
+        sourceName: "demo",
+        openApiSpec: generatedOpenApiSpec,
+        baseUrl: server.baseUrl,
+        namespace: "source.demo",
+        credentialPlacements: {
+          headers: {
+            authorization: "Bearer top-secret",
+          },
+          queryParams: {
+            api_key: "secret-key",
+          },
+          cookies: {
+            session: "abc123",
+          },
+          bodyValues: {
+            "auth.token": "body-secret",
+          },
+        },
+      });
+
+      const getRepo = resolveToolExecutor(extracted.tools, "source.demo.repos.getRepo");
+      const createIssue = resolveToolExecutor(extracted.tools, "source.demo.repos.createIssue");
+
+      yield* Effect.promise(() => getRepo({ owner: "octocat", repo: "hello-world" }));
+      yield* Effect.promise(() =>
+        createIssue({
+          owner: "octocat",
+          repo: "hello-world",
+          body: { title: "Bug report" },
+        }),
+      );
+
+      expect(server.requests).toHaveLength(2);
+      expect(server.requests[0]?.query).toContain("api_key=secret-key");
+      expect(server.requests[0]?.headers.authorization).toBe("Bearer top-secret");
+      expect(server.requests[0]?.headers.cookie).toContain("session=abc123");
+      expect(JSON.parse(server.requests[1]?.body ?? "{}")).toEqual({
+        title: "Bug report",
+        auth: {
+          token: "body-secret",
+        },
+      });
     }),
   );
 

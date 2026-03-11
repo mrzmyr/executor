@@ -148,4 +148,81 @@ describe("source-discovery", () => {
       await server.close();
     }
   });
+
+  it("detects Google Discovery documents", async () => {
+    const server = await withServer((request, response) => {
+      if (request.url !== "/gmail/$discovery/rest?version=v1") {
+        response.statusCode = 404;
+        response.end();
+        return;
+      }
+
+      response.statusCode = 200;
+      response.setHeader("content-type", "application/json");
+      response.end(JSON.stringify({
+        name: "gmail",
+        version: "v1",
+        title: "Gmail API",
+        description: "Access Gmail mailboxes and settings.",
+        rootUrl: `${server.url}/`,
+        servicePath: "gmail/v1/users/",
+        auth: {
+          oauth2: {
+            scopes: {
+              "https://www.googleapis.com/auth/gmail.readonly": {
+                description: "View your email messages and settings",
+              },
+            },
+          },
+        },
+        methods: {
+          getProfile: {
+            id: "gmail.users.getProfile",
+            path: "{userId}/profile",
+            httpMethod: "GET",
+            parameters: {
+              userId: {
+                type: "string",
+                required: true,
+                location: "path",
+              },
+            },
+            response: {
+              $ref: "Profile",
+            },
+          },
+        },
+        schemas: {
+          Profile: {
+            id: "Profile",
+            type: "object",
+            properties: {
+              emailAddress: {
+                type: "string",
+              },
+            },
+          },
+        },
+      }));
+    });
+
+    try {
+      const result = await Effect.runPromise(discoverSource({
+        url: `${server.url}/gmail/$discovery/rest?version=v1`,
+      }));
+
+      expect(result.detectedKind).toBe("google_discovery");
+      expect(result.specUrl).toBe(`${server.url}/gmail/$discovery/rest?version=v1`);
+      expect(result.endpoint).toBe(`${server.url}/gmail/v1/users/`);
+      expect(result.name).toBe("Gmail API");
+      expect(result.namespace).toBe("gmail");
+      expect(result.authInference.suggestedKind).toBe("oauth2");
+      expect(result.authInference.oauthScopes).toEqual([
+        "https://www.googleapis.com/auth/gmail.readonly",
+      ]);
+      expect(result.toolCount).toBe(1);
+    } finally {
+      await server.close();
+    }
+  });
 });
