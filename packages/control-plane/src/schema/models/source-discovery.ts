@@ -5,6 +5,7 @@ import { StringMapSchema, SourceTransportSchema } from "./source";
 export const SourceDiscoveryKindSchema = Schema.Literal(
   "mcp",
   "openapi",
+  "google_discovery",
   "graphql",
   "unknown",
 );

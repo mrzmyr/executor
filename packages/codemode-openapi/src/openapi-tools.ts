@@ -8,8 +8,12 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 
 import {
+  applyCookiePlacementsToHeaders,
+  applyHttpQueryPlacementsToUrl,
+  applyJsonBodyPlacements,
   standardSchemaFromJsonSchema,
   toTool,
+  type HttpRequestPlacements,
   type ToolMap,
   unknownInputSchema,
 } from "@executor/codemode-core";
@@ -288,6 +292,7 @@ export type CreateOpenApiToolsFromManifestInput = {
   sourceKey?: string;
   defaultHeaders?: Readonly<Record<string, string>>;
   credentialHeaders?: Readonly<Record<string, string>>;
+  credentialPlacements?: HttpRequestPlacements;
   httpClientLayer?: Layer.Layer<HttpClient.HttpClient, never, never>;
 };
 
@@ -317,7 +322,7 @@ const buildFetchRequest = (input: {
   args: OpenApiToolArgs;
   baseUrl: string;
   defaultHeaders: Readonly<Record<string, string>>;
-  credentialHeaders: Readonly<Record<string, string>>;
+  credentialPlacements: HttpRequestPlacements;
 }): {
   url: URL;
   method: string;
@@ -369,9 +374,11 @@ const buildFetchRequest = (input: {
   }
 
   let body: string | undefined;
+  const bodyValues = input.credentialPlacements.bodyValues ?? {};
+  const hasCredentialBodyValues = Object.keys(bodyValues).length > 0;
 
   if (input.payload.requestBody !== null) {
-    if (!hasRequestBody(input.args)) {
+    if (!hasRequestBody(input.args) && !hasCredentialBodyValues) {
       if (input.payload.requestBody.required) {
         throw new OpenApiToolInvocationError({
           operation: "validate_args",
@@ -380,7 +387,13 @@ const buildFetchRequest = (input: {
         });
       }
     } else {
-      body = JSON.stringify(input.args.body);
+      body = JSON.stringify(
+        applyJsonBodyPlacements({
+          body: hasRequestBody(input.args) ? input.args.body : {},
+          bodyValues,
+          label: `${input.payload.method.toUpperCase()} ${input.payload.pathTemplate}`,
+        }),
+      );
 
       const preferredContentType = input.payload.requestBody.contentTypes[0];
       if (preferredContentType) {
@@ -391,14 +404,23 @@ const buildFetchRequest = (input: {
     }
   }
 
-  for (const [key, value] of Object.entries(input.credentialHeaders)) {
-    headers[key] = value;
+  const urlWithAuth = applyHttpQueryPlacementsToUrl({
+    url,
+    queryParams: input.credentialPlacements.queryParams,
+  });
+  const headersWithAuthCookies = applyCookiePlacementsToHeaders({
+    headers,
+    cookies: input.credentialPlacements.cookies,
+  });
+
+  for (const [key, value] of Object.entries(input.credentialPlacements.headers ?? {})) {
+    headersWithAuthCookies[key] = value;
   }
 
   return {
-    url,
+    url: urlWithAuth,
     method: input.payload.method.toUpperCase(),
-    headers,
+    headers: headersWithAuthCookies,
     body,
   };
 };
@@ -413,15 +435,32 @@ export type CreateOpenApiToolFromDefinitionInput = {
   baseUrl: string;
   defaultHeaders?: Readonly<Record<string, string>>;
   credentialHeaders?: Readonly<Record<string, string>>;
+  credentialPlacements?: HttpRequestPlacements;
   refHintTable?: Readonly<OpenApiRefHintTable>;
   httpClientLayer?: Layer.Layer<HttpClient.HttpClient, never, never>;
 };
+
+const normalizeCredentialPlacements = (input: {
+  credentialHeaders?: Readonly<Record<string, string>>;
+  credentialPlacements?: HttpRequestPlacements;
+}): HttpRequestPlacements => ({
+  headers: {
+    ...(input.credentialHeaders ?? {}),
+    ...(input.credentialPlacements?.headers ?? {}),
+  },
+  queryParams: input.credentialPlacements?.queryParams,
+  cookies: input.credentialPlacements?.cookies,
+  bodyValues: input.credentialPlacements?.bodyValues,
+});
 
 export const createOpenApiToolFromDefinition = (
   input: CreateOpenApiToolFromDefinitionInput,
 ) => {
   const defaultHeaders = input.defaultHeaders ?? {};
-  const credentialHeaders = input.credentialHeaders ?? {};
+  const credentialPlacements = normalizeCredentialPlacements({
+    credentialHeaders: input.credentialHeaders,
+    credentialPlacements: input.credentialPlacements,
+  });
   const httpClientLayer = input.httpClientLayer ?? FetchHttpClient.layer;
   const presentation = buildOpenApiToolPresentation({
     definition: input.definition,
@@ -441,7 +480,7 @@ export const createOpenApiToolFromDefinition = (
           args: decodedArgs,
           baseUrl: input.baseUrl,
           defaultHeaders,
-          credentialHeaders,
+          credentialPlacements,
         });
 
         return Effect.runPromise(
@@ -503,7 +542,6 @@ export const createOpenApiToolsFromManifest = (
   const baseUrl = normalizeHttpUrl(input.baseUrl);
   const sourceKey = input.sourceKey ?? "openapi.generated";
   const defaultHeaders = input.defaultHeaders ?? {};
-  const credentialHeaders = input.credentialHeaders ?? {};
   const httpClientLayer = input.httpClientLayer ?? FetchHttpClient.layer;
 
   const definitions = compileOpenApiToolDefinitions(input.manifest);
@@ -517,7 +555,8 @@ export const createOpenApiToolsFromManifest = (
       sourceKey,
       baseUrl,
       defaultHeaders,
-      credentialHeaders,
+      credentialHeaders: input.credentialHeaders,
+      credentialPlacements: input.credentialPlacements,
       refHintTable: input.manifest.refHintTable,
       httpClientLayer,
     });
@@ -534,6 +573,7 @@ export const createOpenApiToolsFromSpec = (input: {
   sourceKey?: string;
   defaultHeaders?: Readonly<Record<string, string>>;
   credentialHeaders?: Readonly<Record<string, string>>;
+  credentialPlacements?: HttpRequestPlacements;
   httpClientLayer?: Layer.Layer<HttpClient.HttpClient, never, never>;
 }): Effect.Effect<
   { manifest: OpenApiToolManifest; definitions: Array<OpenApiToolDefinition>; tools: ToolMap },
@@ -551,6 +591,7 @@ export const createOpenApiToolsFromSpec = (input: {
         sourceKey: input.sourceKey,
         defaultHeaders: input.defaultHeaders,
         credentialHeaders: input.credentialHeaders,
+        credentialPlacements: input.credentialPlacements,
         httpClientLayer: input.httpClientLayer,
       }),
     }),

@@ -1,6 +1,10 @@
 import { homedir } from "node:os";
 import { join } from "node:path";
 
+import { loadMonorepoRootEnv } from "./env";
+
+loadMonorepoRootEnv();
+
 export const EXECUTOR_HOME_ENV = "EXECUTOR_HOME";
 export const EXECUTOR_DATA_DIR_ENV = "EXECUTOR_DATA_DIR";
 export const EXECUTOR_LOCAL_DATA_DIR_ENV = "EXECUTOR_LOCAL_DATA_DIR";

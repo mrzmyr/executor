@@ -13,6 +13,8 @@ import {
   ExecutionIdSchema,
   McpSourceAuthSessionDataJsonSchema,
   type McpSourceAuthSessionData,
+  OAuth2PkceSourceAuthSessionDataJsonSchema,
+  type OAuth2PkceSourceAuthSessionData,
   type SecretMaterialPurpose,
   Source,
   type SourceImportAuthPolicy,
@@ -23,6 +25,9 @@ import {
   SourceSchema,
   type SecretRef,
   type StringMap,
+  WorkspaceSourceOauthClientIdSchema,
+  WorkspaceSourceOauthClientMetadataJsonSchema,
+  type WorkspaceSourceOauthClientRedirectMode,
   type WorkspaceId,
 } from "#schema";
 import * as Context from "effect/Context";
@@ -46,6 +51,7 @@ import {
   updateSourceFromPayload,
 } from "./source-definitions";
 import {
+  getSourceAdapterForSource,
   hasSourceAdapterFamily,
   sourceBindingStateFromSource,
 } from "./source-adapters";
@@ -56,10 +62,17 @@ import {
   type ResolveSecretMaterial,
   type StoreSecretMaterial,
 } from "./secret-material-providers";
+import { upsertOauth2AuthorizedUserLeaseFromTokenResponse } from "./auth-leases";
 import {
   persistMcpRecipeMaterializationFromManifest,
   syncSourceMaterialization,
 } from "./source-materialization";
+import {
+  buildOAuth2AuthorizationUrl,
+  createPkceCodeVerifier,
+  exchangeOAuth2AuthorizationCode,
+} from "./oauth2-pkce";
+import { startOauthLoopbackRedirectServer } from "./oauth-loopback";
 import {
   loadSourceById,
   loadSourcesInWorkspace,
@@ -112,6 +125,22 @@ const normalizeEndpoint = (endpoint: string): string => {
   const url = new URL(endpoint.trim());
   return url.toString();
 };
+
+const defaultGoogleDiscoveryUrl = (service: string, version: string): string =>
+  `https://www.googleapis.com/discovery/v1/apis/${encodeURIComponent(service)}/${encodeURIComponent(version)}/rest`;
+
+const defaultGoogleDiscoverySourceName = (service: string, version: string): string => {
+  const titleService = service
+    .split(/[^a-zA-Z0-9]+/)
+    .filter(Boolean)
+    .map((segment) => segment[0]?.toUpperCase() + segment.slice(1))
+    .join(" ");
+
+  return `Google ${titleService || service} ${version}`;
+};
+
+const defaultGoogleDiscoveryNamespace = (service: string): string =>
+  `google.${service.trim().toLowerCase().replace(/[^a-z0-9]+/g, ".").replace(/^\.+|\.+$/g, "")}`;
 
 const SourceOAuthSessionStatePayloadSchema = Schema.Struct({
   kind: Schema.Literal("source_oauth"),
@@ -223,6 +252,42 @@ const mergeMcpSourceAuthSessionData = (input: {
 }): string => {
   const existing = decodeMcpSourceAuthSessionData(input.session);
   return encodeMcpSourceAuthSessionData({
+    ...existing,
+    ...input.patch,
+  });
+};
+
+const encodeOauth2PkceSourceAuthSessionData = (
+  sessionData: OAuth2PkceSourceAuthSessionData,
+): string => Schema.encodeSync(OAuth2PkceSourceAuthSessionDataJsonSchema)(sessionData);
+
+const decodeOauth2PkceSourceAuthSessionDataJson = Schema.decodeUnknownEither(
+  OAuth2PkceSourceAuthSessionDataJsonSchema,
+);
+
+const decodeOauth2PkceSourceAuthSessionData = (
+  session: Pick<SourceAuthSession, "id" | "providerKind" | "sessionDataJson">,
+): OAuth2PkceSourceAuthSessionData => {
+  if (session.providerKind !== "oauth2_pkce") {
+    throw new Error(`Unsupported source auth provider for session ${session.id}`);
+  }
+
+  const decoded = decodeOauth2PkceSourceAuthSessionDataJson(session.sessionDataJson);
+  if (Either.isLeft(decoded)) {
+    throw new Error(
+      `Invalid source auth session data for ${session.id}: ${ParseResult.TreeFormatter.formatErrorSync(decoded.left)}`,
+    );
+  }
+
+  return decoded.right;
+};
+
+const mergeOauth2PkceSourceAuthSessionData = (input: {
+  session: Pick<SourceAuthSession, "id" | "providerKind" | "sessionDataJson">;
+  patch: Partial<OAuth2PkceSourceAuthSessionData>;
+}): string => {
+  const existing = decodeOauth2PkceSourceAuthSessionData(input.session);
+  return encodeOauth2PkceSourceAuthSessionData({
     ...existing,
     ...input.patch,
   });
@@ -356,6 +421,22 @@ export type ExecutorAddSourceInput =
       executionId: SourceAuthSession["executionId"];
       interactionId: SourceAuthSession["interactionId"];
       endpoint: string;
+      name?: string | null;
+      namespace?: string | null;
+      importAuthPolicy?: SourceImportAuthPolicy | null;
+      importAuth?: ExecutorHttpSourceAuthInput | null;
+      auth?: ExecutorHttpSourceAuthInput | null;
+    }
+  | {
+      kind: "google_discovery";
+      workspaceId: WorkspaceId;
+      actorAccountId?: AccountId | null;
+      executionId: SourceAuthSession["executionId"];
+      interactionId: SourceAuthSession["interactionId"];
+      service: string;
+      version: string;
+      discoveryUrl?: string | null;
+      scopes?: ReadonlyArray<string> | null;
       name?: string | null;
       namespace?: string | null;
       importAuthPolicy?: SourceImportAuthPolicy | null;
@@ -525,7 +606,7 @@ const materializeExecutorHttpAuth = (input: {
   });
 
 const materializeExecutorHttpImportAuth = (input: {
-  sourceKind: "openapi" | "graphql";
+  sourceKind: "openapi" | "graphql" | "google_discovery";
   existing?: Source;
   importAuthPolicy?: SourceImportAuthPolicy | null;
   importAuth?: ExecutorHttpSourceAuthInput | null;
@@ -535,7 +616,10 @@ const materializeExecutorHttpImportAuth = (input: {
   importAuth: Source["importAuth"];
 }, Error, never> =>
   Effect.gen(function* () {
-    const adapterDefault = input.sourceKind === "openapi" || input.sourceKind === "graphql"
+    const adapterDefault =
+      input.sourceKind === "openapi"
+      || input.sourceKind === "graphql"
+      || input.sourceKind === "google_discovery"
       ? "reuse_runtime"
       : "none";
     const importAuthPolicy = input.importAuthPolicy ?? input.existing?.importAuthPolicy ?? adapterDefault;
@@ -578,6 +662,234 @@ const shouldPromptForExecutorHttpRuntimeCredentialSetup = (input: {
   !input.explicitAuthProvided
   && input.auth.kind === "none"
   && (input.existing?.auth.kind ?? "none") === "none";
+
+type ResolvedSourceOauthClient = {
+  providerKey: string;
+  clientId: string;
+  clientSecret: SecretRef | null;
+  redirectMode: WorkspaceSourceOauthClientRedirectMode;
+};
+
+const decodeWorkspaceSourceOauthClientMetadataOption = Schema.decodeUnknownOption(
+  WorkspaceSourceOauthClientMetadataJsonSchema,
+);
+
+const encodeWorkspaceSourceOauthClientMetadataJson = Schema.encodeSync(
+  WorkspaceSourceOauthClientMetadataJsonSchema,
+);
+
+const sourceOauthClientRedirectMode = (client: {
+  clientMetadataJson: string | null;
+}): WorkspaceSourceOauthClientRedirectMode => {
+  if (client.clientMetadataJson === null) {
+    return "app_callback";
+  }
+
+  const decoded = decodeWorkspaceSourceOauthClientMetadataOption(
+    client.clientMetadataJson,
+  );
+  if (Option.isNone(decoded)) {
+    return "app_callback";
+  }
+
+  return decoded.value.redirectMode ?? "app_callback";
+};
+
+const sourceOauthClientSecretRef = (client: {
+  clientSecretProviderId: string | null;
+  clientSecretHandle: string | null;
+}): SecretRef | null =>
+  client.clientSecretProviderId && client.clientSecretHandle
+    ? {
+        providerId: client.clientSecretProviderId,
+        handle: client.clientSecretHandle,
+      }
+    : null;
+
+const resolveOrCreateSourceOauthClient = (input: {
+  rows: SqlControlPlaneRows;
+  source: Source;
+  storeSecretMaterial: StoreSecretMaterial;
+}): Effect.Effect<ResolvedSourceOauthClient | null, Error, never> =>
+  Effect.gen(function* () {
+    const adapter = getSourceAdapterForSource(input.source);
+    const setupConfig = adapter.getOauth2SetupConfig
+      ? yield* adapter.getOauth2SetupConfig({
+          source: input.source,
+          slot: "runtime",
+        })
+      : null;
+    if (setupConfig === null) {
+      return null;
+    }
+
+    const existing = yield* input.rows.sourceOauthClients.getByWorkspaceSourceAndProvider({
+      workspaceId: input.source.workspaceId,
+      sourceId: input.source.id,
+      providerKey: setupConfig.providerKey,
+    });
+    if (Option.isSome(existing)) {
+      return {
+        providerKey: existing.value.providerKey,
+        clientId: existing.value.clientId,
+        clientSecret: sourceOauthClientSecretRef(existing.value),
+        redirectMode: sourceOauthClientRedirectMode(existing.value),
+      };
+    }
+
+    const fallback = adapter.getDefaultOauthClient
+      ? yield* adapter.getDefaultOauthClient(input.source)
+      : null;
+    if (fallback === null) {
+      return null;
+    }
+
+    const clientSecretRef = fallback.clientSecret
+      ? yield* input.storeSecretMaterial({
+          purpose: "oauth_client_info",
+          value: fallback.clientSecret,
+        })
+      : null;
+    const now = Date.now();
+    const clientId = WorkspaceSourceOauthClientIdSchema.make(
+      `src_oauth_client_${crypto.randomUUID()}`,
+    );
+    yield* input.rows.sourceOauthClients.upsert({
+      id: clientId,
+      workspaceId: input.source.workspaceId,
+      sourceId: input.source.id,
+      providerKey: fallback.providerKey,
+      clientId: fallback.clientId,
+      clientSecretProviderId: clientSecretRef?.providerId ?? null,
+      clientSecretHandle: clientSecretRef?.handle ?? null,
+      clientMetadataJson: encodeWorkspaceSourceOauthClientMetadataJson({
+        redirectMode: fallback.redirectMode ?? "app_callback",
+      }),
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    return {
+      providerKey: fallback.providerKey,
+      clientId: fallback.clientId,
+      clientSecret: clientSecretRef,
+      redirectMode: fallback.redirectMode ?? "app_callback",
+    };
+  });
+
+const startOauth2PkceSourceCredentialSetup = (input: {
+  rows: SqlControlPlaneRows;
+  source: Source;
+  actorAccountId?: AccountId | null;
+  executionId?: SourceAuthSession["executionId"];
+  interactionId?: SourceAuthSession["interactionId"];
+  baseUrl: string;
+  redirectModeOverride?: WorkspaceSourceOauthClientRedirectMode;
+  storeSecretMaterial: StoreSecretMaterial;
+}): Effect.Effect<Extract<ExecutorSourceAddResult, { kind: "oauth_required" }> | null, Error, never> =>
+  Effect.gen(function* () {
+    const adapter = getSourceAdapterForSource(input.source);
+    const setupConfig = adapter.getOauth2SetupConfig
+      ? yield* adapter.getOauth2SetupConfig({
+          source: input.source,
+          slot: "runtime",
+        })
+      : null;
+    if (setupConfig === null) {
+      return null;
+    }
+
+    const oauthClient = yield* resolveOrCreateSourceOauthClient({
+      rows: input.rows,
+      source: input.source,
+      storeSecretMaterial: input.storeSecretMaterial,
+    });
+    if (oauthClient === null) {
+      return null;
+    }
+
+    const sessionId = SourceAuthSessionIdSchema.make(`src_auth_${crypto.randomUUID()}`);
+    const state = crypto.randomUUID();
+    const completionUrl = resolveSourceCredentialOauthCompleteUrl({
+      baseUrl: input.baseUrl,
+      workspaceId: input.source.workspaceId,
+      sourceId: input.source.id,
+    });
+    const redirectMode = input.redirectModeOverride ?? oauthClient.redirectMode;
+    const redirectServer = redirectMode === "loopback"
+      ? yield* startOauthLoopbackRedirectServer({
+          completionUrl,
+        })
+      : null;
+    const redirectUri = redirectServer?.redirectUri ?? completionUrl;
+    const codeVerifier = createPkceCodeVerifier();
+    return yield* Effect.gen(function* () {
+      const authorizationUrl = buildOAuth2AuthorizationUrl({
+        authorizationEndpoint: setupConfig.authorizationEndpoint,
+        clientId: oauthClient.clientId,
+        redirectUri,
+        scopes: [...setupConfig.scopes],
+        state,
+        codeVerifier,
+        extraParams: setupConfig.authorizationParams,
+      });
+      const now = Date.now();
+
+      yield* input.rows.sourceAuthSessions.upsert({
+        id: sessionId,
+        workspaceId: input.source.workspaceId,
+        sourceId: input.source.id,
+        actorAccountId: input.actorAccountId ?? null,
+        credentialSlot: "runtime",
+        executionId: input.executionId ?? null,
+        interactionId: input.interactionId ?? null,
+        providerKind: "oauth2_pkce",
+        status: "pending",
+        state,
+        sessionDataJson: encodeOauth2PkceSourceAuthSessionData({
+          kind: "oauth2_pkce",
+          providerKey: setupConfig.providerKey,
+          authorizationEndpoint: setupConfig.authorizationEndpoint,
+          tokenEndpoint: setupConfig.tokenEndpoint,
+          redirectUri,
+          clientId: oauthClient.clientId,
+          clientAuthentication: setupConfig.clientAuthentication,
+          clientSecret: oauthClient.clientSecret,
+          scopes: [...setupConfig.scopes],
+          headerName: setupConfig.headerName,
+          prefix: setupConfig.prefix,
+          authorizationParams: {
+            ...(setupConfig.authorizationParams ?? {}),
+          },
+          codeVerifier,
+          authorizationUrl,
+        }),
+        errorText: null,
+        completedAt: null,
+        createdAt: now,
+        updatedAt: now,
+      });
+
+      const authRequiredSource = yield* updateSourceStatus(input.rows, input.source, {
+        actorAccountId: input.actorAccountId,
+        status: "auth_required",
+        lastError: null,
+      });
+
+      return {
+        kind: "oauth_required",
+        source: authRequiredSource,
+        sessionId,
+        authorizationUrl,
+      } satisfies Extract<ExecutorSourceAddResult, { kind: "oauth_required" }>;
+    }).pipe(
+      Effect.onError(() =>
+        redirectServer
+          ? redirectServer.close.pipe(Effect.orDie)
+          : Effect.void
+      ),
+    );
+  });
 
 const connectMcpSourceInternal = (input: {
   rows: SqlControlPlaneRows;
@@ -692,6 +1004,7 @@ const connectMcpSourceInternal = (input: {
     yield* syncSourceMaterialization({
       rows: input.rows,
       source: persistedDraft,
+      actorAccountId: input.actorAccountId,
       resolveSecretMaterial: input.resolveSecretMaterial,
     });
 
@@ -812,6 +1125,8 @@ const addExecutorHttpSource = (input: {
   sourceInput: Extract<ExecutorAddSourceInput, { kind: "openapi" | "graphql" }>;
   storeSecretMaterial: StoreSecretMaterial;
   resolveSecretMaterial: ResolveSecretMaterial;
+  getLocalServerBaseUrl?: () => string | undefined;
+  baseUrl?: string | null;
 }): Effect.Effect<ExecutorSourceAddResult, Error, never> =>
   Effect.gen(function* () {
     const normalizedEndpoint = normalizeEndpoint(input.sourceInput.endpoint);
@@ -926,6 +1241,24 @@ const addExecutorHttpSource = (input: {
       explicitAuthProvided: input.sourceInput.auth !== undefined,
       auth: persistedDraft.auth,
     })) {
+      const requestBaseUrl = trimOrNull(input.baseUrl);
+      const baseUrl = requestBaseUrl ?? input.getLocalServerBaseUrl?.() ?? null;
+      if (baseUrl) {
+        const oauthRequired = yield* startOauth2PkceSourceCredentialSetup({
+          rows: input.rows,
+          source: persistedDraft,
+          actorAccountId: input.sourceInput.actorAccountId,
+          executionId: input.sourceInput.executionId,
+          interactionId: input.sourceInput.interactionId,
+          baseUrl,
+          redirectModeOverride: requestBaseUrl ? "app_callback" : undefined,
+          storeSecretMaterial: input.storeSecretMaterial,
+        });
+        if (oauthRequired) {
+          return oauthRequired;
+        }
+      }
+
       const authRequiredSource = yield* updateSourceStatus(input.rows, persistedDraft, {
         actorAccountId: input.sourceInput.actorAccountId,
         status: "auth_required",
@@ -946,6 +1279,218 @@ const addExecutorHttpSource = (input: {
           ...persistedDraft,
           status: "connected",
         },
+        actorAccountId: input.sourceInput.actorAccountId,
+        resolveSecretMaterial: input.resolveSecretMaterial,
+      }),
+    );
+
+    return yield* Either.match(synced, {
+      onLeft: (error) =>
+        isSourceCredentialRequiredError(error)
+          ? updateSourceStatus(input.rows, persistedDraft, {
+              actorAccountId: input.sourceInput.actorAccountId,
+              status: "auth_required",
+              lastError: null,
+            }).pipe(
+              Effect.map((source) =>
+                ({
+                  kind: "credential_required",
+                  source,
+                  credentialSlot: error.slot,
+                } satisfies ExecutorSourceAddResult)
+              ),
+            )
+          : updateSourceStatus(input.rows, persistedDraft, {
+              actorAccountId: input.sourceInput.actorAccountId,
+              status: "error",
+              lastError: error.message,
+            }).pipe(
+              Effect.zipRight(Effect.fail(error)),
+            ),
+      onRight: () =>
+        updateSourceStatus(input.rows, persistedDraft, {
+          actorAccountId: input.sourceInput.actorAccountId,
+          status: "connected",
+          lastError: null,
+        }).pipe(
+          Effect.map((source) =>
+            ({
+              kind: "connected",
+              source,
+            } satisfies ExecutorSourceAddResult)
+          ),
+        ),
+    });
+  });
+
+const addExecutorGoogleDiscoverySource = (input: {
+  rows: SqlControlPlaneRows;
+  sourceInput: Extract<ExecutorAddSourceInput, { kind: "google_discovery" }>;
+  storeSecretMaterial: StoreSecretMaterial;
+  resolveSecretMaterial: ResolveSecretMaterial;
+  getLocalServerBaseUrl?: () => string | undefined;
+  baseUrl?: string | null;
+}): Effect.Effect<ExecutorSourceAddResult, Error, never> =>
+  Effect.gen(function* () {
+    const normalizedService = input.sourceInput.service.trim();
+    const normalizedVersion = input.sourceInput.version.trim();
+    const normalizedDiscoveryUrl = normalizeEndpoint(
+      trimOrNull(input.sourceInput.discoveryUrl)
+        ?? defaultGoogleDiscoveryUrl(normalizedService, normalizedVersion),
+    );
+    const existingSources = yield* loadSourcesInWorkspace(
+      input.rows,
+      input.sourceInput.workspaceId,
+      {
+        actorAccountId: input.sourceInput.actorAccountId,
+      },
+    );
+    const existing = existingSources.find((source) => {
+      if (source.kind !== "google_discovery") {
+        return false;
+      }
+
+      const binding = source.binding;
+      if (typeof binding.service !== "string" || typeof binding.version !== "string") {
+        return false;
+      }
+
+      const existingDiscoveryUrl =
+        typeof binding.discoveryUrl === "string" && binding.discoveryUrl.trim().length > 0
+          ? normalizeEndpoint(binding.discoveryUrl)
+          : defaultGoogleDiscoveryUrl(binding.service.trim(), binding.version.trim());
+
+      return binding.service.trim() === normalizedService
+        && binding.version.trim() === normalizedVersion
+        && existingDiscoveryUrl === normalizedDiscoveryUrl;
+    });
+
+    const chosenName =
+      trimOrNull(input.sourceInput.name)
+      ?? existing?.name
+      ?? defaultGoogleDiscoverySourceName(normalizedService, normalizedVersion);
+    const chosenNamespace =
+      trimOrNull(input.sourceInput.namespace)
+      ?? existing?.namespace
+      ?? defaultGoogleDiscoveryNamespace(normalizedService);
+    const chosenScopes = (input.sourceInput.scopes ?? (Array.isArray(existing?.binding.scopes)
+      ? existing?.binding.scopes as ReadonlyArray<string>
+      : []))
+      .map((scope) => scope.trim())
+      .filter((scope) => scope.length > 0);
+    const existingBinding = existing
+      ? yield* sourceBindingStateFromSource(existing)
+      : null;
+    const now = Date.now();
+
+    const auth = yield* materializeExecutorHttpAuth({
+      existing,
+      auth: input.sourceInput.auth,
+      storeSecretMaterial: input.storeSecretMaterial,
+    });
+    const importAuth = yield* materializeExecutorHttpImportAuth({
+      sourceKind: input.sourceInput.kind,
+      existing,
+      importAuthPolicy: input.sourceInput.importAuthPolicy ?? null,
+      importAuth: input.sourceInput.importAuth ?? null,
+      storeSecretMaterial: input.storeSecretMaterial,
+    });
+
+    const draftSource = existing
+      ? yield* updateSourceFromPayload({
+          source: existing,
+          payload: {
+            name: chosenName,
+            endpoint: normalizedDiscoveryUrl,
+            namespace: chosenNamespace,
+            status: "probing",
+            enabled: true,
+            binding: {
+              service: normalizedService,
+              version: normalizedVersion,
+              discoveryUrl: normalizedDiscoveryUrl,
+              defaultHeaders: existingBinding?.defaultHeaders ?? null,
+              scopes: [...chosenScopes],
+            },
+            importAuthPolicy: importAuth.importAuthPolicy,
+            importAuth: importAuth.importAuth,
+            auth,
+            lastError: null,
+          },
+          now,
+        })
+      : yield* createSourceFromPayload({
+          workspaceId: input.sourceInput.workspaceId,
+          sourceId: SourceIdSchema.make(`src_${crypto.randomUUID()}`),
+          payload: {
+            name: chosenName,
+            kind: "google_discovery",
+            endpoint: normalizedDiscoveryUrl,
+            namespace: chosenNamespace,
+            status: "probing",
+            enabled: true,
+            binding: {
+              service: normalizedService,
+              version: normalizedVersion,
+              discoveryUrl: normalizedDiscoveryUrl,
+              defaultHeaders: existingBinding?.defaultHeaders ?? null,
+              scopes: [...chosenScopes],
+            },
+            importAuthPolicy: importAuth.importAuthPolicy,
+            importAuth: importAuth.importAuth,
+            auth,
+          },
+          now,
+        });
+
+    const persistedDraft = yield* persistSource(input.rows, draftSource, {
+      actorAccountId: input.sourceInput.actorAccountId,
+    });
+
+    if (shouldPromptForExecutorHttpRuntimeCredentialSetup({
+      existing,
+      explicitAuthProvided: input.sourceInput.auth !== undefined,
+      auth: persistedDraft.auth,
+    })) {
+      const requestBaseUrl = trimOrNull(input.baseUrl);
+      const baseUrl = requestBaseUrl ?? input.getLocalServerBaseUrl?.() ?? null;
+      if (baseUrl) {
+        const oauthRequired = yield* startOauth2PkceSourceCredentialSetup({
+          rows: input.rows,
+          source: persistedDraft,
+          actorAccountId: input.sourceInput.actorAccountId,
+          executionId: input.sourceInput.executionId,
+          interactionId: input.sourceInput.interactionId,
+          baseUrl,
+          redirectModeOverride: requestBaseUrl ? "app_callback" : undefined,
+          storeSecretMaterial: input.storeSecretMaterial,
+        });
+        if (oauthRequired) {
+          return oauthRequired;
+        }
+      }
+
+      const authRequiredSource = yield* updateSourceStatus(input.rows, persistedDraft, {
+        actorAccountId: input.sourceInput.actorAccountId,
+        status: "auth_required",
+        lastError: null,
+      });
+
+      return {
+        kind: "credential_required",
+        source: authRequiredSource,
+        credentialSlot: "runtime",
+      } satisfies ExecutorSourceAddResult;
+    }
+
+    const synced = yield* Effect.either(
+      syncSourceMaterialization({
+        rows: input.rows,
+        source: {
+          ...persistedDraft,
+          status: "connected",
+        },
+        actorAccountId: input.sourceInput.actorAccountId,
         resolveSecretMaterial: input.resolveSecretMaterial,
       }),
     );
@@ -1058,8 +1603,17 @@ export const createRuntimeSourceAuthService = (input: {
       actorAccountId,
     }),
 
-  addExecutorSource: (sourceInput, options) =>
-    hasSourceAdapterFamily(sourceInput.kind ?? "mcp", "http_api")
+  addExecutorSource: (sourceInput, options = undefined) =>
+    sourceInput.kind === "google_discovery"
+      ? addExecutorGoogleDiscoverySource({
+          rows: input.rows,
+          sourceInput,
+          storeSecretMaterial,
+          resolveSecretMaterial,
+          getLocalServerBaseUrl: input.getLocalServerBaseUrl,
+          baseUrl: options?.baseUrl,
+        })
+      : hasSourceAdapterFamily(sourceInput.kind ?? "mcp", "http_api")
       ? addExecutorHttpSource({
           rows: input.rows,
           sourceInput: sourceInput as Extract<
@@ -1068,6 +1622,8 @@ export const createRuntimeSourceAuthService = (input: {
           >,
           storeSecretMaterial,
           resolveSecretMaterial,
+          getLocalServerBaseUrl: input.getLocalServerBaseUrl,
+          baseUrl: options?.baseUrl,
         })
       : connectMcpSourceInternal({
           rows: input.rows,
@@ -1297,7 +1853,6 @@ export const createRuntimeSourceAuthService = (input: {
       }
 
       const session = sessionOption.value;
-      const sessionData = decodeMcpSourceAuthSessionData(session);
       if (session.workspaceId !== workspaceId || session.sourceId !== sourceId) {
         return yield* Effect.fail(
           new Error(
@@ -1330,6 +1885,10 @@ export const createRuntimeSourceAuthService = (input: {
         );
       }
 
+      const sessionData = session.providerKind === "oauth2_pkce"
+        ? decodeOauth2PkceSourceAuthSessionData(session)
+        : decodeMcpSourceAuthSessionData(session);
+
       if (trimOrNull(error) !== null) {
         const reason = trimOrNull(errorDescription) ?? trimOrNull(error) ?? "OAuth authorization failed";
         const failedAt = Date.now();
@@ -1351,6 +1910,7 @@ export const createRuntimeSourceAuthService = (input: {
         yield* syncSourceMaterialization({
           rows: input.rows,
           source: failedSource,
+          actorAccountId: session.actorAccountId,
           resolveSecretMaterial,
         });
         yield* completeLiveInteraction({
@@ -1374,54 +1934,157 @@ export const createRuntimeSourceAuthService = (input: {
         return yield* Effect.fail(new Error("OAuth session is missing the PKCE code verifier"));
       }
 
-      const exchanged = yield* exchangeMcpOAuthAuthorizationCode({
-        session: {
-          endpoint: sessionData.endpoint,
-          redirectUrl: sessionData.redirectUri,
-          codeVerifier: sessionData.codeVerifier,
-          resourceMetadataUrl: sessionData.resourceMetadataUrl,
-          authorizationServerUrl: sessionData.authorizationServerUrl,
-          resourceMetadata: sessionData.resourceMetadata,
-          authorizationServerMetadata: sessionData.authorizationServerMetadata,
-          clientInformation: sessionData.clientInformation,
-        },
-        code: authorizationCode,
-      });
-
-      const oauthSecretName = resolveSourceOAuthSecretName({
-        displayName: source.name,
-        endpoint: source.endpoint,
-      });
-      const accessTokenRef = yield* storeSecretMaterial({
-        purpose: "oauth_access_token",
-        value: exchanged.tokens.access_token,
-        name: oauthSecretName,
-      });
-      const refreshTokenRef = exchanged.tokens.refresh_token
-        ? yield* storeSecretMaterial({
-            purpose: "oauth_refresh_token",
-            value: exchanged.tokens.refresh_token,
-            name: `${oauthSecretName} Refresh`,
-          })
-        : null;
-
       const now = Date.now();
-      const connectedSource = yield* updateSourceStatus(input.rows, source, {
-        actorAccountId: session.actorAccountId,
-        status: "connected",
-        lastError: null,
-        auth: {
-          kind: "oauth2",
-          headerName: "Authorization",
-          prefix: "Bearer ",
-          accessToken: accessTokenRef,
-          refreshToken: refreshTokenRef,
-        },
-      });
+      let connectedSource: Source;
+      if (session.providerKind === "oauth2_pkce") {
+        const oauthSessionData = decodeOauth2PkceSourceAuthSessionData(session);
+        let clientSecret: string | null = null;
+        if (oauthSessionData.clientSecret) {
+          clientSecret = yield* resolveSecretMaterial({
+            ref: oauthSessionData.clientSecret,
+          });
+        }
+
+        const exchanged = yield* exchangeOAuth2AuthorizationCode({
+          tokenEndpoint: oauthSessionData.tokenEndpoint,
+          clientId: oauthSessionData.clientId,
+          clientAuthentication: oauthSessionData.clientAuthentication,
+          clientSecret,
+          redirectUri: oauthSessionData.redirectUri,
+          codeVerifier: oauthSessionData.codeVerifier ?? "",
+          code: authorizationCode,
+        });
+        const refreshToken = trimOrNull(exchanged.refresh_token);
+        if (refreshToken === null) {
+          return yield* Effect.fail(
+            new Error("OAuth authorization did not return a refresh token"),
+          );
+        }
+
+        const refreshTokenRef = yield* storeSecretMaterial({
+          purpose: "oauth_refresh_token",
+          value: refreshToken,
+          name: `${source.name} Refresh`,
+        });
+        const grantedScopes = trimOrNull(exchanged.scope)
+          ? exchanged.scope!.split(/\s+/).filter((scope) => scope.length > 0)
+          : [...oauthSessionData.scopes];
+        connectedSource = yield* updateSourceStatus(input.rows, source, {
+          actorAccountId: session.actorAccountId,
+          status: "connected",
+          lastError: null,
+          auth: {
+            kind: "oauth2_authorized_user",
+            headerName: oauthSessionData.headerName,
+            prefix: oauthSessionData.prefix,
+            tokenEndpoint: oauthSessionData.tokenEndpoint,
+            clientId: oauthSessionData.clientId,
+            clientAuthentication: oauthSessionData.clientAuthentication,
+            clientSecret: oauthSessionData.clientSecret,
+            refreshToken: refreshTokenRef,
+            grantSet: grantedScopes,
+          },
+        });
+        const authArtifact = yield* input.rows.authArtifacts.getByWorkspaceSourceAndActor({
+          workspaceId: connectedSource.workspaceId,
+          sourceId: connectedSource.id,
+          actorAccountId: session.actorAccountId ?? null,
+          slot: "runtime",
+        });
+        if (Option.isSome(authArtifact)) {
+          yield* upsertOauth2AuthorizedUserLeaseFromTokenResponse({
+            rows: input.rows,
+            artifact: authArtifact.value,
+            tokenResponse: exchanged,
+          });
+        }
+
+        yield* input.rows.sourceAuthSessions.update(
+          session.id,
+          createTerminalSourceAuthSessionPatch({
+            sessionDataJson: mergeOauth2PkceSourceAuthSessionData({
+              session,
+              patch: {
+                codeVerifier: null,
+                authorizationUrl: null,
+              },
+            }),
+            status: "completed",
+            now,
+            errorText: null,
+          }),
+        );
+      } else {
+        const mcpSessionData = decodeMcpSourceAuthSessionData(session);
+        const exchanged = yield* exchangeMcpOAuthAuthorizationCode({
+          session: {
+            endpoint: mcpSessionData.endpoint,
+            redirectUrl: mcpSessionData.redirectUri,
+            codeVerifier: mcpSessionData.codeVerifier ?? "",
+            resourceMetadataUrl: mcpSessionData.resourceMetadataUrl,
+            authorizationServerUrl: mcpSessionData.authorizationServerUrl,
+            resourceMetadata: mcpSessionData.resourceMetadata,
+            authorizationServerMetadata: mcpSessionData.authorizationServerMetadata,
+            clientInformation: mcpSessionData.clientInformation,
+          },
+          code: authorizationCode,
+        });
+
+        const oauthSecretName = resolveSourceOAuthSecretName({
+          displayName: source.name,
+          endpoint: source.endpoint,
+        });
+        const accessTokenRef = yield* storeSecretMaterial({
+          purpose: "oauth_access_token",
+          value: exchanged.tokens.access_token,
+          name: oauthSecretName,
+        });
+        const refreshTokenRef = exchanged.tokens.refresh_token
+          ? yield* storeSecretMaterial({
+              purpose: "oauth_refresh_token",
+              value: exchanged.tokens.refresh_token,
+              name: `${oauthSecretName} Refresh`,
+            })
+          : null;
+
+        connectedSource = yield* updateSourceStatus(input.rows, source, {
+          actorAccountId: session.actorAccountId,
+          status: "connected",
+          lastError: null,
+          auth: {
+            kind: "oauth2",
+            headerName: "Authorization",
+            prefix: "Bearer ",
+            accessToken: accessTokenRef,
+            refreshToken: refreshTokenRef,
+          },
+        });
+
+        yield* input.rows.sourceAuthSessions.update(
+          session.id,
+          createTerminalSourceAuthSessionPatch({
+            sessionDataJson: mergeMcpSourceAuthSessionData({
+              session,
+              patch: {
+                codeVerifier: null,
+                authorizationUrl: null,
+                resourceMetadataUrl: exchanged.resourceMetadataUrl,
+                authorizationServerUrl: exchanged.authorizationServerUrl,
+                resourceMetadata: exchanged.resourceMetadata,
+                authorizationServerMetadata: exchanged.authorizationServerMetadata,
+              },
+            }),
+            status: "completed",
+            now,
+            errorText: null,
+          }),
+        );
+      }
       const indexed = yield* Effect.either(
         syncSourceMaterialization({
           rows: input.rows,
           source: connectedSource,
+          actorAccountId: session.actorAccountId,
           resolveSecretMaterial,
         }),
       );
@@ -1436,26 +2099,6 @@ export const createRuntimeSourceAuthService = (input: {
           ),
         onRight: () => Effect.succeed(undefined),
       });
-
-      yield* input.rows.sourceAuthSessions.update(
-        session.id,
-        createTerminalSourceAuthSessionPatch({
-          sessionDataJson: mergeMcpSourceAuthSessionData({
-            session,
-            patch: {
-              codeVerifier: null,
-              authorizationUrl: null,
-              resourceMetadataUrl: exchanged.resourceMetadataUrl,
-              authorizationServerUrl: exchanged.authorizationServerUrl,
-              resourceMetadata: exchanged.resourceMetadata,
-              authorizationServerMetadata: exchanged.authorizationServerMetadata,
-            },
-          }),
-          status: "completed",
-          now,
-          errorText: null,
-        }),
-      );
 
       yield* completeLiveInteraction({
         liveExecutionManager: input.liveExecutionManager,

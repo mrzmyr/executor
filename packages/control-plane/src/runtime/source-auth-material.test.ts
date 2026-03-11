@@ -43,7 +43,15 @@ describe("source-auth-material", () => {
         resolveSecretMaterial: () => Effect.die("should not be called"),
       }));
 
-      expect(auth).toEqual({ headers: {} });
+      expect(auth).toEqual({
+        placements: [],
+        headers: {},
+        queryParams: {},
+        cookies: {},
+        bodyValues: {},
+        expiresAt: null,
+        refreshAfter: null,
+      });
     });
 
     it("resolves bearer auth headers from the configured token ref", async () => {
@@ -69,9 +77,21 @@ describe("source-auth-material", () => {
 
       expect(calls).toEqual(["postgres:sec_bearer"]);
       expect(auth).toEqual({
+        placements: [
+          {
+            location: "header",
+            name: "X-Api-Key",
+            value: "Token resolved-bearer-token",
+          },
+        ],
         headers: {
           "X-Api-Key": "Token resolved-bearer-token",
         },
+        queryParams: {},
+        cookies: {},
+        bodyValues: {},
+        expiresAt: null,
+        refreshAfter: null,
       });
     });
 
@@ -107,9 +127,21 @@ describe("source-auth-material", () => {
 
       expect(calls).toEqual(["postgres:sec_access"]);
       expect(auth).toEqual({
+        placements: [
+          {
+            location: "header",
+            name: "Authorization",
+            value: "Bearer resolved-access-token",
+          },
+        ],
         headers: {
           Authorization: "Bearer resolved-access-token",
         },
+        queryParams: {},
+        cookies: {},
+        bodyValues: {},
+        expiresAt: null,
+        refreshAfter: null,
       });
     });
   });

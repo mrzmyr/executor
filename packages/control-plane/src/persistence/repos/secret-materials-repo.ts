@@ -1,10 +1,11 @@
 import {
+  authArtifactSecretRefs,
   type SecretMaterial,
   SecretMaterialSchema,
 } from "#schema";
 import * as Option from "effect/Option";
 import { Schema } from "effect";
-import { eq, desc, or, and } from "drizzle-orm";
+import { eq, desc, and } from "drizzle-orm";
 
 import type { DrizzleClient } from "../client";
 import type { DrizzleTables } from "../schema";
@@ -92,34 +93,24 @@ export const createSecretMaterialsRepo = (
     }),
 
   /**
-   * For each secret, find the sources that reference it via credentials.
+   * For each secret, find the sources that reference it via auth artifacts.
    * Returns a map of secretId -> Array<{ sourceId, sourceName }>.
    */
   listLinkedSources: () =>
     client.use("rows.secret_materials.list_linked_sources", async (db) => {
-      // Find all credentials that reference any postgres-stored secret
-      // and join through bindings to sources.
       const rows = await db
         .select({
-          tokenHandle: tables.credentialsTable.tokenHandle,
-          tokenProviderId: tables.credentialsTable.tokenProviderId,
-          refreshTokenHandle: tables.credentialsTable.refreshTokenHandle,
-          refreshTokenProviderId: tables.credentialsTable.refreshTokenProviderId,
-          sourceId: tables.credentialsTable.sourceId,
+          artifactKind: tables.authArtifactsTable.artifactKind,
+          configJson: tables.authArtifactsTable.configJson,
+          sourceId: tables.authArtifactsTable.sourceId,
           sourceName: tables.sourcesTable.name,
         })
-        .from(tables.credentialsTable)
+        .from(tables.authArtifactsTable)
         .innerJoin(
           tables.sourcesTable,
           and(
-            eq(tables.credentialsTable.workspaceId, tables.sourcesTable.workspaceId),
-            eq(tables.credentialsTable.sourceId, tables.sourcesTable.sourceId),
-          ),
-        )
-        .where(
-          or(
-            eq(tables.credentialsTable.tokenProviderId, "postgres"),
-            eq(tables.credentialsTable.refreshTokenProviderId, "postgres"),
+            eq(tables.authArtifactsTable.workspaceId, tables.sourcesTable.workspaceId),
+            eq(tables.authArtifactsTable.sourceId, tables.sourcesTable.sourceId),
           ),
         );
 
@@ -138,11 +129,13 @@ export const createSecretMaterialsRepo = (
           }
         };
 
-        if (row.tokenProviderId === "postgres") {
-          addLink(row.tokenHandle);
-        }
-        if (row.refreshTokenProviderId === "postgres" && row.refreshTokenHandle) {
-          addLink(row.refreshTokenHandle);
+        for (const ref of authArtifactSecretRefs({
+          artifactKind: row.artifactKind,
+          configJson: row.configJson,
+        })) {
+          if (ref.providerId === "postgres") {
+            addLink(ref.handle);
+          }
         }
       }
 

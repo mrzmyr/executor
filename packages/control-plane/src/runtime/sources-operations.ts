@@ -72,6 +72,7 @@ const syncArtifactsForSource = (input: {
       syncSourceMaterialization({
         rows: input.store,
         source: sourceForSync,
+        actorAccountId: input.actorAccountId,
         resolveSecretMaterial,
       }),
     );
@@ -276,7 +277,8 @@ export const removeSource = (input: {
 }) =>
   Effect.flatMap(ControlPlaneStore, (store) =>
     Effect.gen(function* () {
-      const removed = yield* sourceOps.remove.mapStorage(
+      const removed = yield* mapPersistenceError(
+        sourceOps.remove.child("remove"),
         removeSourceById(store, {
           workspaceId: input.workspaceId,
           sourceId: input.sourceId,

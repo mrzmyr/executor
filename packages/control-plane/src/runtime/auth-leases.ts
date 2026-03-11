@@ -1,0 +1,305 @@
+import type { SqlControlPlaneRows } from "#persistence";
+import type {
+  AuthArtifact,
+  AuthLease,
+  RequestPlacementTemplate,
+  SecretRef,
+} from "#schema";
+import {
+  AuthLeaseIdSchema,
+  RefreshableOAuth2AuthorizedUserAuthArtifactKind,
+  authLeaseSecretRefs,
+  decodeBuiltInAuthArtifactConfig,
+} from "#schema";
+import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
+
+import { resolveAuthArtifactMaterial, type ResolvedSourceAuthMaterial } from "./auth-artifacts";
+import {
+  createDefaultSecretMaterialDeleter,
+  createDefaultSecretMaterialStorer,
+  type ResolveSecretMaterial,
+  type SecretMaterialResolveContext,
+} from "./secret-material-providers";
+import { refreshOAuth2AccessToken } from "./oauth2-pkce";
+import type { OAuth2TokenResponse } from "./oauth2-pkce";
+
+const LEASE_REFRESH_SKEW_MS = 60_000;
+
+const encodeLeasePlacementTemplatesJson = (templates: ReadonlyArray<RequestPlacementTemplate>): string =>
+  JSON.stringify(templates);
+
+const secretRefKey = (ref: SecretRef): string =>
+  `${ref.providerId}:${ref.handle}`;
+
+const cleanupAuthLeaseSecretRefs = (
+  rows: SqlControlPlaneRows,
+  input: {
+    previous: Pick<AuthLease, "placementsTemplateJson"> | null;
+    next: Pick<AuthLease, "placementsTemplateJson"> | null;
+  },
+) =>
+  Effect.gen(function* () {
+    if (input.previous === null) {
+      return;
+    }
+
+    const deleteSecretMaterial = createDefaultSecretMaterialDeleter({ rows });
+    const nextRefKeys = new Set(
+      (input.next === null ? [] : authLeaseSecretRefs(input.next)).map(secretRefKey),
+    );
+    const refsToDelete = authLeaseSecretRefs(input.previous).filter(
+      (ref) => !nextRefKeys.has(secretRefKey(ref)),
+    );
+
+    yield* Effect.forEach(
+      refsToDelete,
+      (ref) => Effect.either(deleteSecretMaterial(ref)),
+      { discard: true },
+    );
+  });
+
+const leaseIsFresh = (lease: AuthLease | null, now: number): boolean => {
+  if (lease === null) {
+    return false;
+  }
+
+  if (lease.refreshAfter !== null && now >= lease.refreshAfter) {
+    return false;
+  }
+
+  if (lease.expiresAt !== null && now >= lease.expiresAt - LEASE_REFRESH_SKEW_MS) {
+    return false;
+  }
+
+  return true;
+};
+
+const refreshRefreshableOauth2AuthorizedUserArtifact = (input: {
+  rows: SqlControlPlaneRows;
+  artifact: AuthArtifact;
+  lease: AuthLease | null;
+  resolveSecretMaterial: ResolveSecretMaterial;
+  context?: SecretMaterialResolveContext;
+}): Effect.Effect<AuthLease, Error, never> =>
+  Effect.gen(function* () {
+    const decoded = decodeBuiltInAuthArtifactConfig(input.artifact);
+    if (
+      decoded === null
+      || decoded.artifactKind !== RefreshableOAuth2AuthorizedUserAuthArtifactKind
+    ) {
+      return yield* Effect.fail(
+        new Error(`Unsupported auth artifact kind: ${input.artifact.artifactKind}`),
+      );
+    }
+
+    const refreshToken = yield* input.resolveSecretMaterial({
+      ref: decoded.config.refreshToken,
+      context: input.context,
+    });
+    let clientSecret: string | null = null;
+    if (decoded.config.clientSecret) {
+      clientSecret = yield* input.resolveSecretMaterial({
+        ref: decoded.config.clientSecret,
+        context: input.context,
+      });
+    }
+
+    const tokenResponse = yield* refreshOAuth2AccessToken({
+      tokenEndpoint: decoded.config.tokenEndpoint,
+      clientId: decoded.config.clientId,
+      clientAuthentication: decoded.config.clientAuthentication,
+      clientSecret,
+      refreshToken,
+    });
+
+    const storeSecretMaterial = createDefaultSecretMaterialStorer({
+      rows: input.rows,
+    });
+    const accessTokenRef = yield* storeSecretMaterial({
+      purpose: "oauth_access_token",
+      value: tokenResponse.access_token,
+      name: `${decoded.config.clientId} Access Token`,
+    });
+    const now = Date.now();
+    const expiresInMs =
+      typeof tokenResponse.expires_in === "number" && Number.isFinite(tokenResponse.expires_in)
+        ? Math.max(0, tokenResponse.expires_in * 1000)
+        : null;
+    const expiresAt = expiresInMs === null ? null : now + expiresInMs;
+    const refreshAfter =
+      expiresAt === null ? null : Math.max(now, expiresAt - LEASE_REFRESH_SKEW_MS);
+
+    const nextLease: AuthLease = {
+      id: input.lease?.id ?? AuthLeaseIdSchema.make(`auth_lease_${crypto.randomUUID()}`),
+      authArtifactId: input.artifact.id,
+      workspaceId: input.artifact.workspaceId,
+      sourceId: input.artifact.sourceId,
+      actorAccountId: input.artifact.actorAccountId,
+      slot: input.artifact.slot,
+      placementsTemplateJson: encodeLeasePlacementTemplatesJson([
+        {
+          location: "header",
+          name: decoded.config.headerName,
+          parts: [
+            {
+              kind: "literal",
+              value: decoded.config.prefix,
+            },
+            {
+              kind: "secret_ref",
+              ref: accessTokenRef,
+            },
+          ],
+        },
+      ]),
+      expiresAt,
+      refreshAfter,
+      createdAt: input.lease?.createdAt ?? now,
+      updatedAt: now,
+    };
+
+    yield* input.rows.authLeases.upsert(nextLease);
+    yield* cleanupAuthLeaseSecretRefs(input.rows, {
+      previous: input.lease,
+      next: nextLease,
+    });
+
+    return nextLease;
+  });
+
+export const removeAuthLeaseAndSecrets = (rows: SqlControlPlaneRows, input: {
+  authArtifactId: AuthArtifact["id"];
+}): Effect.Effect<void, Error, never> =>
+  Effect.gen(function* () {
+    const existingLease = yield* rows.authLeases.getByAuthArtifactId(input.authArtifactId);
+    if (Option.isNone(existingLease)) {
+      return;
+    }
+
+    yield* rows.authLeases.removeByAuthArtifactId(input.authArtifactId);
+    yield* cleanupAuthLeaseSecretRefs(rows, {
+      previous: existingLease.value,
+      next: null,
+    });
+  });
+
+export const upsertOauth2AuthorizedUserLeaseFromTokenResponse = (input: {
+  rows: SqlControlPlaneRows;
+  artifact: AuthArtifact;
+  tokenResponse: OAuth2TokenResponse;
+}): Effect.Effect<void, Error, never> =>
+  Effect.gen(function* () {
+    const decoded = decodeBuiltInAuthArtifactConfig(input.artifact);
+    if (
+      decoded === null
+      || decoded.artifactKind !== RefreshableOAuth2AuthorizedUserAuthArtifactKind
+    ) {
+      return yield* Effect.fail(
+        new Error(`Unsupported auth artifact kind: ${input.artifact.artifactKind}`),
+      );
+    }
+
+    const existingLeaseOption = yield* input.rows.authLeases.getByAuthArtifactId(input.artifact.id);
+    const existingLease = Option.isSome(existingLeaseOption) ? existingLeaseOption.value : null;
+    const storeSecretMaterial = createDefaultSecretMaterialStorer({
+      rows: input.rows,
+    });
+    const accessTokenRef = yield* storeSecretMaterial({
+      purpose: "oauth_access_token",
+      value: input.tokenResponse.access_token,
+      name: `${decoded.config.clientId} Access Token`,
+    });
+    const now = Date.now();
+    const expiresInMs =
+      typeof input.tokenResponse.expires_in === "number" && Number.isFinite(input.tokenResponse.expires_in)
+        ? Math.max(0, input.tokenResponse.expires_in * 1000)
+        : null;
+    const expiresAt = expiresInMs === null ? null : now + expiresInMs;
+    const refreshAfter =
+      expiresAt === null ? null : Math.max(now, expiresAt - LEASE_REFRESH_SKEW_MS);
+
+    const nextLease: AuthLease = {
+      id: existingLease?.id ?? AuthLeaseIdSchema.make(`auth_lease_${crypto.randomUUID()}`),
+      authArtifactId: input.artifact.id,
+      workspaceId: input.artifact.workspaceId,
+      sourceId: input.artifact.sourceId,
+      actorAccountId: input.artifact.actorAccountId,
+      slot: input.artifact.slot,
+      placementsTemplateJson: encodeLeasePlacementTemplatesJson([
+        {
+          location: "header",
+          name: decoded.config.headerName,
+          parts: [
+            {
+              kind: "literal",
+              value: decoded.config.prefix,
+            },
+            {
+              kind: "secret_ref",
+              ref: accessTokenRef,
+            },
+          ],
+        },
+      ]),
+      expiresAt,
+      refreshAfter,
+      createdAt: existingLease?.createdAt ?? now,
+      updatedAt: now,
+    };
+
+    yield* input.rows.authLeases.upsert(nextLease);
+    yield* cleanupAuthLeaseSecretRefs(input.rows, {
+      previous: existingLease,
+      next: nextLease,
+    });
+  });
+
+export const resolveAuthArtifactMaterialWithLeases = (input: {
+  rows: SqlControlPlaneRows;
+  artifact: AuthArtifact | null;
+  resolveSecretMaterial: ResolveSecretMaterial;
+  context?: SecretMaterialResolveContext;
+}): Effect.Effect<ResolvedSourceAuthMaterial, Error, never> =>
+  Effect.gen(function* () {
+    if (input.artifact === null) {
+      return yield* resolveAuthArtifactMaterial({
+        artifact: null,
+        resolveSecretMaterial: input.resolveSecretMaterial,
+        context: input.context,
+      });
+    }
+
+    const existingLeaseOption = yield* input.rows.authLeases.getByAuthArtifactId(input.artifact.id);
+    const existingLease = Option.isSome(existingLeaseOption) ? existingLeaseOption.value : null;
+    const decoded = decodeBuiltInAuthArtifactConfig(input.artifact);
+
+    if (
+      decoded !== null
+      && decoded.artifactKind === RefreshableOAuth2AuthorizedUserAuthArtifactKind
+    ) {
+      const lease = leaseIsFresh(existingLease, Date.now())
+        ? existingLease
+        : yield* refreshRefreshableOauth2AuthorizedUserArtifact({
+            rows: input.rows,
+            artifact: input.artifact,
+            lease: existingLease,
+            resolveSecretMaterial: input.resolveSecretMaterial,
+            context: input.context,
+          });
+
+      return yield* resolveAuthArtifactMaterial({
+        artifact: input.artifact,
+        lease,
+        resolveSecretMaterial: input.resolveSecretMaterial,
+        context: input.context,
+      });
+    }
+
+    return yield* resolveAuthArtifactMaterial({
+      artifact: input.artifact,
+      lease: existingLease,
+      resolveSecretMaterial: input.resolveSecretMaterial,
+      context: input.context,
+    });
+  });

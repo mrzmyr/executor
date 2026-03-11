@@ -1,4 +1,5 @@
 import {
+  applyCookiePlacementsToHeaders,
   makeToolInvokerFromTools,
 } from "@executor/codemode-core";
 import {
@@ -40,6 +41,19 @@ import {
   parseJsonValue,
   SourceConnectCommonFieldsSchema,
 } from "./shared";
+
+const headersWithAuthCookies = (input: {
+  headers: Readonly<Record<string, string>>;
+  authHeaders: Readonly<Record<string, string>>;
+  authCookies: Readonly<Record<string, string>>;
+}): Record<string, string> =>
+  applyCookiePlacementsToHeaders({
+    headers: {
+      ...input.headers,
+      ...input.authHeaders,
+    },
+    cookies: input.authCookies,
+  });
 
 const McpConnectPayloadSchema = Schema.extend(
   SourceConnectCommonFieldsSchema,
@@ -339,11 +353,15 @@ export const mcpSourceAdapter: SourceAdapter = {
           createSdkMcpConnector({
             endpoint: source.endpoint,
             transport: bindingConfig.transport ?? undefined,
-            queryParams: bindingConfig.queryParams ?? undefined,
-            headers: {
-              ...(bindingConfig.headers ?? {}),
-              ...auth.headers,
+            queryParams: {
+              ...(bindingConfig.queryParams ?? {}),
+              ...auth.queryParams,
             },
+            headers: headersWithAuthCookies({
+              headers: bindingConfig.headers ?? {},
+              authHeaders: auth.headers,
+              authCookies: auth.cookies,
+            }),
           }),
         catch: (cause) =>
           cause instanceof Error ? cause : new Error(String(cause)),
@@ -394,11 +412,15 @@ export const mcpSourceAdapter: SourceAdapter = {
         connect: createSdkMcpConnector({
           endpoint: source.endpoint,
           transport: bindingConfig.transport ?? undefined,
-          queryParams: bindingConfig.queryParams ?? undefined,
-          headers: {
-            ...(bindingConfig.headers ?? {}),
-            ...auth.headers,
+          queryParams: {
+            ...(bindingConfig.queryParams ?? {}),
+            ...auth.queryParams,
           },
+          headers: headersWithAuthCookies({
+            headers: bindingConfig.headers ?? {},
+            authHeaders: auth.headers,
+            authCookies: auth.cookies,
+          }),
         }),
         namespace: source.namespace ?? namespaceFromSourceName(source.name),
         sourceKey: source.id,

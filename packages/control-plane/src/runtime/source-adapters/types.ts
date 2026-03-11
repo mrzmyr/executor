@@ -7,6 +7,7 @@ import type { SqlControlPlaneRows } from "#persistence";
 import type {
   AccountId,
   CredentialSlot,
+  OAuth2ClientAuthenticationMethod,
   Source,
   SourceBinding,
   SourceImportAuthPolicy,
@@ -66,6 +67,24 @@ export type SourceAdapterPersistedOperationMetadata = {
   searchText: string;
   interaction: "auto" | "required";
   approvalLabel: string | null;
+};
+
+export type SourceAdapterOauth2SetupConfig = {
+  providerKey: string;
+  authorizationEndpoint: string;
+  tokenEndpoint: string;
+  scopes: readonly string[];
+  headerName: string;
+  prefix: string;
+  clientAuthentication: OAuth2ClientAuthenticationMethod;
+  authorizationParams?: Readonly<Record<string, string>>;
+};
+
+export type SourceAdapterDefaultOauthClient = {
+  providerKey: string;
+  clientId: string;
+  clientSecret: string | null;
+  redirectMode?: "app_callback" | "loopback";
 };
 
 export type SourceAdapterRepairRevisionInput = {
@@ -137,6 +156,13 @@ export type SourceAdapter = {
   materializeSource: (
     input: SourceAdapterSyncInput,
   ) => Effect.Effect<SourceAdapterMaterialization, Error, never>;
+  getOauth2SetupConfig?: (input: {
+    source: Source;
+    slot: CredentialSlot;
+  }) => Effect.Effect<SourceAdapterOauth2SetupConfig | null, Error, never>;
+  getDefaultOauthClient?: (
+    source: Source,
+  ) => Effect.Effect<SourceAdapterDefaultOauthClient | null, Error, never>;
   invokePersistedTool: (
     input: SourceAdapterInvokePersistedToolInput,
   ) => Effect.Effect<unknown, Error, never>;

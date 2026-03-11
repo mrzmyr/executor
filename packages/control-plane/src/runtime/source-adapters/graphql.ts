@@ -1,4 +1,7 @@
 import {
+  applyCookiePlacementsToHeaders,
+  applyHttpQueryPlacementsToUrl,
+  applyJsonBodyPlacements,
   makeToolInvokerFromTools,
   typeSignatureFromSchemaJson,
 } from "@executor/codemode-core";
@@ -135,20 +138,38 @@ const graphqlBindingConfigFromSource = (
 const fetchGraphqlIntrospectionDocumentWithHeaders = (input: {
   url: string;
   headers?: Readonly<Record<string, string>>;
+  queryParams?: Readonly<Record<string, string>>;
+  cookies?: Readonly<Record<string, string>>;
+  bodyValues?: Readonly<Record<string, string>>;
 }): Effect.Effect<string, Error, never> =>
   Effect.tryPromise({
     try: async () => {
-      const response = await fetch(input.url, {
+      const response = await fetch(
+        applyHttpQueryPlacementsToUrl({
+          url: input.url,
+          queryParams: input.queryParams,
+        }).toString(),
+        {
         method: "POST",
-        headers: {
-          "content-type": "application/json",
-          ...(input.headers ?? {}),
+          headers: applyCookiePlacementsToHeaders({
+            headers: {
+              "content-type": "application/json",
+              ...(input.headers ?? {}),
+            },
+            cookies: input.cookies,
+          }),
+          body: JSON.stringify(
+            applyJsonBodyPlacements({
+              body: {
+                query: GRAPHQL_INTROSPECTION_QUERY,
+                operationName: "IntrospectionQuery",
+              },
+              bodyValues: input.bodyValues,
+              label: `GraphQL introspection ${input.url}`,
+            }),
+          ),
         },
-        body: JSON.stringify({
-          query: GRAPHQL_INTROSPECTION_QUERY,
-          operationName: "IntrospectionQuery",
-        }),
-      });
+      );
       const text = await response.text();
 
       let parsed: unknown;
@@ -470,6 +491,9 @@ export const graphqlSourceAdapter: SourceAdapter = {
             ...(bindingConfig.defaultHeaders ?? {}),
             ...auth.headers,
           },
+          queryParams: auth.queryParams,
+          cookies: auth.cookies,
+          bodyValues: auth.bodyValues,
         },
       ).pipe(
         Effect.mapError(
@@ -564,7 +588,7 @@ export const graphqlSourceAdapter: SourceAdapter = {
         providerDataJson: operation.providerDataJson,
         schemaRefTable: schemaRefTable.right,
         defaultHeaders: bindingConfig.defaultHeaders ?? {},
-        credentialHeaders: auth.headers,
+        credentialPlacements: auth,
       });
 
       return yield* makeToolInvokerFromTools({

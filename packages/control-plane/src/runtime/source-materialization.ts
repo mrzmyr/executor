@@ -1,5 +1,6 @@
 import type { SqlControlPlaneRows } from "#persistence";
 import type {
+  AccountId,
   Source,
 } from "#schema";
 import * as Effect from "effect/Effect";
@@ -22,6 +23,7 @@ const shouldIndexSource = (source: Source): boolean =>
 export const syncSourceMaterialization = (input: {
   rows: SqlControlPlaneRows;
   source: Source;
+  actorAccountId?: AccountId | null;
   resolveSecretMaterial: ResolveSourceSecretMaterial;
 }): Effect.Effect<void, Error, never> =>
   Effect.gen(function* () {
@@ -35,8 +37,10 @@ export const syncSourceMaterialization = (input: {
       resolveSecretMaterial: input.resolveSecretMaterial,
       resolveAuthMaterialForSlot: (slot) =>
         resolveSourceAuthMaterial({
+          rows: input.rows,
           source: input.source,
           slot,
+          actorAccountId: input.actorAccountId,
           resolveSecretMaterial: input.resolveSecretMaterial,
         }),
     });

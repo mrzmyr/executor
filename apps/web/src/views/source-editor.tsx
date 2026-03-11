@@ -74,6 +74,8 @@ type SourceFormState = {
   queryParamsText: string;
   headersText: string;
   specUrl: string;
+  service: string;
+  version: string;
   defaultHeadersText: string;
   authKind: Source["auth"]["kind"];
   authHeaderName: string;
@@ -86,7 +88,13 @@ type SourceFormState = {
   oauthRefreshHandle: string;
 };
 
-const kindOptions: ReadonlyArray<Source["kind"]> = ["mcp", "openapi", "graphql", "internal"];
+const kindOptions: ReadonlyArray<Source["kind"]> = [
+  "mcp",
+  "openapi",
+  "graphql",
+  "google_discovery",
+  "internal",
+];
 
 const transportOptions: ReadonlyArray<Exclude<TransportValue, "">> = [
   "auto",
@@ -111,6 +119,9 @@ const namespaceFromUrl = (url: string): string => {
     return "";
   }
 };
+
+const googleDiscoveryNamespace = (service: string): string =>
+  `google.${service.trim().toLowerCase().replace(/[^a-z0-9]+/g, ".").replace(/^\.+|\.+$/g, "")}`;
 
 const readStoredSourceOAuthPopupResult = (sessionId: string): SourceOAuthPopupMessage | null => {
   if (typeof window === "undefined") {
@@ -288,14 +299,20 @@ const defaultFormState = (template?: SourceTemplate): SourceFormState => ({
   name: template?.name ?? "",
   kind: template?.kind ?? "openapi",
   endpoint: template?.endpoint ?? "",
-  namespace: template ? namespaceFromUrl(template.endpoint) : "",
+  namespace: template
+    ? "service" in template
+      ? googleDiscoveryNamespace(template.service)
+      : namespaceFromUrl(template.endpoint)
+    : "",
   enabled: true,
   transport: template?.kind === "mcp" ? "auto" : "",
   queryParamsText: "",
   headersText: "",
   specUrl: template && "specUrl" in template ? template.specUrl : "",
+  service: template && "service" in template ? template.service : "",
+  version: template && "version" in template ? template.version : "",
   defaultHeadersText: "",
-  authKind: "none",
+  authKind: template?.kind === "google_discovery" ? "oauth2" : "none",
   authHeaderName: "Authorization",
   authPrefix: "Bearer ",
   bearerProviderId: "",
@@ -316,6 +333,8 @@ const formStateFromSource = (source: Source): SourceFormState => ({
   queryParamsText: stringMapToEditor(readBindingStringMap(source, "queryParams")),
   headersText: stringMapToEditor(readBindingStringMap(source, "headers")),
   specUrl: readBindingString(source, "specUrl"),
+  service: readBindingString(source, "service"),
+  version: readBindingString(source, "version"),
   defaultHeadersText: stringMapToEditor(readBindingStringMap(source, "defaultHeaders")),
   authKind: source.auth.kind,
   authHeaderName: source.auth.kind === "none" ? "Authorization" : source.auth.headerName,
@@ -479,6 +498,27 @@ const buildSourcePayload = (state: SourceFormState): CreateSourcePayload => {
     return {
       ...shared,
       binding: {
+        defaultHeaders: parseJsonStringMap("Default headers", state.defaultHeadersText),
+      },
+    };
+  }
+
+  if (state.kind === "google_discovery") {
+    const service = state.service.trim();
+    const version = state.version.trim();
+    if (!service) {
+      throw new Error("Google Discovery sources require a service.");
+    }
+    if (!version) {
+      throw new Error("Google Discovery sources require a version.");
+    }
+
+    return {
+      ...shared,
+      binding: {
+        service,
+        version,
+        discoveryUrl: endpoint,
         defaultHeaders: parseJsonStringMap("Default headers", state.defaultHeadersText),
       },
     };
@@ -784,6 +824,8 @@ function SourceEditor(props: { mode: "create" | "edit"; source?: Source }) {
                       ? "https://api.github.com"
                       : formState.kind === "graphql"
                         ? "https://api.linear.app/graphql"
+                        : formState.kind === "google_discovery"
+                          ? "https://www.googleapis.com/discovery/v1/apis/sheets/v4/rest"
                         : "https://mcp.deepwiki.com/mcp"
                   }
                   mono
@@ -865,6 +907,34 @@ function SourceEditor(props: { mode: "create" | "edit"; source?: Source }) {
                     value={formState.defaultHeadersText}
                     onChange={(value) => setField("defaultHeadersText", value)}
                     placeholder={'{\n  "x-api-version": "2026-03-01"\n}'}
+                  />
+                </Field>
+              </div>
+            </Section>
+          )}
+
+          {formState.kind === "google_discovery" && (
+            <Section title="Google Discovery">
+              <div className="grid gap-4 sm:grid-cols-2">
+                <Field label="Service">
+                  <TextInput
+                    value={formState.service}
+                    onChange={(value) => setField("service", value)}
+                    placeholder="sheets"
+                  />
+                </Field>
+                <Field label="Version">
+                  <TextInput
+                    value={formState.version}
+                    onChange={(value) => setField("version", value)}
+                    placeholder="v4"
+                  />
+                </Field>
+                <Field label="Default headers (JSON)" className="sm:col-span-2">
+                  <CodeEditor
+                    value={formState.defaultHeadersText}
+                    onChange={(value) => setField("defaultHeadersText", value)}
+                    placeholder={'{\n  "x-goog-user-project": "my-project"\n}'}
                   />
                 </Field>
               </div>

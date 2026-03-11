@@ -3,6 +3,7 @@ import * as Effect from "effect/Effect";
 
 import {
   CredentialIdSchema,
+  decodeBuiltInAuthArtifactConfig,
   SourceIdSchema,
   WorkspaceIdSchema,
   type Source,
@@ -361,14 +362,16 @@ describe("source-definitions", () => {
       const recipeRevisionId = stableSourceRecipeRevisionId(source);
       const existingCredentialId = CredentialIdSchema.make("cred_existing");
 
-      const { sourceRecord, runtimeCredential } = splitSourceForStorage({
+      const { sourceRecord, runtimeAuthArtifact } = splitSourceForStorage({
         source,
         recipeId,
         recipeRevisionId,
-        existingRuntimeCredentialId: existingCredentialId,
+        existingRuntimeAuthArtifactId: existingCredentialId,
       });
 
-      expect(runtimeCredential?.id).toBe(existingCredentialId);
+      expect(runtimeAuthArtifact?.id).toBe(existingCredentialId);
+      const decoded = runtimeAuthArtifact ? decodeBuiltInAuthArtifactConfig(runtimeAuthArtifact) : null;
+      expect(decoded?.artifactKind).toBe("static_bearer");
       expect(JSON.parse(sourceRecord.bindingConfigJson ?? "{}")).toEqual({
         adapterKey: "mcp",
         version: 1,
@@ -377,8 +380,8 @@ describe("source-definitions", () => {
 
       const projected = await Effect.runPromise(projectSourceFromStorage({
         sourceRecord,
-        runtimeCredential: runtimeCredential ?? null,
-        importCredential: null,
+        runtimeAuthArtifact: runtimeAuthArtifact ?? null,
+        importAuthArtifact: null,
       }));
 
       expect(projected).toEqual(source);
@@ -421,15 +424,15 @@ describe("source-definitions", () => {
       });
 
       for (const source of [withRefresh, withoutRefresh]) {
-        const { sourceRecord, runtimeCredential } = splitSourceForStorage({
+        const { sourceRecord, runtimeAuthArtifact } = splitSourceForStorage({
           source,
           recipeId: stableSourceRecipeId(source),
           recipeRevisionId: stableSourceRecipeRevisionId(source),
         });
         const projected = await Effect.runPromise(projectSourceFromStorage({
           sourceRecord,
-          runtimeCredential: runtimeCredential ?? null,
-          importCredential: null,
+          runtimeAuthArtifact: runtimeAuthArtifact ?? null,
+          importAuthArtifact: null,
         }));
 
         expect(projected).toEqual(source);
@@ -440,18 +443,18 @@ describe("source-definitions", () => {
       const source = makeSource({
         auth: { kind: "none" },
       });
-      const { sourceRecord, runtimeCredential } = splitSourceForStorage({
+      const { sourceRecord, runtimeAuthArtifact } = splitSourceForStorage({
         source,
         recipeId: stableSourceRecipeId(source),
         recipeRevisionId: stableSourceRecipeRevisionId(source),
       });
 
-      expect(runtimeCredential).toBeNull();
+      expect(runtimeAuthArtifact).toBeNull();
 
       const projected = await Effect.runPromise(projectSourceFromStorage({
         sourceRecord,
-        runtimeCredential: null,
-        importCredential: null,
+        runtimeAuthArtifact: null,
+        importAuthArtifact: null,
       }));
 
       expect(projected.auth).toEqual({ kind: "none" });

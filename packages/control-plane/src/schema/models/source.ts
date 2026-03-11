@@ -11,6 +11,7 @@ import {
   SourceRecipeRevisionIdSchema,
   WorkspaceIdSchema,
 } from "../ids";
+import { SecretRefSchema } from "./auth-artifact";
 import { JsonObjectSchema } from "./source-auth-session";
 
 export const SourceKindSchema = Schema.String;
@@ -35,11 +36,6 @@ export const SourceImportAuthPolicySchema = Schema.Literal(
   "separate",
 );
 
-export const SecretRefSchema = Schema.Struct({
-  providerId: Schema.String,
-  handle: Schema.String,
-});
-
 export const SourceAuthSchema = Schema.Union(
   Schema.Struct({
     kind: Schema.Literal("none"),
@@ -56,6 +52,17 @@ export const SourceAuthSchema = Schema.Union(
     prefix: Schema.String,
     accessToken: SecretRefSchema,
     refreshToken: Schema.NullOr(SecretRefSchema),
+  }),
+  Schema.Struct({
+    kind: Schema.Literal("oauth2_authorized_user"),
+    headerName: Schema.String,
+    prefix: Schema.String,
+    tokenEndpoint: Schema.String,
+    clientId: Schema.String,
+    clientAuthentication: Schema.Literal("none", "client_secret_post"),
+    clientSecret: Schema.NullOr(SecretRefSchema),
+    refreshToken: SecretRefSchema,
+    grantSet: Schema.NullOr(Schema.Array(Schema.String)),
   }),
 );
 
@@ -170,7 +177,6 @@ export type SourceKind = typeof SourceKindSchema.Type;
 export type SourceStatus = typeof SourceStatusSchema.Type;
 export type SourceTransport = typeof SourceTransportSchema.Type;
 export type SourceImportAuthPolicy = typeof SourceImportAuthPolicySchema.Type;
-export type SecretRef = typeof SecretRefSchema.Type;
 export type SourceAuth = typeof SourceAuthSchema.Type;
 export type SourceBinding = typeof SourceBindingSchema.Type;
 export type StoredSourceRecord = typeof StoredSourceRecordSchema.Type;

@@ -1,8 +1,11 @@
-import { createHash } from "node:crypto";
-
 import {
+  applyCookiePlacementsToHeaders,
+  applyHttpQueryPlacementsToUrl,
+  applyJsonBodyPlacements,
+  sha256Hex,
   standardSchemaFromJsonSchema,
   toTool,
+  type HttpRequestPlacements,
   type ToolDescriptor,
   type ToolMap,
   type ToolMetadata,
@@ -137,6 +140,7 @@ type GraphqlHttpInvocation = {
   path: string;
   defaultHeaders?: Readonly<Record<string, string>>;
   credentialHeaders?: Readonly<Record<string, string>>;
+  credentialPlacements?: HttpRequestPlacements;
   query: string;
   variables?: Record<string, unknown>;
   operationName?: string;
@@ -998,7 +1002,7 @@ const resolveGraphqlFieldToolIds = (
   );
   applyDuplicates(
     (draft) =>
-      `${draft.leaf}${toPascalCase(draft.operationType)}${createHash("sha1").update(`${draft.group}:${draft.fieldName}`).digest("hex").slice(0, 6)}`,
+      `${draft.leaf}${toPascalCase(draft.operationType)}${sha256Hex(`${draft.group}:${draft.fieldName}`).slice(0, 6)}`,
   );
 
   return staged
@@ -1071,7 +1075,7 @@ const fieldToolDraftsFromRootType = (input: {
 };
 
 export const createGraphqlSourceHash = (documentText: string): string =>
-  createHash("sha256").update(documentText).digest("hex");
+  sha256Hex(documentText);
 
 export const extractGraphqlManifest = (
   sourceName: string,
@@ -1272,6 +1276,7 @@ export const createGraphqlToolFromPersistedOperation = (input: {
   schemaRefTable?: Readonly<Record<string, unknown>>;
   defaultHeaders?: Readonly<Record<string, string>>;
   credentialHeaders?: Readonly<Record<string, string>>;
+  credentialPlacements?: HttpRequestPlacements;
 }) => {
   const decodedProviderData = decodeGraphqlToolProviderDataJson(
     input.providerDataJson,
@@ -1340,6 +1345,7 @@ export const createGraphqlToolFromPersistedOperation = (input: {
               path: input.path,
               defaultHeaders: input.defaultHeaders,
               credentialHeaders: input.credentialHeaders,
+              credentialPlacements: input.credentialPlacements,
               args,
             }),
           );
@@ -1351,6 +1357,7 @@ export const createGraphqlToolFromPersistedOperation = (input: {
             path: input.path,
             defaultHeaders: input.defaultHeaders,
             credentialHeaders: input.credentialHeaders,
+            credentialPlacements: input.credentialPlacements,
             args,
           }),
         );
@@ -1396,25 +1403,40 @@ export const graphqlToolDescriptorFromDefinition = (input: {
 
 const invokeGraphqlHttpRequest = (input: GraphqlHttpInvocation) =>
   Effect.gen(function* () {
+    const endpoint = applyHttpQueryPlacementsToUrl({
+      url: input.endpoint,
+      queryParams: input.credentialPlacements?.queryParams,
+    }).toString();
+    const requestBody = applyJsonBodyPlacements({
+      body: {
+        query: input.query,
+        ...(input.variables !== undefined
+          ? { variables: input.variables }
+          : {}),
+        ...(input.operationName
+          ? { operationName: input.operationName }
+          : {}),
+      },
+      bodyValues: input.credentialPlacements?.bodyValues,
+      label: `GraphQL ${input.path}`,
+    });
+    const headers = applyCookiePlacementsToHeaders({
+      headers: {
+        "content-type": "application/json",
+        ...(input.defaultHeaders ?? {}),
+        ...(input.requestHeaders ?? {}),
+        ...(input.credentialHeaders ?? {}),
+        ...(input.credentialPlacements?.headers ?? {}),
+      },
+      cookies: input.credentialPlacements?.cookies,
+    });
+
     const response = yield* Effect.tryPromise({
       try: () =>
-        fetch(input.endpoint, {
+        fetch(endpoint, {
           method: "POST",
-          headers: new Headers({
-            "content-type": "application/json",
-            ...(input.defaultHeaders ?? {}),
-            ...(input.requestHeaders ?? {}),
-            ...(input.credentialHeaders ?? {}),
-          }),
-          body: JSON.stringify({
-            query: input.query,
-            ...(input.variables !== undefined
-              ? { variables: input.variables }
-              : {}),
-            ...(input.operationName
-              ? { operationName: input.operationName }
-              : {}),
-          }),
+          headers: new Headers(headers),
+          body: JSON.stringify(requestBody),
         }),
       catch: (cause) =>
         graphqlToolError(`GraphQL request failed for ${input.path}`, cause),
@@ -1446,6 +1468,7 @@ const invokeRawGraphqlTool = (input: {
   path: string;
   defaultHeaders?: Readonly<Record<string, string>>;
   credentialHeaders?: Readonly<Record<string, string>>;
+  credentialPlacements?: HttpRequestPlacements;
   args: unknown;
 }) =>
   Effect.gen(function* () {
@@ -1462,6 +1485,7 @@ const invokeRawGraphqlTool = (input: {
       path: input.path,
       defaultHeaders: input.defaultHeaders,
       credentialHeaders: input.credentialHeaders,
+      credentialPlacements: input.credentialPlacements,
       query,
       variables:
         record.variables !== undefined ? asRecord(record.variables) : undefined,
@@ -1486,6 +1510,7 @@ const invokeGraphqlFieldTool = (input: {
   path: string;
   defaultHeaders?: Readonly<Record<string, string>>;
   credentialHeaders?: Readonly<Record<string, string>>;
+  credentialPlacements?: HttpRequestPlacements;
   args: unknown;
 }) =>
   Effect.gen(function* () {
@@ -1501,6 +1526,7 @@ const invokeGraphqlFieldTool = (input: {
       path: input.path,
       defaultHeaders: input.defaultHeaders,
       credentialHeaders: input.credentialHeaders,
+      credentialPlacements: input.credentialPlacements,
       query: input.entry.operationDocument,
       variables,
       operationName: input.entry.operationName,
@@ -1524,6 +1550,7 @@ export const createGraphqlToolsFromManifest = (input: {
   sourceKey: string;
   defaultHeaders?: Readonly<Record<string, string>>;
   credentialHeaders?: Readonly<Record<string, string>>;
+  credentialPlacements?: HttpRequestPlacements;
 }): ToolMap => {
   const endpoint = normalizeHttpUrl(input.endpoint);
   const definitions = compileGraphqlToolDefinitions(input.manifest);
@@ -1552,6 +1579,7 @@ export const createGraphqlToolsFromManifest = (input: {
           schemaRefTable: input.manifest.schemaRefTable,
           defaultHeaders: input.defaultHeaders,
           credentialHeaders: input.credentialHeaders,
+          credentialPlacements: input.credentialPlacements,
         }),
       ] as const;
     }),

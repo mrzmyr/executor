@@ -2,6 +2,7 @@ import { describe, expect, it } from "@effect/vitest";
 
 import {
   AccountIdSchema,
+  decodeBuiltInAuthArtifactConfig,
   McpSourceAuthSessionDataJsonSchema,
   OrganizationIdSchema,
   SecretMaterialIdSchema,
@@ -186,10 +187,14 @@ describe("source-store", () => {
       );
 
       expect(Option.isNone(yield* persistence.rows.secretMaterials.getById(firstTokenId))).toBe(true);
-      expect(yield* persistence.rows.credentials.listByWorkspaceId(workspaceId)).toHaveLength(1);
-      expect((yield* persistence.rows.credentials.listByWorkspaceId(workspaceId))[0]?.tokenHandle).toBe(
-        secondTokenId,
-      );
+      const authArtifacts = yield* persistence.rows.authArtifacts.listByWorkspaceId(workspaceId);
+      expect(authArtifacts).toHaveLength(1);
+      const decoded = authArtifacts[0] ? decodeBuiltInAuthArtifactConfig(authArtifacts[0]) : null;
+      expect(
+        decoded !== null && decoded.artifactKind === "static_bearer"
+          ? decoded.config.token.handle
+          : null,
+      ).toBe(secondTokenId);
 
       const removed = yield* removeSourceById(persistence.rows, {
         workspaceId,
@@ -199,7 +204,7 @@ describe("source-store", () => {
 
       expect(Option.isNone(yield* persistence.rows.secretMaterials.getById(secondTokenId))).toBe(true);
       expect(yield* persistence.rows.sources.listByWorkspaceId(workspaceId)).toHaveLength(0);
-      expect(yield* persistence.rows.credentials.listByWorkspaceId(workspaceId)).toHaveLength(0);
+      expect(yield* persistence.rows.authArtifacts.listByWorkspaceId(workspaceId)).toHaveLength(0);
       expect(yield* persistence.rows.sourceAuthSessions.listByWorkspaceId(workspaceId)).toHaveLength(0);
     }),
   );
@@ -267,14 +272,14 @@ describe("source-store", () => {
         },
       );
 
-      const credentials = yield* persistence.rows.credentials.listByWorkspaceAndSourceId({
+      const authArtifacts = yield* persistence.rows.authArtifacts.listByWorkspaceAndSourceId({
         workspaceId,
         sourceId,
       });
-      expect(credentials).toHaveLength(2);
-      expect(credentials.some((credential) => credential.actorAccountId === null)).toBe(true);
-      expect(credentials.some((credential) => credential.actorAccountId === accountId)).toBe(true);
-      expect(new Set(credentials.map((credential) => credential.id)).size).toBe(2);
+      expect(authArtifacts).toHaveLength(2);
+      expect(authArtifacts.some((artifact) => artifact.actorAccountId === null)).toBe(true);
+      expect(authArtifacts.some((artifact) => artifact.actorAccountId === accountId)).toBe(true);
+      expect(new Set(authArtifacts.map((artifact) => artifact.id)).size).toBe(2);
     }),
   );
 

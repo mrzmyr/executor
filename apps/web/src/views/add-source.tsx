@@ -57,9 +57,12 @@ type ProbeAuthState = {
 };
 
 type ConnectFormState = {
-  kind: "mcp" | "openapi" | "graphql";
+  kind: "mcp" | "openapi" | "graphql" | "google_discovery";
   endpoint: string;
   specUrl: string;
+  service: string;
+  version: string;
+  discoveryUrl: string;
   name: string;
   namespace: string;
   transport: "" | "auto" | "streamable-http" | "sse";
@@ -83,7 +86,12 @@ type OAuthRequiredInfo = {
 // Constants
 // ---------------------------------------------------------------------------
 
-const kindOptions: ReadonlyArray<ConnectFormState["kind"]> = ["mcp", "openapi", "graphql"];
+const kindOptions: ReadonlyArray<ConnectFormState["kind"]> = [
+  "mcp",
+  "openapi",
+  "graphql",
+  "google_discovery",
+];
 
 const transportOptions: ReadonlyArray<"auto" | "streamable-http" | "sse"> = [
   "auto",
@@ -116,6 +124,44 @@ const namespaceFromUrl = (url: string): string => {
     return dot > 0 ? domain.slice(0, dot) : domain;
   } catch {
     return "";
+  }
+};
+
+const googleDiscoveryNamespace = (service: string): string =>
+  `google.${service.trim().toLowerCase().replace(/[^a-z0-9]+/g, ".").replace(/^\.+|\.+$/g, "")}`;
+
+const googleDiscoveryDefaultsFromUrl = (value: string): {
+  service: string;
+  version: string;
+  discoveryUrl: string;
+} | null => {
+  try {
+    const url = new URL(value);
+    const byDirectory = url.pathname.match(/^\/discovery\/v1\/apis\/([^/]+)\/([^/]+)\/rest$/);
+    if (byDirectory) {
+      return {
+        service: decodeURIComponent(byDirectory[1] ?? ""),
+        version: decodeURIComponent(byDirectory[2] ?? ""),
+        discoveryUrl: url.toString(),
+      };
+    }
+
+    const versionParam = url.searchParams.get("version");
+    const version = versionParam ? trimToNull(versionParam) : null;
+    const isHostScopedDiscovery = url.pathname === "/$discovery/rest"
+      && url.hostname.endsWith(".googleapis.com")
+      && url.hostname !== "www.googleapis.com";
+    if (version && isHostScopedDiscovery) {
+      return {
+        service: url.hostname.split(".")[0] ?? "",
+        version,
+        discoveryUrl: url.toString(),
+      };
+    }
+
+    return null;
+  } catch {
+    return null;
   }
 };
 
@@ -158,6 +204,9 @@ const defaultConnectForm = (discovery?: SourceDiscoveryResult): ConnectFormState
       kind: "openapi",
       endpoint: discovery?.endpoint ?? "",
       specUrl: discovery?.specUrl ?? "",
+      service: "",
+      version: "",
+      discoveryUrl: "",
       name: discovery?.name ?? "",
       namespace: discovery?.namespace || namespaceFromUrl(discovery?.endpoint ?? ""),
       transport: "",
@@ -197,10 +246,17 @@ const defaultConnectForm = (discovery?: SourceDiscoveryResult): ConnectFormState
     }
   }
 
+  const googleDiscoveryDefaults = kind === "google_discovery"
+    ? googleDiscoveryDefaultsFromUrl(discovery.specUrl ?? discovery.endpoint)
+    : null;
+
   return {
     kind,
     endpoint: discovery.endpoint,
     specUrl: discovery.specUrl ?? "",
+    service: googleDiscoveryDefaults?.service ?? "",
+    version: googleDiscoveryDefaults?.version ?? "",
+    discoveryUrl: googleDiscoveryDefaults?.discoveryUrl ?? "",
     name: discovery.name ?? "",
     namespace: discovery.namespace || namespaceFromUrl(discovery.endpoint),
     transport: kind === "mcp" ? (discovery.transport ?? "auto") : "",
@@ -220,10 +276,24 @@ const connectFormFromTemplate = (template: SourceTemplate): ConnectFormState => 
   kind: template.kind as ConnectFormState["kind"],
   endpoint: template.endpoint,
   specUrl: "specUrl" in template ? template.specUrl : "",
+  service: "service" in template ? template.service : "",
+  version: "version" in template ? template.version : "",
+  discoveryUrl: "discoveryUrl" in template ? template.discoveryUrl : "",
   name: template.name,
-  namespace: namespaceFromUrl(template.endpoint),
+  namespace: "service" in template
+    ? googleDiscoveryNamespace(template.service)
+    : namespaceFromUrl(template.endpoint),
   transport: template.kind === "mcp" ? "auto" : "",
+  authKind: template.kind === "google_discovery" ? "oauth2" : "none",
 });
+
+const authKindForSourceKind = (
+  currentAuthKind: ConnectFormState["authKind"],
+  nextKind: ConnectFormState["kind"],
+): ConnectFormState["authKind"] =>
+  nextKind === "google_discovery" && currentAuthKind === "none"
+    ? "oauth2"
+    : currentAuthKind;
 
 const buildProbeAuth = (state: ProbeAuthState): DiscoverSourcePayload["probeAuth"] => {
   if (state.kind === "none") return { kind: "none" };
@@ -251,10 +321,9 @@ const buildProbeAuth = (state: ProbeAuthState): DiscoverSourcePayload["probeAuth
 };
 
 const buildConnectPayload = (form: ConnectFormState): ConnectSourcePayload => {
-  const endpoint = form.endpoint.trim();
-  if (!endpoint) throw new Error("Endpoint is required.");
-
   if (form.kind === "mcp") {
+    const endpoint = form.endpoint.trim();
+    if (!endpoint) throw new Error("Endpoint is required.");
     return {
       kind: "mcp",
       endpoint,
@@ -270,6 +339,8 @@ const buildConnectPayload = (form: ConnectFormState): ConnectSourcePayload => {
   const auth = buildHttpAuth(form);
 
   if (form.kind === "openapi") {
+    const endpoint = form.endpoint.trim();
+    if (!endpoint) throw new Error("Endpoint is required.");
     const specUrl = form.specUrl.trim();
     if (!specUrl) throw new Error("OpenAPI sources require a spec URL.");
     return {
@@ -282,6 +353,24 @@ const buildConnectPayload = (form: ConnectFormState): ConnectSourcePayload => {
     };
   }
 
+  if (form.kind === "google_discovery") {
+    const service = form.service.trim();
+    const version = form.version.trim();
+    if (!service) throw new Error("Google Discovery sources require a service name.");
+    if (!version) throw new Error("Google Discovery sources require a version.");
+    return {
+      kind: "google_discovery",
+      service,
+      version,
+      discoveryUrl: trimToNull(form.discoveryUrl),
+      name: trimToNull(form.name),
+      namespace: trimToNull(form.namespace),
+      auth,
+    };
+  }
+
+  const endpoint = form.endpoint.trim();
+  if (!endpoint) throw new Error("Endpoint is required.");
   return {
     kind: "graphql",
     endpoint,
@@ -346,6 +435,16 @@ type SourceOAuthPopupMessage =
       ok: false;
       sessionId: string | null;
       error: string;
+    }
+  | {
+      type: "executor:source-oauth-result";
+      ok: true;
+      sourceId: string;
+    }
+  | {
+      type: "executor:source-oauth-result";
+      ok: false;
+      error: string;
     };
 
 const readStoredSourceOAuthPopupResult = (sessionId: string): SourceOAuthPopupMessage | null => {
@@ -369,7 +468,7 @@ const clearStoredSourceOAuthPopupResult = (sessionId: string): void => {
 const startSourceOAuthPopup = async (input: {
   authorizationUrl: string;
   sessionId: string;
-}): Promise<CompleteSourceOAuthResult["auth"]> => {
+}): Promise<void> => {
   if (typeof window === "undefined") {
     throw new Error("OAuth popup is only available in a browser context");
   }
@@ -388,7 +487,7 @@ const startSourceOAuthPopup = async (input: {
 
   popup.focus();
 
-  return await new Promise<CompleteSourceOAuthResult["auth"]>((resolve, reject) => {
+  return await new Promise<void>((resolve, reject) => {
     let settled = false;
     let closedPoll = 0;
     let resultTimeout = 0;
@@ -416,15 +515,19 @@ const startSourceOAuthPopup = async (input: {
       if (settled) return;
       settled = true;
       cleanup();
-      resolve(data.auth);
+      resolve();
     };
 
     const onMessage = (event: MessageEvent) => {
       if (event.origin !== window.location.origin) return;
       const data = event.data as SourceOAuthPopupMessage | undefined;
-      if (!data || data.type !== "executor:oauth-result") return;
-      if (data.ok && data.sessionId !== input.sessionId) return;
-      if (!data.ok && data.sessionId !== null && data.sessionId !== input.sessionId) return;
+      if (!data) return;
+      if (data.type === "executor:oauth-result") {
+        if (data.ok && data.sessionId !== input.sessionId) return;
+        if (!data.ok && data.sessionId !== null && data.sessionId !== input.sessionId) return;
+      } else if (data.type !== "executor:source-oauth-result") {
+        return;
+      }
       settleFromPayload(data);
     };
 
@@ -515,6 +618,14 @@ export function AddSourcePage() {
 
   const setFormField = <K extends keyof ConnectFormState>(key: K, value: ConnectFormState[K]) => {
     setConnectForm((current) => ({ ...current, [key]: value }));
+  };
+
+  const setSourceKind = (kind: ConnectFormState["kind"]) => {
+    setConnectForm((current) => ({
+      ...current,
+      kind,
+      authKind: authKindForSourceKind(current.authKind, kind),
+    }));
   };
 
   const setProbeField = <K extends keyof ProbeAuthState>(key: K, value: ProbeAuthState[K]) => {
@@ -879,10 +990,10 @@ export function AddSourcePage() {
                 <div className="space-y-3 border-t border-border pt-4">
                   <div>
                     <p className="text-[12px] font-medium text-foreground">Start from a known source</p>
-                    <p className="text-[11px] text-muted-foreground">
-                      Load a real MCP, OpenAPI, or GraphQL template without running discovery first.
-                    </p>
-                  </div>
+                     <p className="text-[11px] text-muted-foreground">
+                       Load a real MCP, OpenAPI, GraphQL, or Google Discovery template without running discovery first.
+                     </p>
+                   </div>
                   <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
                     {sourceTemplates.map((template) => (
                       <button
@@ -930,18 +1041,20 @@ export function AddSourcePage() {
                 <Field label="Kind">
                   <SelectInput
                     value={connectForm.kind}
-                    onChange={(v) => setFormField("kind", v as ConnectFormState["kind"])}
+                    onChange={(v) => setSourceKind(v as ConnectFormState["kind"])}
                     options={kindOptions.map((v) => ({ value: v, label: v }))}
                   />
                 </Field>
-                <Field label="Endpoint" className="sm:col-span-2">
-                  <TextInput
-                    value={connectForm.endpoint}
-                    onChange={(v) => setFormField("endpoint", v)}
-                    placeholder="https://api.example.com"
-                    mono
-                  />
-                </Field>
+                {connectForm.kind !== "google_discovery" && (
+                  <Field label="Endpoint" className="sm:col-span-2">
+                    <TextInput
+                      value={connectForm.endpoint}
+                      onChange={(v) => setFormField("endpoint", v)}
+                      placeholder="https://api.example.com"
+                      mono
+                    />
+                  </Field>
+                )}
                 <Field label="Namespace">
                   <TextInput
                     value={connectForm.namespace}
@@ -958,6 +1071,35 @@ export function AddSourcePage() {
                       mono
                     />
                   </Field>
+                )}
+                {connectForm.kind === "google_discovery" && (
+                  <>
+                    <Field label="Service">
+                      <TextInput
+                        value={connectForm.service}
+                        onChange={(v) => setFormField("service", v)}
+                        placeholder="sheets"
+                      />
+                    </Field>
+                    <Field label="Version">
+                      <TextInput
+                        value={connectForm.version}
+                        onChange={(v) => setFormField("version", v)}
+                        placeholder="v4"
+                      />
+                    </Field>
+                    <Field label="Discovery URL (optional)" className="sm:col-span-2">
+                      <TextInput
+                        value={connectForm.discoveryUrl}
+                        onChange={(v) => setFormField("discoveryUrl", v)}
+                        placeholder="https://www.googleapis.com/discovery/v1/apis/sheets/v4/rest"
+                        mono
+                      />
+                    </Field>
+                    <div className="sm:col-span-2 rounded-lg border border-border bg-card/60 px-3 py-2 text-[12px] text-muted-foreground">
+                      Common Google API versions: Gmail `v1`, Sheets `v4`, Drive `v3`, Calendar `v3`, Docs `v1`.
+                    </div>
+                  </>
                 )}
               </div>
             </Section>
@@ -1004,6 +1146,13 @@ export function AddSourcePage() {
                       options={authOptions.map((v) => ({ value: v, label: v }))}
                     />
                   </Field>
+                  {connectForm.kind === "google_discovery" && (
+                    <div className="sm:col-span-2 rounded-lg border border-border bg-card/60 px-3 py-2 text-[12px] text-muted-foreground">
+                      {connectForm.authKind === "oauth2"
+                        ? "OAuth starts after you click Connect. Executor will open a Google sign-in popup and store the resulting refreshable credentials for this source."
+                        : "Choosing auth mode 'none' skips the Google OAuth popup. Use 'oauth2' if you want executor to start the sign-in flow for you."}
+                    </div>
+                  )}
                   {connectForm.authKind !== "none" && (
                     <>
                       <Field label="Header name">

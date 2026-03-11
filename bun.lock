@@ -110,6 +110,21 @@
         "vitest": "catalog:",
       },
     },
+    "packages/codemode-google-discovery": {
+      "name": "@executor/codemode-google-discovery",
+      "dependencies": {
+        "@effect/platform": "catalog:",
+        "@executor/codemode-core": "workspace:*",
+        "effect": "catalog:",
+      },
+      "devDependencies": {
+        "@effect/platform-node": "^0.104.1",
+        "@effect/vitest": "catalog:",
+        "@types/node": "catalog:",
+        "bun-types": "catalog:",
+        "vitest": "catalog:",
+      },
+    },
     "packages/codemode-mcp": {
       "name": "@executor/codemode-mcp",
       "dependencies": {
@@ -148,6 +163,7 @@
         "@effect/platform": "catalog:",
         "@electric-sql/pglite": "^0.3.12",
         "@executor/codemode-core": "workspace:*",
+        "@executor/codemode-google-discovery": "workspace:*",
         "@executor/codemode-mcp": "workspace:*",
         "@executor/codemode-openapi": "workspace:*",
         "@executor/runtime-deno-subprocess": "workspace:*",
@@ -471,6 +487,8 @@
     "@executor/ai-sdk-adapter": ["@executor/ai-sdk-adapter@workspace:packages/ai-sdk-adapter"],
 
     "@executor/codemode-core": ["@executor/codemode-core@workspace:packages/codemode-core"],
+
+    "@executor/codemode-google-discovery": ["@executor/codemode-google-discovery@workspace:packages/codemode-google-discovery"],
 
     "@executor/codemode-mcp": ["@executor/codemode-mcp@workspace:packages/codemode-mcp"],
 
