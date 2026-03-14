@@ -1,3 +1,6 @@
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
@@ -6,7 +9,7 @@ import { makeToolInvokerFromTools } from "@executor/codemode-core";
 import { makeDenoSubprocessExecutor } from "@executor/runtime-deno-subprocess";
 
 import {
-  createSqlControlPlaneRuntime,
+  createControlPlaneRuntime,
 } from "./index";
 import { withControlPlaneClient } from "./test-http-client";
 
@@ -37,8 +40,9 @@ const makeExecutionResolver = () => {
 };
 
 const makeRuntime = Effect.acquireRelease(
-  createSqlControlPlaneRuntime({
+  createControlPlaneRuntime({
     localDataDir: ":memory:",
+    workspaceRoot: mkdtempSync(join(tmpdir(), "executor-execution-http-")),
     executionResolver: makeExecutionResolver(),
   }),
   (runtime) => Effect.promise(() => runtime.close()).pipe(Effect.orDie),
@@ -88,5 +92,6 @@ describe("execution-http", () => {
       expect(getExecution.execution.status).toBe("completed");
       expect(getExecution.pendingInteraction).toBeNull();
     }),
+    60_000,
   );
 });

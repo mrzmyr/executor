@@ -1,7 +1,6 @@
 import type {
   ExecutionEnvelope,
-  ExecutionInteraction,
-  SqlControlPlaneRuntime,
+  ControlPlaneRuntime,
 } from "@executor/control-plane";
 import {
   EXECUTOR_SOURCES_ADD_HELP_LINES,
@@ -18,6 +17,11 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
 import { z } from "zod/v4";
 
+import {
+  buildPausedResultText,
+  parseInteractionPayload,
+} from "./paused-result";
+
 const pollingIntervalMs = 200;
 
 const executeInputSchema = {
@@ -32,14 +36,6 @@ const resumeInputSchema = {
     action: z.enum(["accept", "decline", "cancel"]),
     content: z.record(z.string(), z.unknown()).optional(),
   }).optional(),
-};
-
-type ParsedInteractionPayload = {
-  mode: "form" | "url";
-  message: string;
-  url?: string;
-  requestedSchema?: Record<string, unknown>;
-  elicitationId?: string;
 };
 
 type ResumePayload = {
@@ -61,9 +57,6 @@ export type ExecutorMcpRequestHandler = {
   handleRequest: (request: Request) => Promise<Response>;
   close: () => Promise<void>;
 };
-
-const isRecord = (value: unknown): value is Record<string, unknown> =>
-  typeof value === "object" && value !== null && !Array.isArray(value);
 
 const parseJsonValue = (value: string | null): unknown => {
   if (value === null) {
@@ -93,48 +86,8 @@ const formatResultPreview = (resultJson: string): string => {
     return truncateText(resultJson, maxResultPreviewChars);
   }
 };
-
-
-const parseInteractionPayload = (
-  interaction: ExecutionInteraction,
-): ParsedInteractionPayload | null => {
-  try {
-    const parsed = JSON.parse(interaction.payloadJson) as {
-      elicitation?: {
-        mode?: "form" | "url";
-        message?: string;
-        url?: string;
-        requestedSchema?: Record<string, unknown>;
-        elicitationId?: string;
-        id?: string;
-      };
-    };
-
-    if (!parsed.elicitation || typeof parsed.elicitation.message !== "string") {
-      return null;
-    }
-
-    return {
-      mode: parsed.elicitation.mode === "url" ? "url" : "form",
-      message: parsed.elicitation.message,
-      url: parsed.elicitation.url,
-      requestedSchema: isRecord(parsed.elicitation.requestedSchema)
-        ? parsed.elicitation.requestedSchema
-        : undefined,
-      elicitationId:
-        typeof parsed.elicitation.elicitationId === "string"
-          ? parsed.elicitation.elicitationId
-          : typeof parsed.elicitation.id === "string"
-            ? parsed.elicitation.id
-            : undefined,
-    };
-  } catch {
-    return null;
-  }
-};
-
 const runControlPlane = async <A, E, R>(
-  runtime: SqlControlPlaneRuntime,
+  runtime: ControlPlaneRuntime,
   effect: Effect.Effect<A, E, R>,
 ): Promise<A> => {
   const exit = await Effect.runPromiseExit(
@@ -192,7 +145,7 @@ const buildExecuteWorkflowText = (namespaces: readonly string[] = []): string =>
 
 const defaultExecuteDescription = buildExecuteWorkflowText();
 
-const loadExecuteDescription = (runtime: SqlControlPlaneRuntime): Promise<string> =>
+const loadExecuteDescription = (runtime: ControlPlaneRuntime): Promise<string> =>
   runControlPlane(
     runtime,
     Effect.gen(function* () {
@@ -265,9 +218,7 @@ const buildPausedResult = (envelope: ExecutionEnvelope): ExecutorMcpToolResult =
   return {
     content: [{
       type: "text",
-      text: interaction
-        ? `Execution ${envelope.execution.id} paused: ${parsed?.message ?? "Interaction required."}`
-        : `Execution ${envelope.execution.id} is waiting for interaction.`,
+      text: buildPausedResultText(envelope),
     }],
     structuredContent: {
       executionId: envelope.execution.id,
@@ -305,7 +256,7 @@ const buildToolResult = (envelope: ExecutionEnvelope): ExecutorMcpToolResult => 
 };
 
 const waitForInteractionProgress = async (input: {
-  runtime: SqlControlPlaneRuntime;
+  runtime: ControlPlaneRuntime;
   workspaceId: string;
   executionId: string;
   pendingInteractionId: string;
@@ -331,7 +282,7 @@ const waitForInteractionProgress = async (input: {
 };
 
 const driveExecutionWithElicitation = async (input: {
-  runtime: SqlControlPlaneRuntime;
+  runtime: ControlPlaneRuntime;
   workspaceId: string;
   accountId: string;
   server: McpServer;
@@ -408,7 +359,7 @@ const driveExecutionWithElicitation = async (input: {
 };
 
 const driveExecutionWithoutElicitation = async (input: {
-  runtime: SqlControlPlaneRuntime;
+  runtime: ControlPlaneRuntime;
   workspaceId: string;
   accountId: string;
   executionId: string;
@@ -447,7 +398,7 @@ const driveExecutionWithoutElicitation = async (input: {
 };
 
 const createExecutorMcpServer = async (config: {
-  runtime: SqlControlPlaneRuntime;
+  runtime: ControlPlaneRuntime;
 }): Promise<McpServer> => {
   const executeDescription = await loadExecuteDescription(config.runtime);
   const server = new McpServer(
@@ -552,7 +503,7 @@ const jsonErrorResponse = (status: number, code: number, message: string) =>
   });
 
 export const createExecutorMcpRequestHandler = (
-  runtime: SqlControlPlaneRuntime,
+  runtime: ControlPlaneRuntime,
 ): ExecutorMcpRequestHandler => {
   const transports = new Map<string, WebStandardStreamableHTTPServerTransport>();
   const servers = new Map<string, McpServer>();

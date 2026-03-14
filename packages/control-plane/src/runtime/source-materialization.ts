@@ -2,18 +2,33 @@ import type { SqlControlPlaneRows } from "#persistence";
 import type {
   AccountId,
   Source,
+  SourceStatus,
 } from "#schema";
 import * as Effect from "effect/Effect";
 
+import {
+  buildLocalSourceArtifact,
+  writeLocalSourceArtifact,
+} from "./local-source-artifacts";
+import {
+  requireRuntimeLocalWorkspace,
+} from "./local-runtime-context";
+import {
+  loadLocalWorkspaceState,
+  writeLocalWorkspaceState,
+  type LocalWorkspaceState,
+} from "./local-workspace-state";
 import { resolveSourceAuthMaterial } from "./source-auth-material";
 import {
   getSourceAdapterForSource,
 } from "./source-adapters";
-import { persistMcpRecipeRevisionFromManifestEntries } from "./source-adapters/mcp";
+import {
+  materializationFromMcpManifestEntries,
+  persistMcpRecipeRevisionFromManifestEntries,
+} from "./source-adapters/mcp";
 import type {
   ResolveSecretMaterial as ResolveSourceSecretMaterial,
 } from "./secret-material-providers";
-import { persistRecipeMaterialization } from "./source-recipe-support";
 
 const shouldIndexSource = (source: Source): boolean =>
   source.enabled
@@ -27,7 +42,28 @@ export const syncSourceMaterialization = (input: {
   resolveSecretMaterial: ResolveSourceSecretMaterial;
 }): Effect.Effect<void, Error, never> =>
   Effect.gen(function* () {
+    const runtimeLocalWorkspace = yield* requireRuntimeLocalWorkspace(input.source.workspaceId);
+
     if (!shouldIndexSource(input.source)) {
+      const state = yield* loadLocalWorkspaceState(runtimeLocalWorkspace.context);
+      const existingSourceState = state.sources[input.source.id];
+      const nextState: LocalWorkspaceState = {
+        ...state,
+        sources: {
+          ...state.sources,
+          [input.source.id]: {
+            status: (input.source.enabled ? input.source.status : "draft") as SourceStatus,
+            lastError: null,
+            sourceHash: input.source.sourceHash,
+            createdAt: existingSourceState?.createdAt ?? input.source.createdAt,
+            updatedAt: Date.now(),
+          },
+        },
+      };
+      yield* writeLocalWorkspaceState({
+        context: runtimeLocalWorkspace.context,
+        state: nextState,
+      });
       return;
     }
 
@@ -44,10 +80,33 @@ export const syncSourceMaterialization = (input: {
           resolveSecretMaterial: input.resolveSecretMaterial,
         }),
     });
-    yield* persistRecipeMaterialization({
-      rows: input.rows,
-      source: input.source,
-      materialization,
+    yield* writeLocalSourceArtifact({
+      context: runtimeLocalWorkspace.context,
+      sourceId: input.source.id,
+      artifact: buildLocalSourceArtifact({
+        source: input.source,
+        materialization,
+      }),
+    });
+
+    const state = yield* loadLocalWorkspaceState(runtimeLocalWorkspace.context);
+    const existingSourceState = state.sources[input.source.id];
+    const nextState: LocalWorkspaceState = {
+      ...state,
+      sources: {
+        ...state.sources,
+        [input.source.id]: {
+          status: "connected",
+          lastError: null,
+          sourceHash: materialization.sourceHash,
+          createdAt: existingSourceState?.createdAt ?? input.source.createdAt,
+          updatedAt: Date.now(),
+        },
+      },
+    };
+    yield* writeLocalWorkspaceState({
+      context: runtimeLocalWorkspace.context,
+      state: nextState,
     });
   });
 
@@ -58,4 +117,20 @@ export const persistMcpRecipeMaterializationFromManifest = (input: {
     typeof persistMcpRecipeRevisionFromManifestEntries
   >[0]["manifestEntries"];
 }): Effect.Effect<void, Error, never> =>
-  persistMcpRecipeRevisionFromManifestEntries(input);
+  Effect.gen(function* () {
+    const runtimeLocalWorkspace = yield* requireRuntimeLocalWorkspace(input.source.workspaceId);
+    const materialization = materializationFromMcpManifestEntries({
+      recipeRevisionId: "src_recipe_rev_materialization" as never,
+      endpoint: input.source.endpoint,
+      manifestEntries: input.manifestEntries,
+    });
+
+    yield* writeLocalSourceArtifact({
+      context: runtimeLocalWorkspace.context,
+      sourceId: input.source.id,
+      artifact: buildLocalSourceArtifact({
+        source: input.source,
+        materialization,
+      }),
+    });
+  });

@@ -11,10 +11,10 @@ import { Readable } from "node:stream";
 import { HttpApiBuilder, HttpServer } from "@effect/platform";
 import {
   createControlPlaneApiLayer,
-  createSqlControlPlaneRuntime,
+  createControlPlaneRuntime,
   type ResolveExecutionEnvironment,
   type ResolveSecretMaterial,
-  type SqlControlPlaneRuntime,
+  type ControlPlaneRuntime,
 } from "@executor/control-plane";
 import { createExecutorMcpRequestHandler } from "@executor/executor-mcp";
 import * as Cause from "effect/Cause";
@@ -58,7 +58,7 @@ type StaticUiOptions = {
 };
 
 export type LocalExecutorServer = {
-  readonly runtime: SqlControlPlaneRuntime;
+  readonly runtime: ControlPlaneRuntime;
   readonly port: number;
   readonly host: string;
   readonly baseUrl: string;
@@ -68,6 +68,7 @@ export type StartLocalExecutorServerOptions = {
   readonly port?: number;
   readonly host?: string;
   readonly localDataDir?: string;
+  readonly workspaceRoot?: string;
   readonly migrationsFolder?: string;
   readonly pidFile?: string;
   readonly executionResolver?: ResolveExecutionEnvironment;
@@ -76,7 +77,7 @@ export type StartLocalExecutorServerOptions = {
 };
 
 export type LocalExecutorRequestHandler = {
-  readonly runtime: SqlControlPlaneRuntime;
+  readonly runtime: ControlPlaneRuntime;
   readonly handleApiRequest: (request: Request) => Promise<Response>;
   readonly getBaseUrl: () => string | undefined;
   readonly setBaseUrl: (baseUrl: string) => void;
@@ -85,7 +86,7 @@ export type LocalExecutorRequestHandler = {
 type ControlPlaneWebHandler = ReturnType<typeof HttpApiBuilder.toWebHandler>;
 type ExecutorMcpHandler = ReturnType<typeof createExecutorMcpRequestHandler>;
 
-const disposeRuntime = (runtime: SqlControlPlaneRuntime) =>
+const disposeRuntime = (runtime: ControlPlaneRuntime) =>
   Effect.tryPromise({
     try: () => runtime.close(),
     catch: (cause) =>
@@ -97,9 +98,10 @@ const createRuntime = (
   getLocalServerBaseUrl: () => string | undefined,
   options: StartLocalExecutorServerOptions,
 ) =>
-  createSqlControlPlaneRuntime({
+  createControlPlaneRuntime({
     localDataDir,
     migrationsFolder: options.migrationsFolder,
+    workspaceRoot: options.workspaceRoot,
     executionResolver: options.executionResolver,
     resolveSecretMaterial: options.resolveSecretMaterial,
     getLocalServerBaseUrl,
@@ -207,7 +209,7 @@ const createRuntimeWithLegacyMigration = (
     );
   });
 
-const createControlPlaneWebHandler = (runtime: SqlControlPlaneRuntime) =>
+const createControlPlaneWebHandler = (runtime: ControlPlaneRuntime) =>
   Effect.acquireRelease(
     Effect.sync(() =>
       HttpApiBuilder.toWebHandler(

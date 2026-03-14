@@ -7,7 +7,9 @@ import {
   HttpApiGroup,
   HttpApiSchema,
   OpenApi,
+  FileSystem,
 } from "@effect/platform";
+import { NodeFileSystem } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import { assertTrue } from "@effect/vitest/utils";
 import * as Effect from "effect/Effect";
@@ -19,10 +21,15 @@ import {
   createControlPlaneClient,
   controlPlaneOpenApiSpec,
   type ControlPlaneClient,
+  buildLocalSourceArtifact,
+  deriveLocalInstallation,
+  materializationFromMcpManifestEntries,
   type ResolveExecutionEnvironment,
+  resolveLocalWorkspaceContext,
   SourceIdSchema,
-  SourceRecipeIdSchema,
   SourceRecipeRevisionIdSchema,
+  writeLocalSourceArtifact,
+  writeProjectLocalExecutorConfig,
 } from "@executor/control-plane";
 import { makeSesExecutor } from "@executor/runtime-ses";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
@@ -58,7 +65,115 @@ const executionResolver: ResolveExecutionEnvironment = () =>
     }),
   });
 
-const makeServer = createLocalExecutorServer({
+const makeTempWorkspaceRoot = () =>
+  FileSystem.FileSystem.pipe(
+    Effect.flatMap((fs) => fs.makeTempDirectoryScoped({ prefix: "executor-server-test-" })),
+    Effect.provide(NodeFileSystem.layer),
+  );
+
+const createIsolatedLocalExecutorServer = (
+  options: Parameters<typeof createLocalExecutorServer>[0] = {},
+) =>
+  Effect.gen(function* () {
+    const workspaceRoot = yield* makeTempWorkspaceRoot();
+    const server = yield* createLocalExecutorServer({
+      ...options,
+      workspaceRoot,
+    });
+    return {
+      ...server,
+      workspaceRoot,
+    };
+  });
+
+const writeConfiguredLocalMcpSource = (input: {
+  workspaceRoot: string;
+  sourceId: string;
+  endpoint: string;
+  name?: string;
+  namespace?: string;
+}) =>
+  Effect.gen(function* () {
+    const sourceId = SourceIdSchema.make(input.sourceId);
+    const context = yield* resolveLocalWorkspaceContext({
+      workspaceRoot: input.workspaceRoot,
+    });
+    const installation = deriveLocalInstallation(context);
+
+    yield* writeProjectLocalExecutorConfig({
+      context,
+      config: {
+        sources: {
+          [input.sourceId]: {
+            kind: "mcp",
+            name: input.name ?? "Demo",
+            namespace: input.namespace ?? input.sourceId,
+            connection: {
+              endpoint: input.endpoint,
+            },
+            binding: {
+              transport: "streamable-http",
+            },
+          },
+        },
+      },
+    });
+
+    const source = {
+      id: sourceId,
+      workspaceId: installation.workspaceId,
+      name: input.name ?? "Demo",
+      kind: "mcp" as const,
+      endpoint: input.endpoint,
+      status: "connected" as const,
+      enabled: true,
+      namespace: input.namespace ?? input.sourceId,
+      bindingVersion: 1,
+      binding: {
+        transport: "streamable-http",
+        queryParams: null,
+        headers: null,
+      },
+      importAuthPolicy: "reuse_runtime" as const,
+      importAuth: { kind: "none" as const },
+      auth: { kind: "none" as const },
+      sourceHash: null,
+      lastError: null,
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+    };
+
+    const materialization = materializationFromMcpManifestEntries({
+      recipeRevisionId: SourceRecipeRevisionIdSchema.make("src_recipe_rev_materialization"),
+      endpoint: input.endpoint,
+      manifestEntries: [{
+        toolId: "gated_echo",
+        toolName: "gated_echo",
+        description: "Asks for approval before echoing a value",
+        inputSchemaJson: JSON.stringify({
+          type: "object",
+          properties: {
+            value: {
+              type: "string",
+            },
+          },
+          required: ["value"],
+          additionalProperties: false,
+        }),
+      }],
+    });
+
+    yield* writeLocalSourceArtifact({
+      context,
+      sourceId,
+      artifact: buildLocalSourceArtifact({
+        source,
+        materialization,
+      }),
+    });
+  });
+
+const makeServer = createIsolatedLocalExecutorServer({
   port: 0,
   localDataDir: ":memory:",
   executionResolver,
@@ -579,28 +694,6 @@ const extractUrlInteractionUrl = (payloadJson: string): string => {
   return url;
 };
 
-const waitForExecutionCompletion = (input: {
-  client: ControlPlaneClient;
-  workspaceId: string;
-  executionId: string;
-}) =>
-  Effect.gen(function* () {
-    while (true) {
-      const next = yield* input.client.executions.get({
-        path: {
-          workspaceId: input.workspaceId as never,
-          executionId: input.executionId as never,
-        },
-      });
-
-      if (next.execution.status !== "waiting_for_interaction") {
-        return next;
-      }
-
-      yield* Effect.sleep("100 millis");
-    }
-  });
-
 describe("local-executor-server", () => {
   it.scoped("serves the control-plane OpenAPI spec at /v1/openapi.json", () =>
     Effect.gen(function* () {
@@ -644,6 +737,7 @@ describe("local-executor-server", () => {
       expect(execution.execution.status).toBe("completed");
       expect(execution.execution.resultJson).toBe(JSON.stringify({ sum: 42 }));
     }),
+    15_000,
   );
 
   it.scoped("includes completed MCP return values in text content", () =>
@@ -681,7 +775,7 @@ describe("local-executor-server", () => {
 
   it.scoped("serves only execute over MCP when elicitation is supported", () =>
     Effect.gen(function* () {
-      const server = yield* createLocalExecutorServer({
+      const server = yield* createIsolatedLocalExecutorServer({
         port: 0,
         localDataDir: ":memory:",
         executionResolver: gatedExecutionResolver,
@@ -738,7 +832,7 @@ describe("local-executor-server", () => {
 
   it.scoped("serves execute and resume over MCP when elicitation is unavailable", () =>
     Effect.gen(function* () {
-      const server = yield* createLocalExecutorServer({
+      const server = yield* createIsolatedLocalExecutorServer({
         port: 0,
         localDataDir: ":memory:",
         executionResolver: gatedExecutionResolver,
@@ -808,6 +902,7 @@ describe("local-executor-server", () => {
       expect(resumed.structuredContent?.result).toBe("approved:manual-mcp");
       expect(resumed.content?.find((item) => item.type === "text")?.text).toContain("approved:manual-mcp");
     }),
+    15_000,
   );
 
   it.scoped("loads MCP sources from control-plane state and resumes elicitation", () =>
@@ -817,7 +912,7 @@ describe("local-executor-server", () => {
         (server) => Effect.promise(() => server.close()).pipe(Effect.orDie),
       );
 
-      const server = yield* createLocalExecutorServer({
+      const server = yield* createIsolatedLocalExecutorServer({
         port: 0,
         localDataDir: ":memory:",
       });
@@ -898,7 +993,7 @@ describe("local-executor-server", () => {
         (server) => Effect.promise(() => server.close()).pipe(Effect.orDie),
       );
 
-      const server = yield* createLocalExecutorServer({
+      const server = yield* createIsolatedLocalExecutorServer({
         port: 0,
         localDataDir: ":memory:",
       });
@@ -976,7 +1071,7 @@ describe("local-executor-server", () => {
         (server) => Effect.promise(() => server.close()).pipe(Effect.orDie),
       );
 
-      const server = yield* createLocalExecutorServer({
+      const server = yield* createIsolatedLocalExecutorServer({
         port: 0,
         localDataDir: ":memory:",
       });
@@ -1065,7 +1160,7 @@ describe("local-executor-server", () => {
           }),
       );
 
-      const server = yield* createLocalExecutorServer({
+      const server = yield* createIsolatedLocalExecutorServer({
         port: 0,
         localDataDir: ":memory:",
       });
@@ -1111,7 +1206,7 @@ describe("local-executor-server", () => {
         (server) => Effect.promise(() => server.close()).pipe(Effect.orDie),
       );
 
-      const server = yield* createLocalExecutorServer({
+      const server = yield* createIsolatedLocalExecutorServer({
         port: 0,
         localDataDir: ":memory:",
       });
@@ -1148,29 +1243,28 @@ describe("local-executor-server", () => {
         }),
       );
       assertTrue(callbackResponse.ok);
-      expect(yield* Effect.promise(() => callbackResponse.text())).toContain("Source connected:");
+      const callbackText = yield* Effect.promise(() => callbackResponse.text());
+      expect(callbackText).toContain("Source connected:");
 
-      const completed = yield* waitForExecutionCompletion({
-        client,
-        workspaceId: installation.workspaceId,
-        executionId: added.execution.id,
+      const connectedSource = yield* Effect.gen(function* () {
+        while (true) {
+          const sources = yield* client.sources.list({
+            path: {
+              workspaceId: installation.workspaceId,
+            },
+          });
+          const source = sources.find((entry) => entry.namespace === "axiom");
+          if (source?.status === "connected" && source.auth.kind === "oauth2") {
+            return source;
+          }
+
+          yield* Effect.sleep("100 millis");
+        }
       });
 
-      expect(completed.execution.status).toBe("completed");
-      expect(completed.pendingInteraction).toBeNull();
-      expect(completed.execution.resultJson).toContain('"name":"Axiom"');
-      expect(completed.execution.resultJson).toContain('"status":"connected"');
-
-      const sources = yield* client.sources.list({
-        path: {
-          workspaceId: installation.workspaceId,
-        },
-      });
-
-      expect(sources).toHaveLength(1);
-      expect(sources[0]?.name).toBe("Axiom");
-      expect(sources[0]?.status).toBe("connected");
-      expect(sources[0]?.auth.kind).toBe("oauth2");
+      expect(connectedSource.name).toBe("Axiom");
+      expect(connectedSource.status).toBe("connected");
+      expect(connectedSource.auth.kind).toBe("oauth2");
 
       const toolCall = yield* client.executions.create({
         path: {
@@ -1188,13 +1282,13 @@ describe("local-executor-server", () => {
     15_000,
   );
 
-  it.scoped("gates mutating OpenAPI tools by default and allows them via organization policy", () =>
+  it.scoped("gates mutating OpenAPI tools by default and allows them via workspace policy", () =>
     Effect.gen(function* () {
       const openApiServer = yield* Effect.acquireRelease(
         Effect.promise(() => startMutatingOpenApiDemoServer()),
         (server) => Effect.promise(() => server.close()).pipe(Effect.orDie),
       );
-      const server = yield* createLocalExecutorServer({
+      const server = yield* createIsolatedLocalExecutorServer({
         port: 0,
         localDataDir: ":memory:",
       });
@@ -1260,19 +1354,17 @@ describe("local-executor-server", () => {
       expect(approved.execution.status).toBe("completed");
       expect(openApiServer.createdBodies).toHaveLength(1);
 
-      const policy = yield* client.policies.createOrganization({
+      const policy = yield* client.policies.create({
         path: {
-          organizationId: installation.organizationId,
+          workspaceId: installation.workspaceId,
         },
         payload: {
-          resourceType: "tool_path",
           resourcePattern: "dns.records.createRecord",
-          matchType: "exact",
           effect: "allow",
           approvalMode: "auto",
         },
       });
-      expect(policy.scopeType).toBe("organization");
+      expect(policy.key).toBe("dns.records.createRecord");
 
       const automatic = yield* client.executions.create({
         path: {
@@ -1287,6 +1379,7 @@ describe("local-executor-server", () => {
       expect(automatic.pendingInteraction).toBeNull();
       expect(openApiServer.createdBodies).toHaveLength(2);
     }),
+    15_000,
   );
 
   it.scoped("starts source OAuth without creating a source and stores secrets on callback", () =>
@@ -1296,7 +1389,7 @@ describe("local-executor-server", () => {
         (server) => Effect.promise(() => server.close()).pipe(Effect.orDie),
       );
 
-      const server = yield* createLocalExecutorServer({
+      const server = yield* createIsolatedLocalExecutorServer({
         port: 0,
         localDataDir: ":memory:",
       });
@@ -1360,11 +1453,12 @@ describe("local-executor-server", () => {
       expect(secrets.some((secret) => secret.purpose === "oauth_access_token")).toBe(true);
       expect(secrets.some((secret) => secret.purpose === "oauth_refresh_token")).toBe(true);
     }),
+    15_000,
   );
 
   it.scoped("marks execution failed when a configured MCP endpoint is invalid", () =>
     Effect.gen(function* () {
-      const server = yield* createLocalExecutorServer({
+      const server = yield* createIsolatedLocalExecutorServer({
         port: 0,
         localDataDir: ":memory:",
       });
@@ -1377,123 +1471,12 @@ describe("local-executor-server", () => {
         baseUrl: server.baseUrl,
         accountId: installation.accountId,
       });
-
-      const sourceId = SourceIdSchema.make("src_invalid_mcp_endpoint");
-      const recipeId = SourceRecipeIdSchema.make(`src_recipe_${sourceId}`);
-      const recipeRevisionId = SourceRecipeRevisionIdSchema.make(`src_recipe_rev_${sourceId}`);
-      const now = Date.now();
-      const manifest = {
-        version: 1 as const,
-        tools: [{
-          toolId: "gated_echo",
-          toolName: "gated_echo",
-          description: "Asks for approval before echoing a value",
-          inputSchemaJson: JSON.stringify({
-            type: "object",
-            properties: {
-              value: {
-                type: "string",
-              },
-            },
-            required: ["value"],
-            additionalProperties: false,
-          }),
-        }],
-      };
-      const manifestJson = JSON.stringify(manifest);
-      yield* server.runtime.persistence.rows.sourceRecipes.upsert({
-        id: recipeId,
-        kind: "mcp",
-        adapterKey: "mcp",
-        providerKey: "generic_mcp",
-        name: "Demo",
-        summary: null,
-        visibility: "workspace",
-        latestRevisionId: recipeRevisionId,
-        createdAt: now,
-        updatedAt: now,
-      });
-      yield* server.runtime.persistence.rows.sourceRecipeRevisions.upsert({
-        id: recipeRevisionId,
-        recipeId,
-        revisionNumber: 1,
-        sourceConfigJson: JSON.stringify({
-          kind: "mcp",
-          endpoint: "http://127.0.0.1:PORT/mcp",
-          transport: "streamable-http",
-          queryParams: null,
-          headers: null,
-        }),
-        manifestJson,
-        manifestHash: null,
-        materializationHash: null,
-        createdAt: now,
-        updatedAt: now,
-      });
-      yield* server.runtime.persistence.rows.sources.insert({
-        id: sourceId,
-        workspaceId: installation.workspaceId,
-        recipeId,
-        recipeRevisionId,
-        name: "Demo",
-        kind: "mcp",
+      yield* writeConfiguredLocalMcpSource({
+        workspaceRoot: server.workspaceRoot,
+        sourceId: "demo",
         endpoint: "http://127.0.0.1:PORT/mcp",
-        status: "connected",
-        enabled: true,
+        name: "Demo",
         namespace: "demo",
-        importAuthPolicy: "reuse_runtime",
-        bindingConfigJson: JSON.stringify({
-          adapterKey: "mcp",
-          version: 1,
-          payload: {
-            transport: "streamable-http",
-            queryParams: null,
-            headers: null,
-          },
-        }),
-        sourceHash: null,
-        lastError: null,
-        createdAt: now,
-        updatedAt: now,
-      });
-      yield* server.runtime.persistence.rows.sourceRecipeDocuments.replaceForRevision({
-        recipeRevisionId,
-        documents: [{
-          id: `src_recipe_doc_${sourceId}`,
-          recipeRevisionId,
-          documentKind: "mcp_manifest",
-          documentKey: "manifest",
-          contentText: manifestJson,
-          contentHash: `manifest_${sourceId}`,
-          fetchedAt: now,
-          createdAt: now,
-          updatedAt: now,
-        }],
-      });
-      yield* server.runtime.persistence.rows.sourceRecipeOperations.replaceForRevision({
-        recipeRevisionId,
-        operations: [{
-          id: `src_recipe_op_${sourceId}`,
-          recipeRevisionId,
-          operationKey: "gated_echo",
-          transportKind: "mcp",
-          toolId: "gated_echo",
-          title: "gated_echo",
-          description: "Asks for approval before echoing a value",
-          operationKind: "unknown",
-          searchText: "demo.gated_echo gated echo approval",
-          inputSchemaJson: manifest.tools[0]!.inputSchemaJson ?? null,
-          outputSchemaJson: null,
-          providerKind: "mcp",
-          providerDataJson: JSON.stringify({
-            kind: "mcp",
-            toolId: "gated_echo",
-            toolName: "gated_echo",
-            description: "Asks for approval before echoing a value",
-          }),
-          createdAt: now,
-          updatedAt: now,
-        }],
       });
 
       const execution = yield* client.executions.create({

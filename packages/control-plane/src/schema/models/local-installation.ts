@@ -1,40 +1,16 @@
-import {
-  createInsertSchema,
-  createSelectSchema,
-  createUpdateSchema,
-} from "drizzle-orm/effect-schema";
+import * as Schema from "effect/Schema";
 
-import { localInstallationsTable } from "../../persistence/schema";
-import { TimestampMsSchema } from "../common";
 import {
   AccountIdSchema,
-  InstallationIdSchema,
-  OrganizationIdSchema,
   WorkspaceIdSchema,
 } from "../ids";
 
-const localInstallationSchemaOverrides = {
-  id: InstallationIdSchema,
+export const LocalInstallationSchema = Schema.Struct({
   accountId: AccountIdSchema,
-  organizationId: OrganizationIdSchema,
   workspaceId: WorkspaceIdSchema,
-  createdAt: TimestampMsSchema,
-  updatedAt: TimestampMsSchema,
-} as const;
+});
 
-export const LocalInstallationSchema = createSelectSchema(
-  localInstallationsTable,
-  localInstallationSchemaOverrides,
-);
-
-export const LocalInstallationInsertSchema = createInsertSchema(
-  localInstallationsTable,
-  localInstallationSchemaOverrides,
-);
-
-export const LocalInstallationUpdateSchema = createUpdateSchema(
-  localInstallationsTable,
-  localInstallationSchemaOverrides,
-);
+export const LocalInstallationInsertSchema = LocalInstallationSchema;
+export const LocalInstallationUpdateSchema = Schema.partial(LocalInstallationSchema);
 
 export type LocalInstallation = typeof LocalInstallationSchema.Type;

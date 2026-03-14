@@ -1,13 +1,9 @@
 import { HttpApiEndpoint, HttpApiGroup, HttpApiSchema } from "@effect/platform";
 import {
-  AccountIdSchema,
-  OrganizationIdSchema,
+  LocalWorkspacePolicyApprovalModeSchema,
+  LocalWorkspacePolicyEffectSchema,
+  LocalWorkspacePolicySchema,
   PolicyIdSchema,
-  PolicyApprovalModeSchema,
-  PolicyEffectSchema,
-  PolicyMatchTypeSchema,
-  PolicyResourceTypeSchema,
-  PolicySchema,
   WorkspaceIdSchema,
 } from "#schema";
 import * as Schema from "effect/Schema";
@@ -21,91 +17,29 @@ import {
 } from "../errors";
 import { OptionalTrimmedNonEmptyStringSchema } from "../string-schemas";
 
-export const CreatePolicyPayloadSchema = Schema.Struct({
-  resourceType: Schema.optional(PolicyResourceTypeSchema),
+const LocalWorkspacePolicyPayloadSchema = Schema.Struct({
   resourcePattern: OptionalTrimmedNonEmptyStringSchema,
-  matchType: Schema.optional(PolicyMatchTypeSchema),
-  effect: Schema.optional(PolicyEffectSchema),
-  approvalMode: Schema.optional(PolicyApprovalModeSchema),
-  argumentConditionsJson: Schema.optional(Schema.NullOr(Schema.String)),
+  effect: Schema.optional(LocalWorkspacePolicyEffectSchema),
+  approvalMode: Schema.optional(LocalWorkspacePolicyApprovalModeSchema),
   priority: Schema.optional(Schema.Number),
   enabled: Schema.optional(Schema.Boolean),
-  targetAccountId: Schema.optional(Schema.NullOr(AccountIdSchema)),
-  clientId: Schema.optional(Schema.NullOr(Schema.String)),
 });
+
+export const CreatePolicyPayloadSchema = LocalWorkspacePolicyPayloadSchema;
 
 export type CreatePolicyPayload = typeof CreatePolicyPayloadSchema.Type;
 
-export const UpdatePolicyPayloadSchema = Schema.Struct({
-  resourceType: Schema.optional(PolicyResourceTypeSchema),
-  resourcePattern: OptionalTrimmedNonEmptyStringSchema,
-  matchType: Schema.optional(PolicyMatchTypeSchema),
-  effect: Schema.optional(PolicyEffectSchema),
-  approvalMode: Schema.optional(PolicyApprovalModeSchema),
-  argumentConditionsJson: Schema.optional(Schema.NullOr(Schema.String)),
-  priority: Schema.optional(Schema.Number),
-  enabled: Schema.optional(Schema.Boolean),
-  targetAccountId: Schema.optional(Schema.NullOr(AccountIdSchema)),
-  clientId: Schema.optional(Schema.NullOr(Schema.String)),
-});
+export const UpdatePolicyPayloadSchema = LocalWorkspacePolicyPayloadSchema;
 
 export type UpdatePolicyPayload = typeof UpdatePolicyPayloadSchema.Type;
 
-const organizationIdParam = HttpApiSchema.param("organizationId", OrganizationIdSchema);
 const workspaceIdParam = HttpApiSchema.param("workspaceId", WorkspaceIdSchema);
 const policyIdParam = HttpApiSchema.param("policyId", PolicyIdSchema);
 
 export class PoliciesApi extends HttpApiGroup.make("policies")
   .add(
-    HttpApiEndpoint.get("listOrganization")`/organizations/${organizationIdParam}/policies`
-      .addSuccess(Schema.Array(PolicySchema))
-      .addError(ControlPlaneBadRequestError)
-      .addError(ControlPlaneUnauthorizedError)
-      .addError(ControlPlaneForbiddenError)
-      .addError(ControlPlaneNotFoundError)
-      .addError(ControlPlaneStorageError),
-  )
-  .add(
-    HttpApiEndpoint.post("createOrganization")`/organizations/${organizationIdParam}/policies`
-      .setPayload(CreatePolicyPayloadSchema)
-      .addSuccess(PolicySchema)
-      .addError(ControlPlaneBadRequestError)
-      .addError(ControlPlaneUnauthorizedError)
-      .addError(ControlPlaneForbiddenError)
-      .addError(ControlPlaneNotFoundError)
-      .addError(ControlPlaneStorageError),
-  )
-  .add(
-    HttpApiEndpoint.get("getOrganization")`/organizations/${organizationIdParam}/policies/${policyIdParam}`
-      .addSuccess(PolicySchema)
-      .addError(ControlPlaneBadRequestError)
-      .addError(ControlPlaneUnauthorizedError)
-      .addError(ControlPlaneForbiddenError)
-      .addError(ControlPlaneNotFoundError)
-      .addError(ControlPlaneStorageError),
-  )
-  .add(
-    HttpApiEndpoint.patch("updateOrganization")`/organizations/${organizationIdParam}/policies/${policyIdParam}`
-      .setPayload(UpdatePolicyPayloadSchema)
-      .addSuccess(PolicySchema)
-      .addError(ControlPlaneBadRequestError)
-      .addError(ControlPlaneUnauthorizedError)
-      .addError(ControlPlaneForbiddenError)
-      .addError(ControlPlaneNotFoundError)
-      .addError(ControlPlaneStorageError),
-  )
-  .add(
-    HttpApiEndpoint.del("removeOrganization")`/organizations/${organizationIdParam}/policies/${policyIdParam}`
-      .addSuccess(Schema.Struct({ removed: Schema.Boolean }))
-      .addError(ControlPlaneBadRequestError)
-      .addError(ControlPlaneUnauthorizedError)
-      .addError(ControlPlaneForbiddenError)
-      .addError(ControlPlaneNotFoundError)
-      .addError(ControlPlaneStorageError),
-  )
-  .add(
     HttpApiEndpoint.get("list")`/workspaces/${workspaceIdParam}/policies`
-      .addSuccess(Schema.Array(PolicySchema))
+      .addSuccess(Schema.Array(LocalWorkspacePolicySchema))
       .addError(ControlPlaneBadRequestError)
       .addError(ControlPlaneUnauthorizedError)
       .addError(ControlPlaneForbiddenError)
@@ -115,7 +49,7 @@ export class PoliciesApi extends HttpApiGroup.make("policies")
   .add(
     HttpApiEndpoint.post("create")`/workspaces/${workspaceIdParam}/policies`
       .setPayload(CreatePolicyPayloadSchema)
-      .addSuccess(PolicySchema)
+      .addSuccess(LocalWorkspacePolicySchema)
       .addError(ControlPlaneBadRequestError)
       .addError(ControlPlaneUnauthorizedError)
       .addError(ControlPlaneForbiddenError)
@@ -124,7 +58,7 @@ export class PoliciesApi extends HttpApiGroup.make("policies")
   )
   .add(
     HttpApiEndpoint.get("get")`/workspaces/${workspaceIdParam}/policies/${policyIdParam}`
-      .addSuccess(PolicySchema)
+      .addSuccess(LocalWorkspacePolicySchema)
       .addError(ControlPlaneBadRequestError)
       .addError(ControlPlaneUnauthorizedError)
       .addError(ControlPlaneForbiddenError)
@@ -134,7 +68,7 @@ export class PoliciesApi extends HttpApiGroup.make("policies")
   .add(
     HttpApiEndpoint.patch("update")`/workspaces/${workspaceIdParam}/policies/${policyIdParam}`
       .setPayload(UpdatePolicyPayloadSchema)
-      .addSuccess(PolicySchema)
+      .addSuccess(LocalWorkspacePolicySchema)
       .addError(ControlPlaneBadRequestError)
       .addError(ControlPlaneUnauthorizedError)
       .addError(ControlPlaneForbiddenError)

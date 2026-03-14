@@ -1,27 +1,37 @@
+import { createHash } from "node:crypto";
+
 import type {
   CreatePolicyPayload,
   UpdatePolicyPayload,
 } from "../api/policies/api";
 import {
   PolicyIdSchema,
-  type OrganizationId,
-  type Policy,
+  type LocalExecutorConfig,
+  type LocalWorkspacePolicy,
   type PolicyId,
   type WorkspaceId,
 } from "#schema";
 import * as Effect from "effect/Effect";
-import * as Option from "effect/Option";
 
 import {
-  mapPersistenceError,
-  parseJsonString,
-  type Mutable,
-} from "./operations-shared";
+  loadLocalExecutorConfig,
+  writeProjectLocalExecutorConfig,
+} from "./local-config";
+import {
+  requireRuntimeLocalWorkspace,
+} from "./local-runtime-context";
+import {
+  loadLocalWorkspaceState,
+  type LocalWorkspaceState,
+  writeLocalWorkspaceState,
+} from "./local-workspace-state";
+import {
+  derivePolicyConfigKey,
+} from "./local-workspace-sync";
 import {
   type OperationErrors,
   operationErrors,
 } from "./operation-errors";
-import { ControlPlaneStore, type ControlPlaneStoreShape } from "./store";
 
 const policyOps = {
   list: operationErrors("policies.list"),
@@ -31,336 +41,317 @@ const policyOps = {
   remove: operationErrors("policies.remove"),
 } as const;
 
-type PolicyScopeContext = {
-  scopeType: Policy["scopeType"];
-  organizationId: Policy["organizationId"];
-  workspaceId: Policy["workspaceId"];
-};
+const cloneJson = <T>(value: T): T =>
+  JSON.parse(JSON.stringify(value)) as T;
+
+const localPolicyIdForKey = (input: {
+  workspaceRoot: string;
+  key: string;
+}): PolicyId =>
+  PolicyIdSchema.make(
+    `pol_local_${createHash("sha256").update(`${input.workspaceRoot}:${input.key}`).digest("hex").slice(0, 16)}`,
+  );
+
+const toLocalWorkspacePolicy = (input: {
+  workspaceId: WorkspaceId;
+  workspaceRoot: string;
+  key: string;
+  policyConfig: NonNullable<LocalExecutorConfig["policies"]>[string];
+  state: LocalWorkspaceState["policies"][string] | undefined;
+}): LocalWorkspacePolicy => ({
+  id: input.state?.id ?? localPolicyIdForKey({
+    workspaceRoot: input.workspaceRoot,
+    key: input.key,
+  }),
+  key: input.key,
+  workspaceId: input.workspaceId,
+  resourcePattern: input.policyConfig.match.trim(),
+  effect: input.policyConfig.action,
+  approvalMode: input.policyConfig.approval === "manual" ? "required" : "auto",
+  priority: input.policyConfig.priority ?? 0,
+  enabled: input.policyConfig.enabled ?? true,
+  createdAt: input.state?.createdAt ?? Date.now(),
+  updatedAt: input.state?.updatedAt ?? Date.now(),
+});
+
+export const loadRuntimeLocalWorkspacePolicies = (workspaceId: WorkspaceId) =>
+  Effect.gen(function* () {
+    const runtimeLocalWorkspace = yield* requireRuntimeLocalWorkspace(workspaceId);
+    const loadedConfig = yield* loadLocalExecutorConfig(runtimeLocalWorkspace.context);
+    const workspaceState = yield* loadLocalWorkspaceState(runtimeLocalWorkspace.context);
+
+    const policies = Object.entries(loadedConfig.config?.policies ?? {}).map(([key, policyConfig]) =>
+      toLocalWorkspacePolicy({
+        workspaceId,
+        workspaceRoot: runtimeLocalWorkspace.context.workspaceRoot,
+        key,
+        policyConfig,
+        state: workspaceState.policies[key],
+      }));
+
+    return {
+      runtimeLocalWorkspace,
+      loadedConfig,
+      workspaceState,
+      policies,
+    };
+  });
+
+const writeLocalPolicyFiles = (input: {
+  operation: OperationErrors;
+  context: Parameters<typeof writeProjectLocalExecutorConfig>[0]["context"];
+  projectConfig: LocalExecutorConfig;
+  workspaceState: LocalWorkspaceState;
+}) =>
+  Effect.all([
+    writeProjectLocalExecutorConfig({
+      context: input.context,
+      config: input.projectConfig,
+    }),
+    writeLocalWorkspaceState({
+      context: input.context,
+      state: input.workspaceState,
+    }),
+  ], { discard: true }).pipe(
+    Effect.mapError((cause) =>
+      input.operation.unknownStorage(
+        cause,
+        "Failed writing local workspace policy files",
+      ),
+    ),
+  );
 
 const loadWorkspacePolicyContext = (
-  store: ControlPlaneStoreShape,
   operation: OperationErrors,
   workspaceId: WorkspaceId,
 ) =>
-  Effect.gen(function* () {
-    const workspace = yield* operation.child("workspace").mapStorage(
-      store.workspaces.getById(workspaceId),
-    );
-    if (Option.isNone(workspace)) {
-      return yield* Effect.fail(
-        operation.notFound(
-          "Workspace not found",
-          `workspaceId=${workspaceId}`,
-        ),
-      );
-    }
-
-    return {
-      scopeType: "workspace",
-      organizationId: workspace.value.organizationId,
-      workspaceId,
-    } satisfies PolicyScopeContext;
-  });
-
-const loadOrganizationPolicyContext = (
-  store: ControlPlaneStoreShape,
-  operation: OperationErrors,
-  organizationId: OrganizationId,
-) =>
-  Effect.gen(function* () {
-    const organization = yield* operation.child("organization").mapStorage(
-      store.organizations.getById(organizationId),
-    );
-    if (Option.isNone(organization)) {
-      return yield* Effect.fail(
-        operation.notFound(
-          "Organization not found",
-          `organizationId=${organizationId}`,
-        ),
-      );
-    }
-
-    return {
-      scopeType: "organization",
-      organizationId,
-      workspaceId: null,
-    } satisfies PolicyScopeContext;
-  });
-
-const policyMatchesScope = (policy: Policy, scope: PolicyScopeContext): boolean =>
-  policy.scopeType === scope.scopeType
-  && policy.organizationId === scope.organizationId
-  && policy.workspaceId === scope.workspaceId;
-
-const createScopedPolicy = (input: {
-  scope: PolicyScopeContext;
-  payload: CreatePolicyPayload;
-}) =>
-  Effect.flatMap(ControlPlaneStore, (store) =>
-    Effect.gen(function* () {
-      const now = Date.now();
-      const operation = policyOps.create;
-
-      const policy: Policy = {
-        id: PolicyIdSchema.make(`pol_${crypto.randomUUID()}`),
-        scopeType: input.scope.scopeType,
-        organizationId: input.scope.organizationId,
-        workspaceId: input.scope.workspaceId,
-        targetAccountId: input.payload.targetAccountId ?? null,
-        clientId: input.payload.clientId ?? null,
-        resourceType: input.payload.resourceType ?? "tool_path",
-        resourcePattern: input.payload.resourcePattern ?? "*",
-        matchType: input.payload.matchType ?? "glob",
-        effect: input.payload.effect ?? "allow",
-        approvalMode: input.payload.approvalMode ?? "auto",
-        argumentConditionsJson: input.payload.argumentConditionsJson ?? null,
-        priority: input.payload.priority ?? 0,
-        enabled: input.payload.enabled ?? true,
-        createdAt: now,
-        updatedAt: now,
-      };
-
-      if (policy.argumentConditionsJson !== null) {
-        yield* parseJsonString(
-          operation,
-          "argumentConditionsJson",
-          policy.argumentConditionsJson,
-        );
-      }
-
-      yield* mapPersistenceError(
-        operation,
-        store.policies.insert(policy),
-      );
-
-      return policy;
-    }));
-
-const getScopedPolicy = (input: {
-  scope: PolicyScopeContext;
-  policyId: PolicyId;
-}) =>
-  Effect.flatMap(ControlPlaneStore, (store) =>
-    Effect.gen(function* () {
-      const existing = yield* policyOps.get.mapStorage(
-        store.policies.getById(input.policyId),
-      );
-
-      if (Option.isNone(existing) || !policyMatchesScope(existing.value, input.scope)) {
-        return yield* Effect.fail(
-          policyOps.get.notFound(
-            "Policy not found",
-            `scopeType=${input.scope.scopeType} organizationId=${input.scope.organizationId} workspaceId=${input.scope.workspaceId} policyId=${input.policyId}`,
-          ),
-        );
-      }
-
-      return existing.value;
-    }));
-
-const updateScopedPolicy = (input: {
-  scope: PolicyScopeContext;
-  policyId: PolicyId;
-  payload: UpdatePolicyPayload;
-}) =>
-  Effect.flatMap(ControlPlaneStore, (store) =>
-    Effect.gen(function* () {
-      const existing = yield* policyOps.update.mapStorage(
-        store.policies.getById(input.policyId),
-      );
-      if (Option.isNone(existing) || !policyMatchesScope(existing.value, input.scope)) {
-        return yield* Effect.fail(
-          policyOps.update.notFound(
-            "Policy not found",
-            `scopeType=${input.scope.scopeType} organizationId=${input.scope.organizationId} workspaceId=${input.scope.workspaceId} policyId=${input.policyId}`,
-          ),
-        );
-      }
-
-      const patch: Partial<
-        Omit<Mutable<Policy>, "id" | "scopeType" | "organizationId" | "workspaceId" | "createdAt">
-      > = {
-        updatedAt: Date.now(),
-      };
-
-      if (input.payload.targetAccountId !== undefined) {
-        patch.targetAccountId = input.payload.targetAccountId;
-      }
-      if (input.payload.clientId !== undefined) {
-        patch.clientId = input.payload.clientId;
-      }
-      if (input.payload.resourceType !== undefined) {
-        patch.resourceType = input.payload.resourceType;
-      }
-      if (input.payload.resourcePattern !== undefined) {
-        patch.resourcePattern = input.payload.resourcePattern;
-      }
-      if (input.payload.matchType !== undefined) {
-        patch.matchType = input.payload.matchType;
-      }
-      if (input.payload.effect !== undefined) {
-        patch.effect = input.payload.effect;
-      }
-      if (input.payload.approvalMode !== undefined) {
-        patch.approvalMode = input.payload.approvalMode;
-      }
-      if (input.payload.argumentConditionsJson !== undefined) {
-        if (input.payload.argumentConditionsJson !== null) {
-          yield* parseJsonString(
-            policyOps.update,
-            "argumentConditionsJson",
-            input.payload.argumentConditionsJson,
-          );
-        }
-        patch.argumentConditionsJson = input.payload.argumentConditionsJson;
-      }
-      if (input.payload.priority !== undefined) {
-        patch.priority = input.payload.priority;
-      }
-      if (input.payload.enabled !== undefined) {
-        patch.enabled = input.payload.enabled;
-      }
-
-      const updated = yield* mapPersistenceError(
-        policyOps.update,
-        store.policies.update(input.policyId, patch),
-      );
-      if (Option.isNone(updated)) {
-        return yield* Effect.fail(
-          policyOps.update.notFound(
-            "Policy not found",
-            `scopeType=${input.scope.scopeType} organizationId=${input.scope.organizationId} workspaceId=${input.scope.workspaceId} policyId=${input.policyId}`,
-          ),
-        );
-      }
-
-      return updated.value;
-    }));
-
-const removeScopedPolicy = (input: {
-  scope: PolicyScopeContext;
-  policyId: PolicyId;
-}) =>
-  Effect.flatMap(ControlPlaneStore, (store) =>
-    Effect.gen(function* () {
-      const existing = yield* policyOps.remove.mapStorage(
-        store.policies.getById(input.policyId),
-      );
-      if (Option.isNone(existing) || !policyMatchesScope(existing.value, input.scope)) {
-        return { removed: false };
-      }
-
-      const removed = yield* policyOps.remove.mapStorage(
-        store.policies.removeById(input.policyId),
-      );
-
-      return { removed };
-    }));
-
-export const listOrganizationPolicies = (organizationId: OrganizationId) =>
-  Effect.flatMap(ControlPlaneStore, (store) =>
-    Effect.gen(function* () {
-      yield* loadOrganizationPolicyContext(store, policyOps.list, organizationId);
-      return yield* policyOps.list.mapStorage(
-        store.policies.listByOrganizationId(organizationId),
-      );
-    }));
+  requireRuntimeLocalWorkspace(workspaceId).pipe(
+    Effect.mapError((cause) =>
+      operation.notFound(
+        "Workspace not found",
+        cause instanceof Error ? cause.message : String(cause),
+      ),
+    ),
+  );
 
 export const listPolicies = (workspaceId: WorkspaceId) =>
-  Effect.flatMap(ControlPlaneStore, (store) =>
-    Effect.gen(function* () {
-      yield* loadWorkspacePolicyContext(store, policyOps.list, workspaceId);
-      return yield* policyOps.list.mapStorage(
-        store.policies.listByWorkspaceId(workspaceId),
-      );
-    }));
-
-export const createOrganizationPolicy = (input: {
-  organizationId: OrganizationId;
-  payload: CreatePolicyPayload;
-}) =>
-  Effect.flatMap(ControlPlaneStore, (store) =>
-    Effect.flatMap(
-      loadOrganizationPolicyContext(store, policyOps.create, input.organizationId),
-      (scope) => createScopedPolicy({ scope, payload: input.payload }),
-    ));
+  Effect.gen(function* () {
+    yield* loadWorkspacePolicyContext(policyOps.list, workspaceId);
+    const localWorkspace = yield* loadRuntimeLocalWorkspacePolicies(workspaceId).pipe(
+      Effect.mapError((cause) =>
+        policyOps.list.unknownStorage(
+          cause,
+          "Failed loading local workspace policies",
+        ),
+      ),
+    );
+    return localWorkspace.policies;
+  });
 
 export const createPolicy = (input: {
   workspaceId: WorkspaceId;
   payload: CreatePolicyPayload;
 }) =>
-  Effect.flatMap(ControlPlaneStore, (store) =>
-    Effect.flatMap(
-      loadWorkspacePolicyContext(store, policyOps.create, input.workspaceId),
-      (scope) => createScopedPolicy({ scope, payload: input.payload }),
-    ));
+  Effect.gen(function* () {
+    const runtimeLocalWorkspace = yield* loadWorkspacePolicyContext(policyOps.create, input.workspaceId);
+    const localWorkspace = yield* loadRuntimeLocalWorkspacePolicies(input.workspaceId).pipe(
+      Effect.mapError((cause) =>
+        policyOps.create.unknownStorage(
+          cause,
+          "Failed loading local workspace policies",
+        ),
+      ),
+    );
+    const now = Date.now();
+    const projectConfig = cloneJson(localWorkspace.loadedConfig.projectConfig ?? {});
+    const policies = { ...(projectConfig.policies ?? {}) };
+    const key = derivePolicyConfigKey(
+      {
+        resourcePattern: input.payload.resourcePattern ?? "*",
+        effect: input.payload.effect ?? "allow",
+        approvalMode: input.payload.approvalMode ?? "auto",
+      },
+      new Set(Object.keys(policies)),
+    );
 
-export const getOrganizationPolicy = (input: {
-  organizationId: OrganizationId;
-  policyId: PolicyId;
-}) =>
-  Effect.flatMap(ControlPlaneStore, (store) =>
-    Effect.flatMap(
-      loadOrganizationPolicyContext(store, policyOps.get, input.organizationId),
-      (scope) => getScopedPolicy({ scope, policyId: input.policyId }),
-    ));
+    policies[key] = {
+      match: input.payload.resourcePattern ?? "*",
+      action: input.payload.effect ?? "allow",
+      approval: (input.payload.approvalMode ?? "auto") === "required" ? "manual" : "auto",
+      ...(input.payload.enabled === false ? { enabled: false } : {}),
+      ...((input.payload.priority ?? 0) !== 0 ? { priority: input.payload.priority ?? 0 } : {}),
+    };
+
+    const existingState = localWorkspace.workspaceState.policies[key];
+    const workspaceState: LocalWorkspaceState = {
+      ...localWorkspace.workspaceState,
+      policies: {
+        ...localWorkspace.workspaceState.policies,
+        [key]: {
+          id: existingState?.id ?? localPolicyIdForKey({
+            workspaceRoot: runtimeLocalWorkspace.context.workspaceRoot,
+            key,
+          }),
+          createdAt: existingState?.createdAt ?? now,
+          updatedAt: now,
+        },
+      },
+    };
+
+    yield* writeLocalPolicyFiles({
+      operation: policyOps.create,
+      context: runtimeLocalWorkspace.context,
+      projectConfig: {
+        ...projectConfig,
+        policies,
+      },
+      workspaceState,
+    });
+
+    return toLocalWorkspacePolicy({
+      workspaceId: input.workspaceId,
+      workspaceRoot: runtimeLocalWorkspace.context.workspaceRoot,
+      key,
+      policyConfig: policies[key]!,
+      state: workspaceState.policies[key],
+    });
+  });
 
 export const getPolicy = (input: {
   workspaceId: WorkspaceId;
   policyId: PolicyId;
 }) =>
-  Effect.flatMap(ControlPlaneStore, (store) =>
-    Effect.flatMap(
-      loadWorkspacePolicyContext(store, policyOps.get, input.workspaceId),
-      (scope) => getScopedPolicy({ scope, policyId: input.policyId }),
-    ));
-
-export const updateOrganizationPolicy = (input: {
-  organizationId: OrganizationId;
-  policyId: PolicyId;
-  payload: UpdatePolicyPayload;
-}) =>
-  Effect.flatMap(ControlPlaneStore, (store) =>
-    Effect.flatMap(
-      loadOrganizationPolicyContext(store, policyOps.update, input.organizationId),
-      (scope) => updateScopedPolicy({
-        scope,
-        policyId: input.policyId,
-        payload: input.payload,
-      }),
-    ));
+  Effect.gen(function* () {
+    yield* loadWorkspacePolicyContext(policyOps.get, input.workspaceId);
+    const localWorkspace = yield* loadRuntimeLocalWorkspacePolicies(input.workspaceId).pipe(
+      Effect.mapError((cause) =>
+        policyOps.get.unknownStorage(
+          cause,
+          "Failed loading local workspace policies",
+        ),
+      ),
+    );
+    const policy = localWorkspace.policies.find((candidate) => candidate.id === input.policyId) ?? null;
+    if (policy === null) {
+      return yield* Effect.fail(
+        policyOps.get.notFound(
+          "Policy not found",
+          `workspaceId=${input.workspaceId} policyId=${input.policyId}`,
+        ),
+      );
+    }
+    return policy;
+  });
 
 export const updatePolicy = (input: {
   workspaceId: WorkspaceId;
   policyId: PolicyId;
   payload: UpdatePolicyPayload;
 }) =>
-  Effect.flatMap(ControlPlaneStore, (store) =>
-    Effect.flatMap(
-      loadWorkspacePolicyContext(store, policyOps.update, input.workspaceId),
-      (scope) => updateScopedPolicy({
-        scope,
-        policyId: input.policyId,
-        payload: input.payload,
-      }),
-    ));
+  Effect.gen(function* () {
+    const runtimeLocalWorkspace = yield* loadWorkspacePolicyContext(policyOps.update, input.workspaceId);
+    const localWorkspace = yield* loadRuntimeLocalWorkspacePolicies(input.workspaceId).pipe(
+      Effect.mapError((cause) =>
+        policyOps.update.unknownStorage(
+          cause,
+          "Failed loading local workspace policies",
+        ),
+      ),
+    );
+    const existing = localWorkspace.policies.find((candidate) => candidate.id === input.policyId) ?? null;
+    if (existing === null) {
+      return yield* Effect.fail(
+        policyOps.update.notFound(
+          "Policy not found",
+          `workspaceId=${input.workspaceId} policyId=${input.policyId}`,
+        ),
+      );
+    }
 
-export const removeOrganizationPolicy = (input: {
-  organizationId: OrganizationId;
-  policyId: PolicyId;
-}) =>
-  Effect.flatMap(ControlPlaneStore, (store) =>
-    Effect.flatMap(
-      loadOrganizationPolicyContext(store, policyOps.remove, input.organizationId),
-      (scope) => removeScopedPolicy({ scope, policyId: input.policyId }),
-    ));
+    const projectConfig = cloneJson(localWorkspace.loadedConfig.projectConfig ?? {});
+    const policies = { ...(projectConfig.policies ?? {}) };
+    const existingConfig = policies[existing.key]!;
+
+    policies[existing.key] = {
+      ...existingConfig,
+      ...(input.payload.resourcePattern !== undefined ? { match: input.payload.resourcePattern } : {}),
+      ...(input.payload.effect !== undefined ? { action: input.payload.effect } : {}),
+      ...(input.payload.approvalMode !== undefined
+        ? { approval: input.payload.approvalMode === "required" ? "manual" : "auto" }
+        : {}),
+      ...(input.payload.enabled !== undefined ? { enabled: input.payload.enabled } : {}),
+      ...(input.payload.priority !== undefined ? { priority: input.payload.priority } : {}),
+    };
+
+    const updatedAt = Date.now();
+    const existingState = localWorkspace.workspaceState.policies[existing.key];
+    const workspaceState: LocalWorkspaceState = {
+      ...localWorkspace.workspaceState,
+      policies: {
+        ...localWorkspace.workspaceState.policies,
+        [existing.key]: {
+          id: existing.id,
+          createdAt: existingState?.createdAt ?? existing.createdAt,
+          updatedAt,
+        },
+      },
+    };
+
+    yield* writeLocalPolicyFiles({
+      operation: policyOps.update,
+      context: runtimeLocalWorkspace.context,
+      projectConfig: {
+        ...projectConfig,
+        policies,
+      },
+      workspaceState,
+    });
+
+    return toLocalWorkspacePolicy({
+      workspaceId: input.workspaceId,
+      workspaceRoot: runtimeLocalWorkspace.context.workspaceRoot,
+      key: existing.key,
+      policyConfig: policies[existing.key]!,
+      state: workspaceState.policies[existing.key],
+    });
+  });
 
 export const removePolicy = (input: {
   workspaceId: WorkspaceId;
   policyId: PolicyId;
 }) =>
-  Effect.flatMap(ControlPlaneStore, (store) =>
-    Effect.flatMap(
-      loadWorkspacePolicyContext(store, policyOps.remove, input.workspaceId),
-      (scope) => removeScopedPolicy({ scope, policyId: input.policyId }),
-    ));
+  Effect.gen(function* () {
+    const runtimeLocalWorkspace = yield* loadWorkspacePolicyContext(policyOps.remove, input.workspaceId);
+    const localWorkspace = yield* loadRuntimeLocalWorkspacePolicies(input.workspaceId).pipe(
+      Effect.mapError((cause) =>
+        policyOps.remove.unknownStorage(
+          cause,
+          "Failed loading local workspace policies",
+        ),
+      ),
+    );
+    const existing = localWorkspace.policies.find((candidate) => candidate.id === input.policyId) ?? null;
+    if (existing === null) {
+      return { removed: false };
+    }
+
+    const projectConfig = cloneJson(localWorkspace.loadedConfig.projectConfig ?? {});
+    const policies = { ...(projectConfig.policies ?? {}) };
+    delete policies[existing.key];
+
+    const { [existing.key]: _removedPolicy, ...remainingPolicies } = localWorkspace.workspaceState.policies;
+    yield* writeLocalPolicyFiles({
+      operation: policyOps.remove,
+      context: runtimeLocalWorkspace.context,
+      projectConfig: {
+        ...projectConfig,
+        policies,
+      },
+      workspaceState: {
+        ...localWorkspace.workspaceState,
+        policies: remainingPolicies,
+      },
+    });
+
+    return { removed: true };
+  });

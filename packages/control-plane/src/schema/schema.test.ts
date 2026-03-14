@@ -3,19 +3,10 @@ import * as Either from "effect/Either";
 import * as Schema from "effect/Schema";
 
 import {
-  PermissionValues,
-  RolePermissions,
   StoredSourceRecipeOperationRecordSchema,
 } from "./index";
 
 describe("control-plane-schema", () => {
-  it("exposes stable permission and role mappings", () => {
-    expect(PermissionValues).toContain("organizations:manage");
-    expect(RolePermissions.viewer).toContain("workspace:read");
-    expect(RolePermissions.editor).toContain("sources:write");
-    expect(RolePermissions.owner).toContain("policies:manage");
-  });
-
   it("accepts canonical source recipe operation rows and rejects invalid transport kinds", () => {
     const decode = Schema.decodeUnknownEither(StoredSourceRecipeOperationRecordSchema);
 

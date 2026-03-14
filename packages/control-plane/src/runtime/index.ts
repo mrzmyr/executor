@@ -6,13 +6,12 @@ import * as Scope from "effect/Scope";
 
 import {
   type ControlPlaneApiRuntimeContext,
-  ControlPlaneActorResolver,
-  type ControlPlaneActorResolverShape,
 } from "#api";
 import {
   SqlControlPlanePersistenceLive,
   SqlControlPlanePersistenceService,
   SqlControlPlaneRowsLive,
+  SqlControlPlaneRowsService,
   SqlPersistenceBootstrapError,
   type CreateSqlRuntimeOptions,
   type SqlControlPlanePersistence,
@@ -20,43 +19,48 @@ import {
 import type { LocalInstallation } from "#schema";
 
 import {
-  ControlPlaneAuthHeaders,
-  RuntimeActorResolverLive,
-  createHeaderActorResolver,
-} from "./actor-resolver";
-import { type ResolveExecutionEnvironment } from "./execution-state";
+  type ResolveExecutionEnvironment,
+} from "./execution-state";
 import {
+  createLiveExecutionManager,
   LiveExecutionManagerLive,
   LiveExecutionManagerService,
 } from "./live-execution";
 import { getOrProvisionLocalInstallation } from "./local-installation";
 import {
+  loadLocalExecutorConfig,
+  resolveLocalWorkspaceContext,
+} from "./local-config";
+import { RuntimeLocalWorkspaceService } from "./local-runtime-context";
+import { synchronizeLocalWorkspaceState } from "./local-workspace-sync";
+import {
   ControlPlaneStore,
   ControlPlaneStoreLive,
 } from "./store";
 import {
+  createRuntimeSourceAuthService,
   RuntimeSourceAuthServiceLive,
   RuntimeSourceAuthServiceTag,
 } from "./source-auth-service";
 import type { ResolveSecretMaterial } from "./secret-material-providers";
+import { createDefaultSecretMaterialResolver } from "./secret-material-providers";
 import {
+  createWorkspaceExecutionEnvironmentResolver,
   RuntimeExecutionResolverLive,
   RuntimeExecutionResolverService,
 } from "./workspace-execution-environment";
 
-export {
-  ControlPlaneAuthHeaders,
-  createHeaderActorResolver,
-};
-
 export * from "./execution-state";
 export * from "./executor-tools";
 export * from "./live-execution";
+export * from "./local-config";
 export * from "./local-installation";
+export * from "./local-source-artifacts";
 export * from "./schema-type-signature";
 export * from "./source-auth-service";
 export * from "./secret-material-providers";
 export * from "./source-credential-interactions";
+export * from "./source-adapters/mcp";
 export * from "./store";
 export * from "./workspace-execution-environment";
 export * from "./source-inspection";
@@ -64,21 +68,21 @@ export * from "./source-discovery";
 export * from "./execution-service";
 
 export type RuntimeControlPlaneOptions = {
-  actorResolver?: ControlPlaneActorResolverShape;
   executionResolver?: ResolveExecutionEnvironment;
   resolveSecretMaterial?: ResolveSecretMaterial;
   getLocalServerBaseUrl?: () => string | undefined;
+  workspaceRoot?: string;
 };
 
 const detailsFromCause = (cause: unknown): string =>
   cause instanceof Error ? cause.message : String(cause);
 
-const toLocalInstallationBootstrapError = (
+const toLocalRuntimeBootstrapError = (
   cause: unknown,
 ): SqlPersistenceBootstrapError => {
   const details = detailsFromCause(cause);
   return new SqlPersistenceBootstrapError({
-    message: `Failed provisioning local installation: ${details}`,
+    message: `Failed initializing local runtime: ${details}`,
     details,
   });
 };
@@ -93,18 +97,18 @@ export type RuntimeControlPlaneLayer = Layer.Layer<
 >;
 
 const runtimeContextTags = [
-  ControlPlaneActorResolver,
   ControlPlaneStore,
   LiveExecutionManagerService,
+  RuntimeLocalWorkspaceService,
   RuntimeSourceAuthServiceTag,
   RuntimeExecutionResolverService,
 ] as const;
 
 const createRuntimeLayerFromContext = (
   context: Context.Context<
-    ControlPlaneActorResolver
-    | ControlPlaneStore
+    ControlPlaneStore
     | LiveExecutionManagerService
+    | RuntimeLocalWorkspaceService
     | RuntimeSourceAuthServiceTag
     | RuntimeExecutionResolverService
   >,
@@ -112,9 +116,9 @@ const createRuntimeLayerFromContext = (
   const runtimeContext = context.pipe(
     Context.pick(...runtimeContextTags),
   ) as Context.Context<
-    ControlPlaneActorResolver
-    | ControlPlaneStore
+    ControlPlaneStore
     | LiveExecutionManagerService
+    | RuntimeLocalWorkspaceService
     | RuntimeSourceAuthServiceTag
     | RuntimeExecutionResolverService
   >;
@@ -140,53 +144,132 @@ export const createRuntimeControlPlaneLayer = (
 
   return Layer.mergeAll(
     ControlPlaneStoreLive,
-    RuntimeActorResolverLive(options.actorResolver),
     liveExecutionManagerLayer,
     sourceAuthLayer,
     executionResolverLayer,
   );
 };
 
-export type SqlControlPlaneRuntime = {
+export type ControlPlaneRuntime = {
   persistence: SqlControlPlanePersistence;
   localInstallation: LocalInstallation;
   runtimeLayer: RuntimeControlPlaneLayer;
   close: () => Promise<void>;
 };
 
-export type CreateSqlControlPlaneRuntimeOptions = CreateSqlRuntimeOptions
+export type CreateControlPlaneRuntimeOptions = CreateSqlRuntimeOptions
   & RuntimeControlPlaneOptions;
 
-export const createSqlControlPlaneRuntime = (
-  options: CreateSqlControlPlaneRuntimeOptions,
-): Effect.Effect<SqlControlPlaneRuntime, SqlPersistenceBootstrapError> =>
+export const createControlPlaneRuntime = (
+  options: CreateControlPlaneRuntimeOptions,
+): Effect.Effect<ControlPlaneRuntime, SqlPersistenceBootstrapError> =>
   Effect.gen(function* () {
     const scope = yield* Scope.make();
     const persistenceAndRowsLayer = SqlControlPlaneRowsLive.pipe(
       Layer.provideMerge(SqlControlPlanePersistenceLive(options)),
     );
-    const runtimeLayer = createRuntimeControlPlaneLayer(options).pipe(
-      Layer.provideMerge(persistenceAndRowsLayer),
-    );
-
-    const context = yield* Layer.buildWithScope(runtimeLayer, scope).pipe(
+    const baseContext = yield* Layer.buildWithScope(persistenceAndRowsLayer, scope).pipe(
       Effect.catchAll((error) =>
         closeScope(scope).pipe(
           Effect.zipRight(Effect.fail(error)),
         )),
     );
 
-    const persistence = Context.get(context, SqlControlPlanePersistenceService);
-    const store = Context.get(context, ControlPlaneStore);
-    const concreteRuntimeLayer = createRuntimeLayerFromContext(context);
+    const persistence = Context.get(baseContext, SqlControlPlanePersistenceService);
+    const rows = Context.get(baseContext, SqlControlPlaneRowsService);
 
-    const localInstallation = yield* getOrProvisionLocalInstallation(store).pipe(
-      Effect.mapError(toLocalInstallationBootstrapError),
+    const localWorkspaceContext = yield* resolveLocalWorkspaceContext({
+      workspaceRoot: options.workspaceRoot,
+    }).pipe(
+      Effect.mapError(toLocalRuntimeBootstrapError),
       Effect.catchAll((error) =>
         closeScope(scope).pipe(
           Effect.zipRight(Effect.fail(error)),
         )),
     );
+
+    const localInstallation = yield* getOrProvisionLocalInstallation({
+      context: localWorkspaceContext,
+    }).pipe(
+      Effect.mapError(toLocalRuntimeBootstrapError),
+      Effect.catchAll((error) =>
+        closeScope(scope).pipe(
+          Effect.zipRight(Effect.fail(error)),
+        )),
+    );
+
+    const loadedLocalConfig = yield* loadLocalExecutorConfig(localWorkspaceContext).pipe(
+      Effect.mapError(toLocalRuntimeBootstrapError),
+      Effect.catchAll((error) =>
+        closeScope(scope).pipe(
+          Effect.zipRight(Effect.fail(error)),
+        )),
+    );
+
+    const effectiveLocalConfig = yield* synchronizeLocalWorkspaceState({
+      context: localWorkspaceContext,
+      loadedConfig: loadedLocalConfig,
+    }).pipe(
+      Effect.mapError(toLocalRuntimeBootstrapError),
+      Effect.catchAll((error) =>
+        closeScope(scope).pipe(
+          Effect.zipRight(Effect.fail(error)),
+        )),
+    );
+
+    const resolveSecretMaterial =
+      options.resolveSecretMaterial
+      ?? createDefaultSecretMaterialResolver({
+        rows,
+        localConfig: effectiveLocalConfig,
+        workspaceRoot: localWorkspaceContext.workspaceRoot,
+      });
+
+    const liveExecutionManager = createLiveExecutionManager();
+    const sourceAuthService = createRuntimeSourceAuthService({
+      rows,
+      liveExecutionManager,
+      getLocalServerBaseUrl: options.getLocalServerBaseUrl,
+      localConfig: effectiveLocalConfig,
+      workspaceRoot: localWorkspaceContext.workspaceRoot,
+      localWorkspaceState: {
+        context: localWorkspaceContext,
+        installation: {
+          workspaceId: localInstallation.workspaceId,
+          accountId: localInstallation.accountId,
+        },
+        loadedConfig: {
+          ...loadedLocalConfig,
+          config: effectiveLocalConfig,
+        },
+      },
+    });
+    const executionResolver =
+      options.executionResolver
+      ?? createWorkspaceExecutionEnvironmentResolver({
+        rows,
+        sourceAuthService,
+        resolveSecretMaterial,
+      });
+
+    const runtimeContext = Context.empty().pipe(
+      Context.add(ControlPlaneStore, rows),
+      Context.add(LiveExecutionManagerService, liveExecutionManager),
+      Context.add(RuntimeLocalWorkspaceService, {
+        context: localWorkspaceContext,
+        installation: {
+          workspaceId: localInstallation.workspaceId,
+          accountId: localInstallation.accountId,
+        },
+        loadedConfig: {
+          ...loadedLocalConfig,
+          config: effectiveLocalConfig,
+        },
+      }),
+      Context.add(RuntimeSourceAuthServiceTag, sourceAuthService),
+      Context.add(RuntimeExecutionResolverService, executionResolver),
+    );
+    const concreteRuntimeLayer = createRuntimeLayerFromContext(runtimeContext);
 
     return {
       persistence,

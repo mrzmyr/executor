@@ -1,14 +1,4 @@
 export {
-  OrganizationStatusSchema,
-  type OrganizationStatus,
-} from "./models/auth/organization";
-export {
-  OrganizationMemberStatusSchema,
-  RoleSchema,
-  type OrganizationMemberStatus,
-  type Role,
-} from "./models/auth/organization-membership";
-export {
   SourceAuthSchema,
   SourceBindingSchema,
   SourceBindingVersionSchema,
@@ -72,12 +62,8 @@ export {
   type SourceAuthSessionStatus,
 } from "./models/source-auth-session";
 export {
-  PolicyApprovalModeSchema,
-  PolicyEffectSchema,
-  PolicyMatchTypeSchema,
-  PolicyResourceTypeSchema,
-  type PolicyApprovalMode,
-  type PolicyEffect,
-  type PolicyMatchType,
-  type PolicyResourceType,
+  LocalWorkspacePolicyApprovalModeSchema,
+  LocalWorkspacePolicyEffectSchema,
+  type LocalWorkspacePolicyApprovalMode,
+  type LocalWorkspacePolicyEffect,
 } from "./models/policy";

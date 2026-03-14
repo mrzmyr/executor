@@ -3,7 +3,6 @@ export * from "./enums";
 export * from "./ids";
 
 export * from "./models/auth";
-export * from "./models/workspace";
 export * from "./models/source";
 export * from "./models/source-recipe";
 export * from "./models/auth-artifact";
@@ -13,6 +12,7 @@ export * from "./models/secret-material";
 export * from "./models/source-auth-session";
 export * from "./models/policy";
 export * from "./models/local-installation";
+export * from "./models/local-config";
 export * from "./models/execution";
 export * from "./models/source-inspection";
 export * from "./models/source-discovery";

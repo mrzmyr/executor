@@ -1,9 +1,7 @@
 import { describe, expect, it } from "@effect/vitest";
 
-import type { Policy } from "#schema";
+import type { LocalWorkspacePolicy } from "#schema";
 import {
-  AccountIdSchema,
-  OrganizationIdSchema,
   PolicyIdSchema,
   SourceIdSchema,
   WorkspaceIdSchema,
@@ -15,7 +13,6 @@ import {
 } from "./invocation-policy-engine";
 
 const workspaceId = WorkspaceIdSchema.make("ws_policy_engine");
-const organizationId = OrganizationIdSchema.make("org_policy_engine");
 const sourceId = SourceIdSchema.make("src_policy_engine");
 
 const now = 1_700_000_000_000;
@@ -32,20 +29,14 @@ const baseDescriptor: InvocationDescriptor = {
 };
 
 const basePolicy = (
-  patch: Partial<Policy> = {},
-): Policy => ({
+  patch: Partial<LocalWorkspacePolicy> = {},
+): LocalWorkspacePolicy => ({
   id: PolicyIdSchema.make(`pol_${Math.random().toString(36).slice(2, 8)}`),
-  scopeType: "workspace",
-  organizationId,
+  key: "vercel-dns",
   workspaceId,
-  targetAccountId: null,
-  clientId: null,
-  resourceType: "tool_path",
   resourcePattern: "vercel.api.dns.createRecord",
-  matchType: "exact",
   effect: "allow",
   approvalMode: "auto",
-  argumentConditionsJson: null,
   priority: 0,
   enabled: true,
   createdAt: now,
@@ -54,7 +45,7 @@ const basePolicy = (
 });
 
 describe("invocation-policy-engine", () => {
-  it("allows GET requests by default", () => {
+  it("allows read requests by default", () => {
     const decision = evaluateInvocationPolicy({
       descriptor: {
         ...baseDescriptor,
@@ -67,107 +58,83 @@ describe("invocation-policy-engine", () => {
       policies: [],
       context: {
         workspaceId,
-        organizationId,
-        accountId: null,
-        clientId: null,
       },
     });
 
     expect(decision.kind).toBe("allow");
   });
 
-  it("requires interaction for mutating OpenAPI requests by default", () => {
+  it("requires interaction for mutating requests by default", () => {
     const decision = evaluateInvocationPolicy({
       descriptor: baseDescriptor,
       args: { domain: "testing.executor.sh" },
       policies: [],
       context: {
         workspaceId,
-        organizationId,
-        accountId: null,
-        clientId: null,
       },
     });
 
     expect(decision.kind).toBe("require_interaction");
   });
 
-  it("lets an organization policy allow a mutating request", () => {
+  it("allows a mutating request when a matching policy exists", () => {
     const decision = evaluateInvocationPolicy({
       descriptor: baseDescriptor,
       args: { domain: "testing.executor.sh" },
       policies: [basePolicy({
-        id: PolicyIdSchema.make("pol_org_allow"),
-        scopeType: "organization",
-        workspaceId: null,
+        id: PolicyIdSchema.make("pol_allow"),
       })],
       context: {
         workspaceId,
-        organizationId,
-        accountId: null,
-        clientId: null,
       },
     });
 
     expect(decision.kind).toBe("allow");
-    expect(decision.matchedPolicyId).toBe("pol_org_allow");
+    expect(decision.matchedPolicyId).toBe("pol_allow");
   });
 
-  it("prefers a more specific workspace deny over an organization allow", () => {
+  it("prefers a more specific deny over a broad allow", () => {
     const decision = evaluateInvocationPolicy({
       descriptor: baseDescriptor,
       args: { domain: "testing.executor.sh" },
       policies: [
         basePolicy({
-          id: PolicyIdSchema.make("pol_org_allow"),
-          scopeType: "organization",
-          workspaceId: null,
-          approvalMode: "auto",
+          id: PolicyIdSchema.make("pol_allow_all_vercel"),
+          key: "allow-all-vercel",
+          resourcePattern: "vercel.api.*",
           effect: "allow",
+          priority: 0,
         }),
         basePolicy({
-          id: PolicyIdSchema.make("pol_ws_deny"),
+          id: PolicyIdSchema.make("pol_deny_create_record"),
+          key: "deny-create-record",
           effect: "deny",
-          priority: 10,
-        }),
-      ],
-      context: {
-        workspaceId,
-        organizationId,
-        accountId: null,
-        clientId: null,
-      },
-    });
-
-    expect(decision.kind).toBe("deny");
-    expect(decision.matchedPolicyId).toBe("pol_ws_deny");
-  });
-
-  it("prefers an account-targeted workspace allow over a generic workspace policy", () => {
-    const decision = evaluateInvocationPolicy({
-      descriptor: baseDescriptor,
-      args: { domain: "testing.executor.sh" },
-      policies: [
-        basePolicy({
-          id: PolicyIdSchema.make("pol_ws_gate"),
-          approvalMode: "required",
-        }),
-        basePolicy({
-          id: PolicyIdSchema.make("pol_ws_user_allow"),
-          targetAccountId: AccountIdSchema.make("acc_user"),
-          approvalMode: "auto",
           priority: 1,
         }),
       ],
       context: {
         workspaceId,
-        organizationId,
-        accountId: AccountIdSchema.make("acc_user"),
-        clientId: null,
       },
     });
 
-    expect(decision.kind).toBe("allow");
-    expect(decision.matchedPolicyId).toBe("pol_ws_user_allow");
+    expect(decision.kind).toBe("deny");
+    expect(decision.matchedPolicyId).toBe("pol_deny_create_record");
+  });
+
+  it("ignores disabled policies", () => {
+    const decision = evaluateInvocationPolicy({
+      descriptor: baseDescriptor,
+      args: { domain: "testing.executor.sh" },
+      policies: [basePolicy({
+        id: PolicyIdSchema.make("pol_disabled"),
+        enabled: false,
+      })],
+      context: {
+        workspaceId,
+      },
+    });
+
+    expect(decision.kind).toBe("require_interaction");
+    expect(decision.matchedPolicyId).toBeNull();
   });
 });

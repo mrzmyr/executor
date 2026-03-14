@@ -5,10 +5,10 @@ import { NodeHttpServer } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import {
   createControlPlaneApiLayer,
-  createSqlControlPlaneRuntime,
+  createControlPlaneRuntime,
   type LocalInstallation,
   type Source,
-  type SqlControlPlaneRuntime,
+  type ControlPlaneRuntime,
 } from "@executor/control-plane";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
@@ -69,7 +69,7 @@ type RunningServer = {
 };
 
 type ApiServer = RunningServer & {
-  runtime: SqlControlPlaneRuntime;
+  runtime: ControlPlaneRuntime;
 };
 
 type HookHarness<T> = {
@@ -95,7 +95,10 @@ const closeScope = (scope: Scope.CloseableScope) =>
 
 const startControlPlaneServer = async (): Promise<ApiServer> => {
   const runtime = await Effect.runPromise(
-    createSqlControlPlaneRuntime({ localDataDir: ":memory:" }),
+    createControlPlaneRuntime({
+      localDataDir: ":memory:",
+      workspaceRoot: mkdtempSync(join(tmpdir(), "executor-react-test-")),
+    }),
   );
   const scope = await Effect.runPromise(Scope.make());
 
@@ -531,6 +534,7 @@ describe("executor-react source hooks", () => {
       await apiServer.close();
     }
     }),
+    60_000,
   );
 
   it.effect("applies optimistic source updates and refreshes live inspection data after success", () =>
@@ -624,6 +628,7 @@ describe("executor-react source hooks", () => {
       await apiServer.close();
     }
     }),
+    60_000,
   );
 
   it.effect("optimistically removes deleted sources and invalidates mounted source queries", () =>
@@ -706,6 +711,7 @@ describe("executor-react source hooks", () => {
       await apiServer.close();
     }
     }),
+    60_000,
   );
 
   it.effect("surfaces missing sources as errors instead of staying loading", () =>
@@ -741,5 +747,9 @@ describe("executor-react source hooks", () => {
         await apiServer.close();
       }
     }),
+    60_000,
   );
 });
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";

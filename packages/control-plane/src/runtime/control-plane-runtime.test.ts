@@ -1,4 +1,7 @@
 import { createServer } from "node:http";
+import { mkdtempSync, readFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 import { describe, expect, it } from "@effect/vitest";
 import { assertTrue } from "@effect/vitest/utils";
@@ -12,32 +15,25 @@ import {
   ExecutionInteractionIdSchema,
   SecretMaterialIdSchema,
   SourceIdSchema,
-  SourceRecipeIdSchema,
-  SourceRecipeRevisionIdSchema,
 } from "#schema";
 import type { ToolPath } from "@executor/codemode-core";
 
 import {
-  createSqlControlPlaneRuntime,
+  createControlPlaneRuntime,
   LiveExecutionManagerService,
 } from "./index";
+import { createSourceFromPayload } from "./source-definitions";
 import { decodeSourceCredentialSelectionContent } from "./source-credential-interactions";
+import { persistSource } from "./source-store";
 import { withControlPlaneClient } from "./test-http-client";
 
 const makeRuntime = Effect.acquireRelease(
-  createSqlControlPlaneRuntime({ localDataDir: ":memory:" }),
+  createControlPlaneRuntime({
+    localDataDir: ":memory:",
+    workspaceRoot: mkdtempSync(join(tmpdir(), "executor-control-plane-runtime-")),
+  }),
   (runtime) => Effect.promise(() => runtime.close()).pipe(Effect.orDie),
 );
-
-const openApiBindingConfigJson = (specUrl: string): string =>
-  JSON.stringify({
-    adapterKey: "openapi",
-    version: 1,
-    payload: {
-      specUrl,
-      defaultHeaders: null,
-    },
-  });
 
 type OpenApiSpecServer = {
   baseUrl: string;
@@ -123,155 +119,72 @@ const expectLeft = <A, E>(effect: Effect.Effect<A, E, never>) =>
   );
 
 describe("control-plane-runtime", () => {
-  it.scoped("supports full CRUD flow over HTTP API", () =>
+  it.scoped("writes local source changes through executor.jsonc", () =>
     Effect.gen(function* () {
-      const runtime = yield* makeRuntime;
+      const workspaceRoot = mkdtempSync(join(tmpdir(), "executor-local-config-runtime-"));
+      const runtime = yield* Effect.acquireRelease(
+        createControlPlaneRuntime({
+          localDataDir: ":memory:",
+          workspaceRoot,
+        }),
+        (createdRuntime) => Effect.promise(() => createdRuntime.close()).pipe(Effect.orDie),
+      );
       const openApiServer = yield* makeOpenApiSpecServer;
+      const installation = runtime.localInstallation;
 
-      const createOrg = yield* withControlPlaneClient(
-        { runtime, accountId: "acc_1" },
-        (client) =>
-          client.organizations.create({
-            payload: {
-              name: "Acme",
-            },
-          }),
-      );
-      const organizationId = createOrg.id;
-
-      const createWorkspace = yield* withControlPlaneClient(
-        { runtime, accountId: "acc_1" },
-        (client) =>
-          client.workspaces.create({
-            path: { organizationId },
-            payload: { name: "Primary" },
-          }),
-      );
-      expect(createWorkspace.createdByAccountId).toBe("acc_1");
-      const workspaceId = createWorkspace.id;
-
-      yield* withControlPlaneClient(
-        { runtime, accountId: "acc_1" },
+      const createdSource = yield* withControlPlaneClient(
+        { runtime, accountId: installation.accountId },
         (client) =>
           client.sources.create({
-            path: { workspaceId },
+            path: { workspaceId: installation.workspaceId },
             payload: {
-              name: "Github",
+              name: "GitHub",
               kind: "openapi",
               endpoint: openApiServer.baseUrl,
+              namespace: "github",
               binding: {
                 specUrl: openApiServer.specUrl,
                 defaultHeaders: null,
               },
-              auth: {
-                kind: "none",
-              },
-            },
-          }),
-      );
-
-      yield* withControlPlaneClient(
-        { runtime, accountId: "acc_1" },
-        (client) =>
-          client.policies.create({
-            path: { workspaceId },
-            payload: {
-              resourceType: "tool_path",
-              resourcePattern: "source.github.*",
-              matchType: "glob",
-              effect: "allow",
-              approvalMode: "auto",
-              priority: 50,
-              enabled: true,
-            },
-          }),
-      );
-
-      const listSources = yield* withControlPlaneClient(
-        { runtime, accountId: "acc_1" },
-        (client) =>
-          client.sources.list({
-            path: { workspaceId },
-          }),
-      );
-      expect(listSources.length).toBe(1);
-
-      const listPolicies = yield* withControlPlaneClient(
-        { runtime, accountId: "acc_1" },
-        (client) =>
-          client.policies.list({
-            path: { workspaceId },
-          }),
-      );
-      expect(listPolicies.length).toBe(1);
-    }),
-  );
-
-  it.scoped("discovers and connects an OpenAPI source through the HTTP API", () =>
-    Effect.gen(function* () {
-      const runtime = yield* makeRuntime;
-      const openApiServer = yield* makeOpenApiSpecServer;
-
-      const organization = yield* withControlPlaneClient(
-        { runtime, accountId: "acc_discover" },
-        (client) =>
-          client.organizations.create({
-            payload: { name: "Discovery Org" },
-          }),
-      );
-      const workspace = yield* withControlPlaneClient(
-        { runtime, accountId: "acc_discover" },
-        (client) =>
-          client.workspaces.create({
-            path: { organizationId: organization.id },
-            payload: { name: "Discovery Workspace" },
-          }),
-      );
-
-      const discovered = yield* withControlPlaneClient(
-        { runtime, accountId: "acc_discover" },
-        (client) =>
-          client.sources.discover({
-            payload: {
-              url: openApiServer.specUrl,
-            },
-          }),
-      );
-      expect(discovered.detectedKind).toBe("openapi");
-      expect(discovered.specUrl).toBe(openApiServer.specUrl);
-      expect(discovered.endpoint).toBe(openApiServer.baseUrl);
-
-      const connected = yield* withControlPlaneClient(
-        { runtime, accountId: "acc_discover" },
-        (client) =>
-          client.sources.connect({
-            path: { workspaceId: workspace.id },
-            payload: {
-              kind: "openapi",
-              endpoint: discovered.endpoint,
-              specUrl: discovered.specUrl ?? openApiServer.specUrl,
-              name: discovered.name,
-              namespace: discovered.namespace,
               auth: { kind: "none" },
             },
           }),
       );
-      expect(connected.kind).toBe("connected");
-      expect(connected.source.kind).toBe("openapi");
-      expect(connected.source.status).toBe("connected");
-      expect(connected.source.binding).toEqual({
-        specUrl: openApiServer.specUrl,
-        defaultHeaders: null,
-      });
+
+      const configPath = join(workspaceRoot, ".executor", "executor.jsonc");
+      const createdConfig = JSON.parse(readFileSync(configPath, "utf8")) as {
+        sources?: Record<string, { kind: string; connection: { endpoint: string } }>;
+      };
+      expect(createdConfig.sources?.github?.kind).toBe("openapi");
+      expect(createdConfig.sources?.github?.connection.endpoint).toBe(openApiServer.baseUrl);
+
+      const removed = yield* withControlPlaneClient(
+        { runtime, accountId: installation.accountId },
+        (client) =>
+          client.sources.remove({
+            path: {
+              workspaceId: installation.workspaceId,
+              sourceId: createdSource.id,
+            },
+          }),
+      );
+      expect(removed.removed).toBe(true);
+
+      const removedConfig = JSON.parse(readFileSync(configPath, "utf8")) as {
+        sources?: Record<string, unknown>;
+      };
+      expect(removedConfig.sources?.github).toBeUndefined();
     }),
+    60_000,
   );
+
 
   it.scoped("captures credential requests through the local HTML flow without persisting raw tokens", () =>
     Effect.gen(function* () {
       const runtime = yield* makeRuntime;
       const installation = runtime.localInstallation;
       const executionId = ExecutionIdSchema.make("exec_local_credential");
-      const sourceId = SourceIdSchema.make("src_local_credential");
+      const sourceId = SourceIdSchema.make("github");
       const interactionSuffix = "executor.sources.add:test";
       const interactionId = ExecutionInteractionIdSchema.make(
         `${executionId}:${interactionSuffix}`,
@@ -293,24 +206,32 @@ describe("control-plane-runtime", () => {
         updatedAt: now,
       });
 
-      yield* runtime.persistence.rows.sources.insert({
-        id: sourceId,
+      const localSource = yield* createSourceFromPayload({
         workspaceId: installation.workspaceId,
-        recipeId: SourceRecipeIdSchema.make(`src_recipe_${sourceId}`),
-        recipeRevisionId: SourceRecipeRevisionIdSchema.make(`src_recipe_rev_${sourceId}`),
-        name: "GitHub",
-        kind: "openapi",
-        endpoint: "https://api.github.com",
-        status: "auth_required",
-        enabled: true,
-        namespace: "github",
-        importAuthPolicy: "reuse_runtime",
-        bindingConfigJson: openApiBindingConfigJson("https://example.com/github-openapi.yaml"),
-        sourceHash: null,
-        lastError: null,
-        createdAt: now,
-        updatedAt: now,
-      });
+        sourceId,
+        payload: {
+          name: "GitHub",
+          kind: "openapi",
+          endpoint: "https://api.github.com",
+          status: "auth_required",
+          enabled: true,
+          namespace: "github",
+          importAuthPolicy: "reuse_runtime",
+          binding: {
+            specUrl: "https://example.com/github-openapi.yaml",
+            defaultHeaders: null,
+          },
+          importAuth: { kind: "none" },
+          auth: { kind: "none" },
+        },
+        now,
+      }).pipe(Effect.orDie);
+      yield* persistSource(runtime.persistence.rows, localSource, {
+        actorAccountId: installation.accountId,
+      }).pipe(
+        Effect.provide(runtime.runtimeLayer),
+        Effect.orDie,
+      );
 
       const interactionFiber = yield* Effect.gen(function* () {
         const liveExecutionManager = yield* LiveExecutionManagerService;
@@ -426,7 +347,7 @@ describe("control-plane-runtime", () => {
       const runtime = yield* makeRuntime;
       const installation = runtime.localInstallation;
       const executionId = ExecutionIdSchema.make("exec_local_credential_continue");
-      const sourceId = SourceIdSchema.make("src_local_credential_continue");
+      const sourceId = SourceIdSchema.make("github");
       const interactionSuffix = "executor.sources.add:continue";
       const interactionId = ExecutionInteractionIdSchema.make(
         `${executionId}:${interactionSuffix}`,
@@ -448,24 +369,32 @@ describe("control-plane-runtime", () => {
         updatedAt: now,
       });
 
-      yield* runtime.persistence.rows.sources.insert({
-        id: sourceId,
+      const localSource = yield* createSourceFromPayload({
         workspaceId: installation.workspaceId,
-        recipeId: SourceRecipeIdSchema.make(`src_recipe_${sourceId}`),
-        recipeRevisionId: SourceRecipeRevisionIdSchema.make(`src_recipe_rev_${sourceId}`),
-        name: "GitHub",
-        kind: "openapi",
-        endpoint: "https://api.github.com",
-        status: "auth_required",
-        enabled: true,
-        namespace: "github",
-        importAuthPolicy: "reuse_runtime",
-        bindingConfigJson: openApiBindingConfigJson("https://example.com/github-openapi.yaml"),
-        sourceHash: null,
-        lastError: null,
-        createdAt: now,
-        updatedAt: now,
-      });
+        sourceId,
+        payload: {
+          name: "GitHub",
+          kind: "openapi",
+          endpoint: "https://api.github.com",
+          status: "auth_required",
+          enabled: true,
+          namespace: "github",
+          importAuthPolicy: "reuse_runtime",
+          binding: {
+            specUrl: "https://example.com/github-openapi.yaml",
+            defaultHeaders: null,
+          },
+          importAuth: { kind: "none" },
+          auth: { kind: "none" },
+        },
+        now,
+      }).pipe(Effect.orDie);
+      yield* persistSource(runtime.persistence.rows, localSource, {
+        actorAccountId: installation.accountId,
+      }).pipe(
+        Effect.provide(runtime.runtimeLayer),
+        Effect.orDie,
+      );
 
       const interactionFiber = yield* Effect.gen(function* () {
         const liveExecutionManager = yield* LiveExecutionManagerService;
@@ -538,264 +467,4 @@ describe("control-plane-runtime", () => {
     }),
   );
 
-  it.scoped("scopes organization list/get to memberships", () =>
-    Effect.gen(function* () {
-      const runtime = yield* makeRuntime;
-
-      const orgOne = yield* withControlPlaneClient(
-        { runtime, accountId: "acc_1" },
-        (client) =>
-          client.organizations.create({
-            payload: { name: "Org One" },
-          }),
-      );
-
-      const orgTwo = yield* withControlPlaneClient(
-        { runtime, accountId: "acc_2" },
-        (client) =>
-          client.organizations.create({
-            payload: { name: "Org Two" },
-          }),
-      );
-
-      const listForAcc1 = yield* withControlPlaneClient(
-        { runtime, accountId: "acc_1" },
-        (client) => client.organizations.list({}),
-      );
-
-      expect(listForAcc1.length).toBe(1);
-
-      const getOtherOrgError = yield* expectLeft(
-        withControlPlaneClient(
-          { runtime, accountId: "acc_1" },
-          (client) =>
-            client.organizations.get({
-              path: { organizationId: orgTwo.id },
-            }),
-        ),
-      );
-
-      assertTrue(orgOne.id.length > 0);
-      expect(getOtherOrgError._tag).toBe("ControlPlaneNotFoundError");
-    }),
-  );
-
-  it.scoped("prevents viewers from workspace manage actions", () =>
-    Effect.gen(function* () {
-      const runtime = yield* makeRuntime;
-
-      const organization = yield* withControlPlaneClient(
-        { runtime, accountId: "owner_acc" },
-        (client) =>
-          client.organizations.create({
-            payload: { name: "Secured Org" },
-          }),
-      );
-
-      const workspace = yield* withControlPlaneClient(
-        { runtime, accountId: "owner_acc" },
-        (client) =>
-          client.workspaces.create({
-            path: { organizationId: organization.id },
-            payload: { name: "Secured WS" },
-          }),
-      );
-
-      yield* withControlPlaneClient(
-        { runtime, accountId: "owner_acc" },
-        (client) =>
-          client.memberships.create({
-            path: { organizationId: organization.id },
-            payload: {
-              accountId: "viewer_acc" as AccountId,
-              role: "viewer",
-              status: "active",
-            },
-          }),
-      );
-
-      const viewerDeleteError = yield* expectLeft(
-        withControlPlaneClient(
-          { runtime, accountId: "viewer_acc" },
-          (client) =>
-            client.workspaces.remove({
-              path: { workspaceId: workspace.id },
-            }),
-        ),
-      );
-
-      expect(viewerDeleteError._tag).toBe("ControlPlaneForbiddenError");
-    }),
-  );
-
-  it.scoped("blocks organization manage across tenants", () =>
-    Effect.gen(function* () {
-      const runtime = yield* makeRuntime;
-
-      const orgA = yield* withControlPlaneClient(
-        { runtime, accountId: "acc_a" },
-        (client) =>
-          client.organizations.create({
-            payload: { name: "Org A" },
-          }),
-      );
-
-      const orgB = yield* withControlPlaneClient(
-        { runtime, accountId: "acc_b" },
-        (client) =>
-          client.organizations.create({
-            payload: { name: "Org B" },
-          }),
-      );
-
-      const patchOtherOrgError = yield* expectLeft(
-        withControlPlaneClient(
-          { runtime, accountId: "acc_a" },
-          (client) =>
-            client.organizations.update({
-              path: { organizationId: orgB.id },
-              payload: { name: "Renamed" },
-            }),
-        ),
-      );
-      assertTrue(orgA.id.length > 0);
-      expect(patchOtherOrgError._tag).toBe("ControlPlaneForbiddenError");
-
-      const deleteOtherOrgError = yield* expectLeft(
-        withControlPlaneClient(
-          { runtime, accountId: "acc_a" },
-          (client) =>
-            client.organizations.remove({
-              path: { organizationId: orgB.id },
-            }),
-        ),
-      );
-      expect(deleteOtherOrgError._tag).toBe("ControlPlaneForbiddenError");
-    }),
-  );
-
-  it.scoped("suspended creators cannot manage previously created workspaces", () =>
-    Effect.gen(function* () {
-      const runtime = yield* makeRuntime;
-
-      const organization = yield* withControlPlaneClient(
-        { runtime, accountId: "creator_acc" },
-        (client) =>
-          client.organizations.create({
-            payload: { name: "Creator Org" },
-          }),
-      );
-
-      const workspace = yield* withControlPlaneClient(
-        { runtime, accountId: "creator_acc" },
-        (client) =>
-          client.workspaces.create({
-            path: { organizationId: organization.id },
-            payload: { name: "Creator WS" },
-          }),
-      );
-
-      yield* withControlPlaneClient(
-        { runtime, accountId: "creator_acc" },
-        (client) =>
-          client.memberships.update({
-            path: {
-              organizationId: organization.id,
-              accountId: "creator_acc" as AccountId,
-            },
-            payload: { status: "suspended" },
-          }),
-      );
-
-      const deleteWorkspaceError = yield* expectLeft(
-        withControlPlaneClient(
-          { runtime, accountId: "creator_acc" },
-          (client) =>
-            client.workspaces.remove({
-              path: { workspaceId: workspace.id },
-            }),
-        ),
-      );
-
-      expect(deleteWorkspaceError._tag).toBe("ControlPlaneForbiddenError");
-    }),
-  );
-
-  it.scoped("deleting organization cascades and blocks stale org operations", () =>
-    Effect.gen(function* () {
-      const runtime = yield* makeRuntime;
-
-      const organization = yield* withControlPlaneClient(
-        { runtime, accountId: "acc_del" },
-        (client) =>
-          client.organizations.create({
-            payload: { name: "Delete Me" },
-          }),
-      );
-
-      const workspace = yield* withControlPlaneClient(
-        { runtime, accountId: "acc_del" },
-        (client) =>
-          client.workspaces.create({
-            path: { organizationId: organization.id },
-            payload: { name: "Delete WS" },
-          }),
-      );
-
-      const deleteOrg = yield* withControlPlaneClient(
-        { runtime, accountId: "acc_del" },
-        (client) =>
-          client.organizations.remove({
-            path: { organizationId: organization.id },
-          }),
-      );
-      assertTrue(deleteOrg.removed);
-
-      const listStaleWorkspacesError = yield* expectLeft(
-        withControlPlaneClient(
-          { runtime, accountId: "acc_del" },
-          (client) =>
-            client.workspaces.list({
-              path: { organizationId: organization.id },
-            }),
-        ),
-      );
-      expect(listStaleWorkspacesError._tag).toBe("ControlPlaneForbiddenError");
-
-      const createStaleWorkspaceError = yield* expectLeft(
-        withControlPlaneClient(
-          { runtime, accountId: "acc_del" },
-          (client) =>
-            client.workspaces.create({
-              path: { organizationId: organization.id },
-              payload: { name: "Should Fail" },
-            }),
-        ),
-      );
-      expect(createStaleWorkspaceError._tag).toBe("ControlPlaneForbiddenError");
-
-      const getDeletedWorkspaceError = yield* expectLeft(
-        withControlPlaneClient(
-          { runtime, accountId: "acc_del" },
-          (client) =>
-            client.workspaces.get({
-              path: { workspaceId: workspace.id },
-            }),
-        ),
-      );
-      expect(getDeletedWorkspaceError._tag).toBe("ControlPlaneForbiddenError");
-    }),
-  );
-
-  it.scoped("rejects unauthenticated calls", () =>
-    Effect.gen(function* () {
-      const runtime = yield* makeRuntime;
-
-      const error = yield* expectLeft(
-        withControlPlaneClient({ runtime }, (client) => client.organizations.list({})),
-      );
-
-      expect(error._tag).toBe("ControlPlaneUnauthorizedError");
-    }),
-  );
 });

@@ -1,7 +1,5 @@
 import { HttpApiBuilder } from "@effect/platform";
-import type { WorkspaceId } from "#schema";
-
-import { requirePermission, withPolicy } from "#domain";
+import * as Effect from "effect/Effect";
 import {
   createExecution,
   getExecution,
@@ -9,13 +7,7 @@ import {
 } from "../../runtime/execution-service";
 
 import { ControlPlaneApi } from "../api";
-import { withWorkspaceRequestActor } from "../http-auth";
-
-const requireExecuteWorkspace = (workspaceId: WorkspaceId) =>
-  requirePermission({
-    permission: "workspace:read",
-    workspaceId,
-  });
+import { resolveRequestedLocalWorkspace } from "../local-context";
 
 export const ControlPlaneExecutionsLive = HttpApiBuilder.group(
   ControlPlaneApi,
@@ -23,19 +15,19 @@ export const ControlPlaneExecutionsLive = HttpApiBuilder.group(
   (handlers) =>
     handlers
       .handle("create", ({ path, payload }) =>
-        withWorkspaceRequestActor("executions.create", path.workspaceId, (actor) =>
-          withPolicy(requireExecuteWorkspace(path.workspaceId))(
+        resolveRequestedLocalWorkspace("executions.create", path.workspaceId).pipe(
+          Effect.flatMap((runtimeLocalWorkspace) =>
             createExecution({
               workspaceId: path.workspaceId,
               payload,
-              createdByAccountId: actor.principal.accountId,
-            }),
+              createdByAccountId: runtimeLocalWorkspace.installation.accountId,
+            })
           ),
         ),
       )
       .handle("get", ({ path }) =>
-        withWorkspaceRequestActor("executions.get", path.workspaceId, () =>
-          withPolicy(requireExecuteWorkspace(path.workspaceId))(
+        resolveRequestedLocalWorkspace("executions.get", path.workspaceId).pipe(
+          Effect.zipRight(
             getExecution({
               workspaceId: path.workspaceId,
               executionId: path.executionId,
@@ -44,14 +36,14 @@ export const ControlPlaneExecutionsLive = HttpApiBuilder.group(
         ),
       )
       .handle("resume", ({ path, payload }) =>
-        withWorkspaceRequestActor("executions.resume", path.workspaceId, (actor) =>
-          withPolicy(requireExecuteWorkspace(path.workspaceId))(
+        resolveRequestedLocalWorkspace("executions.resume", path.workspaceId).pipe(
+          Effect.flatMap((runtimeLocalWorkspace) =>
             resumeExecution({
               workspaceId: path.workspaceId,
               executionId: path.executionId,
               payload,
-              resumedByAccountId: actor.principal.accountId,
-            }),
+              resumedByAccountId: runtimeLocalWorkspace.installation.accountId,
+            })
           ),
         ),
       ),

@@ -1,8 +1,6 @@
 import {
   HttpApiBuilder,
   HttpApiClient,
-  HttpClient,
-  HttpClientRequest,
 } from "@effect/platform";
 import { NodeHttpServer } from "@effect/platform-node";
 import * as Effect from "effect/Effect";
@@ -14,11 +12,10 @@ import {
 } from "#api";
 
 import {
-  ControlPlaneAuthHeaders,
-  type SqlControlPlaneRuntime,
+  type ControlPlaneRuntime,
 } from "./index";
 
-const createClientLayer = (runtime: SqlControlPlaneRuntime) => {
+const createClientLayer = (runtime: ControlPlaneRuntime) => {
   const apiLayer = createControlPlaneApiLayer(runtime.runtimeLayer);
 
   return HttpApiBuilder.serve().pipe(
@@ -28,19 +25,9 @@ const createClientLayer = (runtime: SqlControlPlaneRuntime) => {
 };
 
 const createControlPlaneClient = (accountId?: string) =>
+  (void accountId,
   HttpApiClient.make(ControlPlaneApi, {
-    transformClient: accountId
-      ? (client) =>
-          client.pipe(
-            HttpClient.mapRequest(
-              HttpClientRequest.setHeader(
-                ControlPlaneAuthHeaders.accountId,
-                accountId,
-              ),
-            ),
-          )
-      : undefined,
-  });
+  }));
 
 type ControlPlaneClient = Effect.Effect.Success<
   ReturnType<typeof createControlPlaneClient>
@@ -48,7 +35,7 @@ type ControlPlaneClient = Effect.Effect.Success<
 
 export const withControlPlaneClient = <A, E>(
   input: {
-    runtime: SqlControlPlaneRuntime;
+    runtime: ControlPlaneRuntime;
     accountId?: string;
   },
   f: (client: ControlPlaneClient) => Effect.Effect<A, E, never>,

@@ -3,7 +3,7 @@ import { describe, expect, it } from "@effect/vitest";
 import { decideInteractionHandling } from "./interaction-handling";
 
 describe("interaction-handling", () => {
-  it("keeps URL interactions distinct when the terminal is non-interactive", () => {
+  it("keeps URL interactions distinct even when the terminal is non-interactive", () => {
     expect(decideInteractionHandling({
       parsed: {
         mode: "url",

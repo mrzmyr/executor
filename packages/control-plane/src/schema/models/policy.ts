@@ -1,79 +1,28 @@
-import {
-  createInsertSchema,
-  createSelectSchema,
-  createUpdateSchema,
-} from "drizzle-orm/effect-schema";
 import { Schema } from "effect";
 
-import { policiesTable } from "../../persistence/schema";
 import { TimestampMsSchema } from "../common";
-import {
-  AccountIdSchema,
-  OrganizationIdSchema,
-  PolicyIdSchema,
-  WorkspaceIdSchema,
-} from "../ids";
+import { PolicyIdSchema, WorkspaceIdSchema } from "../ids";
 
-export const PolicyScopeTypeSchema = Schema.Literal("organization", "workspace");
+export const LocalWorkspacePolicyEffectSchema = Schema.Literal("allow", "deny");
+export const LocalWorkspacePolicyApprovalModeSchema = Schema.Literal("auto", "required");
 
-export const PolicyResourceTypeSchema = Schema.Literal(
-  "all_tools",
-  "source",
-  "namespace",
-  "tool_path",
-);
-
-export const PolicyMatchTypeSchema = Schema.Literal("glob", "exact");
-export const PolicyEffectSchema = Schema.Literal("allow", "deny");
-export const PolicyApprovalModeSchema = Schema.Literal("auto", "required");
-
-export const ArgumentConditionOperatorSchema = Schema.Literal(
-  "equals",
-  "contains",
-  "starts_with",
-  "not_equals",
-);
-
-export const PolicyArgumentConditionSchema = Schema.Struct({
-  key: Schema.String,
-  operator: ArgumentConditionOperatorSchema,
-  value: Schema.String,
-});
-
-const policySchemaOverrides = {
+export const LocalWorkspacePolicySchema = Schema.Struct({
   id: PolicyIdSchema,
-  scopeType: PolicyScopeTypeSchema,
-  organizationId: OrganizationIdSchema,
-  workspaceId: Schema.NullOr(WorkspaceIdSchema),
-  targetAccountId: Schema.NullOr(AccountIdSchema),
-  clientId: Schema.NullOr(Schema.String),
-  resourceType: PolicyResourceTypeSchema,
-  matchType: PolicyMatchTypeSchema,
-  effect: PolicyEffectSchema,
-  approvalMode: PolicyApprovalModeSchema,
-  argumentConditionsJson: Schema.NullOr(Schema.String),
+  key: Schema.String,
+  workspaceId: WorkspaceIdSchema,
+  resourcePattern: Schema.String,
+  effect: LocalWorkspacePolicyEffectSchema,
+  approvalMode: LocalWorkspacePolicyApprovalModeSchema,
+  priority: Schema.Number,
+  enabled: Schema.Boolean,
   createdAt: TimestampMsSchema,
   updatedAt: TimestampMsSchema,
-} as const;
+});
 
-export const PolicySchema = createSelectSchema(policiesTable, policySchemaOverrides);
+export const LocalWorkspacePolicyInsertSchema = LocalWorkspacePolicySchema;
+export const LocalWorkspacePolicyUpdateSchema = Schema.partial(LocalWorkspacePolicySchema);
 
-export const PolicyInsertSchema = createInsertSchema(
-  policiesTable,
-  policySchemaOverrides,
-);
-
-export const PolicyUpdateSchema = createUpdateSchema(
-  policiesTable,
-  policySchemaOverrides,
-);
-
-export type PolicyResourceType = typeof PolicyResourceTypeSchema.Type;
-export type PolicyMatchType = typeof PolicyMatchTypeSchema.Type;
-export type PolicyEffect = typeof PolicyEffectSchema.Type;
-export type PolicyApprovalMode = typeof PolicyApprovalModeSchema.Type;
-export type PolicyScopeType = typeof PolicyScopeTypeSchema.Type;
-export type ArgumentConditionOperator =
-  typeof ArgumentConditionOperatorSchema.Type;
-export type PolicyArgumentCondition = typeof PolicyArgumentConditionSchema.Type;
-export type Policy = typeof PolicySchema.Type;
+export type LocalWorkspacePolicyEffect = typeof LocalWorkspacePolicyEffectSchema.Type;
+export type LocalWorkspacePolicyApprovalMode =
+  typeof LocalWorkspacePolicyApprovalModeSchema.Type;
+export type LocalWorkspacePolicy = typeof LocalWorkspacePolicySchema.Type;

@@ -17,6 +17,8 @@ import { LiveExecutionManagerService } from "./live-execution";
 import {
   operationErrors,
 } from "./operation-errors";
+import { resolveLocalWorkspaceContext } from "./local-config";
+import { getRuntimeLocalWorkspaceOption } from "./local-runtime-context";
 import { RuntimeSourceAuthServiceTag } from "./source-auth-service";
 import {
   createSourceCredentialSelectionBearerContent,
@@ -180,29 +182,18 @@ const loadSourceCredentialInteraction = (input: {
 
 export const getLocalInstallation = () =>
   Effect.gen(function* () {
-    const store = yield* ControlPlaneStore;
+    const runtimeLocalWorkspace = yield* getRuntimeLocalWorkspaceOption();
+    const context = runtimeLocalWorkspace?.context
+      ?? (yield* resolveLocalWorkspaceContext().pipe(
+        Effect.mapError((error) =>
+          localOps.installation.unknownStorage(
+            error,
+            "Failed resolving local workspace context",
+          ),
+          ),
+      ));
 
-    const installation = yield* loadLocalInstallation(store).pipe(
-      Effect.mapError((error) =>
-        error instanceof ControlPlanePersistenceError
-          ? localOps.installation.storage(error)
-          : localOps.installation.unknownStorage(
-              error,
-              "Failed loading local installation",
-            ),
-      ),
-    );
-
-    if (installation === null) {
-      return yield* Effect.fail(
-        localOps.installation.notFound(
-          "Local installation not found",
-          "No local installation has been provisioned",
-        ),
-      );
-    }
-
-    return installation;
+    return yield* loadLocalInstallation(context);
   });
 
 export const getSourceCredentialInteraction = (input: {

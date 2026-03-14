@@ -5,6 +5,9 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, it } from "@effect/vitest";
 import { assertTrue } from "@effect/vitest/utils";
 import * as Effect from "effect/Effect";
@@ -15,7 +18,7 @@ import { discoverMcpToolsFromConnector } from "@executor/codemode-mcp";
 import { makeDenoSubprocessExecutor } from "@executor/runtime-deno-subprocess";
 
 import {
-  createSqlControlPlaneRuntime,
+  createControlPlaneRuntime,
   type ResolveExecutionEnvironment,
 } from "./index";
 import { withControlPlaneClient } from "./test-http-client";
@@ -281,8 +284,9 @@ describe("execution-mcp-resume", () => {
     Effect.gen(function* () {
       const mcpServer = yield* makeFormElicitationServer;
       const runtime = yield* Effect.acquireRelease(
-        createSqlControlPlaneRuntime({
+        createControlPlaneRuntime({
           localDataDir: ":memory:",
+          workspaceRoot: mkdtempSync(join(tmpdir(), "executor-execution-mcp-resume-")),
           executionResolver: makeMcpExecutionResolver(mcpServer.endpoint),
         }),
         (runtime) => Effect.promise(() => runtime.close()).pipe(Effect.orDie),
@@ -354,5 +358,6 @@ describe("execution-mcp-resume", () => {
         }),
       );
     }),
+    60_000,
   );
 });

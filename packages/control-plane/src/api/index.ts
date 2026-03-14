@@ -17,19 +17,8 @@ export {
   ControlPlaneApiLive,
   type ControlPlaneApiRuntimeContext,
   type BuiltControlPlaneApiLayer,
-  ControlPlaneActorResolverLive,
   createControlPlaneApiLayer,
 } from "./http";
-
-export {
-  ControlPlaneActorResolver,
-  type ControlPlaneActorResolverShape,
-  type ResolveActorInput,
-  type ResolveWorkspaceActorInput,
-} from "./auth/actor-resolver";
-
-export { deriveWorkspaceMembershipsForPrincipal } from "./auth/workspace-membership";
-
 
 export {
   CreateExecutionPayloadSchema,
@@ -59,27 +48,6 @@ export {
   type StartSourceOAuthResult,
   type CompleteSourceOAuthResult,
 } from "./oauth/api";
-
-export {
-  CreateOrganizationPayloadSchema,
-  UpdateOrganizationPayloadSchema,
-  type CreateOrganizationPayload,
-  type UpdateOrganizationPayload,
-} from "./organizations/api";
-
-export {
-  CreateMembershipPayloadSchema,
-  UpdateMembershipPayloadSchema,
-  type CreateMembershipPayload,
-  type UpdateMembershipPayload,
-} from "./memberships/api";
-
-export {
-  CreateWorkspacePayloadSchema,
-  UpdateWorkspacePayloadSchema,
-  type CreateWorkspacePayload,
-  type UpdateWorkspacePayload,
-} from "./workspaces/api";
 
 export {
   ConnectSourcePayloadSchema,
