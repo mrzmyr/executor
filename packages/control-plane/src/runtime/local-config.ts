@@ -1,4 +1,3 @@
-import { createHash } from "node:crypto";
 import { homedir } from "node:os";
 import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 import { FileSystem } from "@effect/platform";
@@ -25,12 +24,6 @@ const PROJECT_CONFIG_BASENAME = "executor.jsonc";
 const PROJECT_CONFIG_FALLBACK_BASENAME = "executor.json";
 const PROJECT_CONFIG_DIRECTORY = ".executor";
 const EXECUTOR_CONFIG_DIR_ENV = "EXECUTOR_CONFIG_DIR";
-
-const normalizeSlashPath = (value: string): string =>
-  value.replaceAll("\\", "/");
-
-const stableHash = (value: string): string =>
-  createHash("sha256").update(value).digest("hex").slice(0, 16);
 
 const provideNodeFileSystem = <A, E, R>(
   effect: Effect.Effect<A, E, R | FileSystem.FileSystem>,
@@ -314,7 +307,6 @@ export type ResolvedLocalWorkspaceContext = {
   homeConfigPath: string;
   artifactsDirectory: string;
   stateDirectory: string;
-  installationId: string;
 };
 
 export type LoadedLocalExecutorConfig = {
@@ -347,7 +339,6 @@ export const resolveLocalWorkspaceContext = (input: {
       homeConfigPath,
       artifactsDirectory: join(workspaceRoot, PROJECT_CONFIG_DIRECTORY, "artifacts"),
       stateDirectory: join(workspaceRoot, PROJECT_CONFIG_DIRECTORY, "state"),
-      installationId: `local_${stableHash(normalizeSlashPath(workspaceRoot))}`,
     };
   }));
 

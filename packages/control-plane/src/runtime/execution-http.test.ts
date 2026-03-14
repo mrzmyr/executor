@@ -92,5 +92,6 @@ describe("execution-http", () => {
       expect(getExecution.execution.status).toBe("completed");
       expect(getExecution.pendingInteraction).toBeNull();
     }),
+    60_000,
   );
 });

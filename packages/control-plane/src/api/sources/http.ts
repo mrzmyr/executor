@@ -3,14 +3,9 @@ import {
   HttpServerRequest,
   HttpServerResponse,
 } from "@effect/platform";
-import type {
-  ExecutionInteraction,
-  Source,
-  WorkspaceId,
-} from "#schema";
+import type { ExecutionInteraction, Source, WorkspaceId } from "#schema";
 import * as Effect from "effect/Effect";
 
-import { requirePermission, withPolicy } from "#domain";
 import {
   createSource,
   getSource,
@@ -39,19 +34,7 @@ import {
   ControlPlaneStorageError,
 } from "../errors";
 import { ControlPlaneApi } from "../api";
-import { withRequestActor, withWorkspaceRequestActor } from "../http-auth";
-
-const requireReadSources = (workspaceId: WorkspaceId) =>
-  requirePermission({
-    permission: "sources:read",
-    workspaceId,
-  });
-
-const requireWriteSources = (workspaceId: WorkspaceId) =>
-  requirePermission({
-    permission: "sources:write",
-    workspaceId,
-  });
+import { requireLocalWorkspaceAccess } from "../local-context";
 
 const readHeader = (headers: unknown, name: string): string | null => {
   if (headers == null || typeof headers !== "object") {
@@ -665,20 +648,18 @@ export const ControlPlaneSourcesLive = HttpApiBuilder.group(
   (handlers) =>
     handlers
       .handle("discover", ({ payload }) =>
-        withRequestActor("sources.discover", () =>
-          discoverSource({
-            url: payload.url,
-            probeAuth: payload.probeAuth,
-          }).pipe(
-            Effect.catchAll((cause) =>
-              Effect.fail(toBadRequestError("sources.discover", cause)),
-            ),
+        discoverSource({
+          url: payload.url,
+          probeAuth: payload.probeAuth,
+        }).pipe(
+          Effect.catchAll((cause) =>
+            Effect.fail(toBadRequestError("sources.discover", cause)),
           ),
         ),
       )
       .handle("connect", ({ path, payload }) =>
-        withWorkspaceRequestActor("sources.connect", path.workspaceId, (actor) =>
-          withPolicy(requireWriteSources(path.workspaceId))(
+        requireLocalWorkspaceAccess("sources.connect", path.workspaceId).pipe(
+          Effect.flatMap((runtimeLocalWorkspace) =>
             Effect.gen(function* () {
               const request = yield* HttpServerRequest.HttpServerRequest;
               const sourceAuthService = yield* RuntimeSourceAuthServiceTag;
@@ -687,7 +668,7 @@ export const ControlPlaneSourcesLive = HttpApiBuilder.group(
               if (payload.kind === "mcp" && hasSourceAdapterFamily(payload.kind, "mcp")) {
                 return yield* sourceAuthService.connectMcpSource({
                   workspaceId: path.workspaceId,
-                  actorAccountId: actor.principal.accountId,
+                  actorAccountId: runtimeLocalWorkspace.installation.accountId,
                   endpoint: payload.endpoint,
                   name: payload.name,
                   namespace: payload.namespace,
@@ -701,7 +682,7 @@ export const ControlPlaneSourcesLive = HttpApiBuilder.group(
               return yield* sourceAuthService.addExecutorSource(
                 {
                   workspaceId: path.workspaceId,
-                  actorAccountId: actor.principal.accountId,
+                  actorAccountId: runtimeLocalWorkspace.installation.accountId,
                   executionId: null,
                   interactionId: null,
                   ...payload,
@@ -712,37 +693,45 @@ export const ControlPlaneSourcesLive = HttpApiBuilder.group(
               Effect.catchAll((cause) =>
                 Effect.fail(toBadRequestError("sources.connect", cause)),
               ),
-            ),
+            )
           ),
         ),
       )
       .handle("list", ({ path }) =>
-        withWorkspaceRequestActor("sources.list", path.workspaceId, () =>
-          withPolicy(requireReadSources(path.workspaceId))(
-            listSources(path.workspaceId),
+        requireLocalWorkspaceAccess("sources.list", path.workspaceId).pipe(
+          Effect.flatMap((runtimeLocalWorkspace) =>
+            listSources({
+              workspaceId: path.workspaceId,
+              accountId: runtimeLocalWorkspace.installation.accountId,
+            })
           ),
         ),
       )
       .handle("create", ({ path, payload }) =>
-        withWorkspaceRequestActor("sources.create", path.workspaceId, () =>
-          withPolicy(requireWriteSources(path.workspaceId))(
-            createSource({ workspaceId: path.workspaceId, payload }),
+        requireLocalWorkspaceAccess("sources.create", path.workspaceId).pipe(
+          Effect.flatMap((runtimeLocalWorkspace) =>
+            createSource({
+              workspaceId: path.workspaceId,
+              accountId: runtimeLocalWorkspace.installation.accountId,
+              payload,
+            })
           ),
         ),
       )
       .handle("get", ({ path }) =>
-        withWorkspaceRequestActor("sources.get", path.workspaceId, () =>
-          withPolicy(requireReadSources(path.workspaceId))(
+        requireLocalWorkspaceAccess("sources.get", path.workspaceId).pipe(
+          Effect.flatMap((runtimeLocalWorkspace) =>
             getSource({
               workspaceId: path.workspaceId,
               sourceId: path.sourceId,
-            }),
+              accountId: runtimeLocalWorkspace.installation.accountId,
+            })
           ),
         ),
       )
       .handle("inspection", ({ path }) =>
-        withWorkspaceRequestActor("sources.inspection", path.workspaceId, () =>
-          withPolicy(requireReadSources(path.workspaceId))(
+        requireLocalWorkspaceAccess("sources.inspection", path.workspaceId).pipe(
+          Effect.zipRight(
             getSourceInspection({
               workspaceId: path.workspaceId,
               sourceId: path.sourceId,
@@ -751,8 +740,8 @@ export const ControlPlaneSourcesLive = HttpApiBuilder.group(
         ),
       )
       .handle("inspectionTool", ({ path }) =>
-        withWorkspaceRequestActor("sources.inspection_tool", path.workspaceId, () =>
-          withPolicy(requireReadSources(path.workspaceId))(
+        requireLocalWorkspaceAccess("sources.inspection_tool", path.workspaceId).pipe(
+          Effect.zipRight(
             getSourceInspectionToolDetail({
               workspaceId: path.workspaceId,
               sourceId: path.sourceId,
@@ -762,8 +751,8 @@ export const ControlPlaneSourcesLive = HttpApiBuilder.group(
         ),
       )
       .handle("inspectionSchemaBundle", ({ path }) =>
-        withWorkspaceRequestActor("sources.inspection_schema_bundle", path.workspaceId, () =>
-          withPolicy(requireReadSources(path.workspaceId))(
+        requireLocalWorkspaceAccess("sources.inspection_schema_bundle", path.workspaceId).pipe(
+          Effect.zipRight(
             getSourceInspectionSchemaBundle({
               workspaceId: path.workspaceId,
               sourceId: path.sourceId,
@@ -773,8 +762,8 @@ export const ControlPlaneSourcesLive = HttpApiBuilder.group(
         ),
       )
       .handle("inspectionDiscover", ({ path, payload }) =>
-        withWorkspaceRequestActor("sources.inspection_discover", path.workspaceId, () =>
-          withPolicy(requireReadSources(path.workspaceId))(
+        requireLocalWorkspaceAccess("sources.inspection_discover", path.workspaceId).pipe(
+          Effect.zipRight(
             discoverSourceInspectionTools({
               workspaceId: path.workspaceId,
               sourceId: path.sourceId,
@@ -784,19 +773,20 @@ export const ControlPlaneSourcesLive = HttpApiBuilder.group(
         ),
       )
       .handle("update", ({ path, payload }) =>
-        withWorkspaceRequestActor("sources.update", path.workspaceId, () =>
-          withPolicy(requireWriteSources(path.workspaceId))(
+        requireLocalWorkspaceAccess("sources.update", path.workspaceId).pipe(
+          Effect.flatMap((runtimeLocalWorkspace) =>
             updateSource({
               workspaceId: path.workspaceId,
               sourceId: path.sourceId,
+              accountId: runtimeLocalWorkspace.installation.accountId,
               payload,
-            }),
+            })
           ),
         ),
       )
       .handle("remove", ({ path }) =>
-        withWorkspaceRequestActor("sources.remove", path.workspaceId, () =>
-          withPolicy(requireWriteSources(path.workspaceId))(
+        requireLocalWorkspaceAccess("sources.remove", path.workspaceId).pipe(
+          Effect.zipRight(
             removeSource({
               workspaceId: path.workspaceId,
               sourceId: path.sourceId,

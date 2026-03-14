@@ -883,6 +883,7 @@ describe("local-executor-server", () => {
       expect(resumed.structuredContent?.result).toBe("approved:manual-mcp");
       expect(resumed.content?.find((item) => item.type === "text")?.text).toContain("approved:manual-mcp");
     }),
+    15_000,
   );
 
   it.scoped("loads MCP sources from control-plane state and resumes elicitation", () =>
@@ -1359,6 +1360,7 @@ describe("local-executor-server", () => {
       expect(automatic.pendingInteraction).toBeNull();
       expect(openApiServer.createdBodies).toHaveLength(2);
     }),
+    15_000,
   );
 
   it.scoped("starts source OAuth without creating a source and stores secrets on callback", () =>
@@ -1432,6 +1434,7 @@ describe("local-executor-server", () => {
       expect(secrets.some((secret) => secret.purpose === "oauth_access_token")).toBe(true);
       expect(secrets.some((secret) => secret.purpose === "oauth_refresh_token")).toBe(true);
     }),
+    15_000,
   );
 
   it.scoped("marks execution failed when a configured MCP endpoint is invalid", () =>

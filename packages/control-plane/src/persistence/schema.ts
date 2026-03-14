@@ -12,9 +12,6 @@ import { sql } from "drizzle-orm";
 
 export const tableNames = {
   accounts: "accounts",
-  organizations: "organizations",
-  organizationMemberships: "organization_memberships",
-  workspaces: "workspaces",
   sources: "sources",
   sourceRecipes: "source_recipes",
   sourceRecipeRevisions: "source_recipe_revisions",
@@ -27,7 +24,6 @@ export const tableNames = {
   workspaceSourceOauthClients: "workspace_source_oauth_clients",
   secretMaterials: "secret_materials",
   sourceAuthSessions: "source_auth_sessions",
-  localInstallations: "local_installations",
   executions: "executions",
   executionInteractions: "execution_interactions",
 } as const;
@@ -50,83 +46,6 @@ export const accountsTable = pgTable(
       "accounts_provider_check",
       sql`${table.provider} in ('local', 'workos', 'service')`,
     ),
-  ],
-);
-
-export const organizationsTable = pgTable(tableNames.organizations, {
-  id: text("id").notNull().primaryKey(),
-  slug: text("slug").notNull(),
-  name: text("name").notNull(),
-  status: text("status").notNull(),
-  createdByAccountId: text("created_by_account_id"),
-  createdAt: bigint("created_at", { mode: "number" }).notNull(),
-  updatedAt: bigint("updated_at", { mode: "number" }).notNull(),
-}, (table) => [
-  uniqueIndex("organizations_slug_idx").on(table.slug),
-  index("organizations_updated_idx").on(table.updatedAt, table.id),
-  check(
-    "organizations_status_check",
-    sql`${table.status} in ('active', 'suspended', 'archived')`,
-  ),
-]);
-
-export const organizationMembershipsTable = pgTable(
-  tableNames.organizationMemberships,
-  {
-    id: text("id").notNull().primaryKey(),
-    organizationId: text("organization_id").notNull(),
-    accountId: text("account_id").notNull(),
-    role: text("role").notNull(),
-    status: text("status").notNull(),
-    billable: boolean("billable").notNull(),
-    invitedByAccountId: text("invited_by_account_id"),
-    joinedAt: bigint("joined_at", { mode: "number" }),
-    createdAt: bigint("created_at", { mode: "number" }).notNull(),
-    updatedAt: bigint("updated_at", { mode: "number" }).notNull(),
-  },
-  (table) => [
-    index("organization_memberships_org_updated_idx").on(
-      table.organizationId,
-      table.updatedAt,
-      table.id,
-    ),
-    index("organization_memberships_account_updated_idx").on(
-      table.accountId,
-      table.updatedAt,
-      table.id,
-    ),
-    uniqueIndex("organization_memberships_org_account_idx").on(
-      table.organizationId,
-      table.accountId,
-    ),
-    check(
-      "organization_memberships_role_check",
-      sql`${table.role} in ('viewer', 'editor', 'admin', 'owner')`,
-    ),
-    check(
-      "organization_memberships_status_check",
-      sql`${table.status} in ('invited', 'active', 'suspended', 'removed')`,
-    ),
-  ],
-);
-
-export const workspacesTable = pgTable(
-  tableNames.workspaces,
-  {
-    id: text("id").notNull().primaryKey(),
-    organizationId: text("organization_id").notNull(),
-    name: text("name").notNull(),
-    createdByAccountId: text("created_by_account_id"),
-    createdAt: bigint("created_at", { mode: "number" }).notNull(),
-    updatedAt: bigint("updated_at", { mode: "number" }).notNull(),
-  },
-  (table) => [
-    index("workspaces_org_updated_idx").on(
-      table.organizationId,
-      table.updatedAt,
-      table.id,
-    ),
-    uniqueIndex("workspaces_org_name_idx").on(table.organizationId, table.name),
   ],
 );
 
@@ -519,22 +438,6 @@ export const sourceAuthSessionsTable = pgTable(
   ],
 );
 
-export const localInstallationsTable = pgTable(
-  tableNames.localInstallations,
-  {
-    id: text("id").notNull().primaryKey(),
-    accountId: text("account_id").notNull(),
-    organizationId: text("organization_id").notNull(),
-    workspaceId: text("workspace_id").notNull(),
-    createdAt: bigint("created_at", { mode: "number" }).notNull(),
-    updatedAt: bigint("updated_at", { mode: "number" }).notNull(),
-  },
-  (table) => [
-    index("local_installations_organization_idx").on(table.organizationId),
-    index("local_installations_workspace_idx").on(table.workspaceId),
-  ],
-);
-
 export const executionsTable = pgTable(
   tableNames.executions,
   {
@@ -588,9 +491,6 @@ export const executionInteractionsTable = pgTable(
 
 export const drizzleSchema = {
   accountsTable,
-  organizationsTable,
-  organizationMembershipsTable,
-  workspacesTable,
   sourcesTable,
   sourceRecipesTable,
   sourceRecipeRevisionsTable,
@@ -603,7 +503,6 @@ export const drizzleSchema = {
   workspaceSourceOauthClientsTable,
   secretMaterialsTable,
   sourceAuthSessionsTable,
-  localInstallationsTable,
   executionsTable,
   executionInteractionsTable,
 };

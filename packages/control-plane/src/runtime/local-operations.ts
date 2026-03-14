@@ -182,7 +182,6 @@ const loadSourceCredentialInteraction = (input: {
 
 export const getLocalInstallation = () =>
   Effect.gen(function* () {
-    const store = yield* ControlPlaneStore;
     const runtimeLocalWorkspace = yield* getRuntimeLocalWorkspaceOption();
     const context = runtimeLocalWorkspace?.context
       ?? (yield* resolveLocalWorkspaceContext().pipe(
@@ -191,10 +190,10 @@ export const getLocalInstallation = () =>
             error,
             "Failed resolving local workspace context",
           ),
-        ),
+          ),
       ));
 
-    return yield* loadLocalInstallation(store, context);
+    return yield* loadLocalInstallation(context);
   });
 
 export const getSourceCredentialInteraction = (input: {

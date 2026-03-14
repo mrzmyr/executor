@@ -1,7 +1,5 @@
 import { HttpApiBuilder } from "@effect/platform";
-import type { WorkspaceId } from "#schema";
-
-import { requirePermission, withPolicy } from "#domain";
+import * as Effect from "effect/Effect";
 import {
   createPolicy,
   getPolicy,
@@ -11,19 +9,7 @@ import {
 } from "../../runtime/policies-operations";
 
 import { ControlPlaneApi } from "../api";
-import { withWorkspaceRequestActor } from "../http-auth";
-
-const requireReadPolicies = (workspaceId: WorkspaceId) =>
-  requirePermission({
-    permission: "policies:read",
-    workspaceId,
-  });
-
-const requireWritePolicies = (workspaceId: WorkspaceId) =>
-  requirePermission({
-    permission: "policies:write",
-    workspaceId,
-  });
+import { requireLocalWorkspaceAccess } from "../local-context";
 
 export const ControlPlanePoliciesLive = HttpApiBuilder.group(
   ControlPlaneApi,
@@ -31,22 +17,22 @@ export const ControlPlanePoliciesLive = HttpApiBuilder.group(
   (handlers) =>
     handlers
       .handle("list", ({ path }) =>
-        withWorkspaceRequestActor("policies.list", path.workspaceId, () =>
-          withPolicy(requireReadPolicies(path.workspaceId))(
+        requireLocalWorkspaceAccess("policies.list", path.workspaceId).pipe(
+          Effect.zipRight(
             listPolicies(path.workspaceId),
           ),
         ),
       )
       .handle("create", ({ path, payload }) =>
-        withWorkspaceRequestActor("policies.create", path.workspaceId, () =>
-          withPolicy(requireWritePolicies(path.workspaceId))(
+        requireLocalWorkspaceAccess("policies.create", path.workspaceId).pipe(
+          Effect.zipRight(
             createPolicy({ workspaceId: path.workspaceId, payload }),
           ),
         ),
       )
       .handle("get", ({ path }) =>
-        withWorkspaceRequestActor("policies.get", path.workspaceId, () =>
-          withPolicy(requireReadPolicies(path.workspaceId))(
+        requireLocalWorkspaceAccess("policies.get", path.workspaceId).pipe(
+          Effect.zipRight(
             getPolicy({
               workspaceId: path.workspaceId,
               policyId: path.policyId,
@@ -55,8 +41,8 @@ export const ControlPlanePoliciesLive = HttpApiBuilder.group(
         ),
       )
       .handle("update", ({ path, payload }) =>
-        withWorkspaceRequestActor("policies.update", path.workspaceId, () =>
-          withPolicy(requireWritePolicies(path.workspaceId))(
+        requireLocalWorkspaceAccess("policies.update", path.workspaceId).pipe(
+          Effect.zipRight(
             updatePolicy({
               workspaceId: path.workspaceId,
               policyId: path.policyId,
@@ -66,8 +52,8 @@ export const ControlPlanePoliciesLive = HttpApiBuilder.group(
         ),
       )
       .handle("remove", ({ path }) =>
-        withWorkspaceRequestActor("policies.remove", path.workspaceId, () =>
-          withPolicy(requireWritePolicies(path.workspaceId))(
+        requireLocalWorkspaceAccess("policies.remove", path.workspaceId).pipe(
+          Effect.zipRight(
             removePolicy({
               workspaceId: path.workspaceId,
               policyId: path.policyId,

@@ -64,7 +64,6 @@ const makeRuntimeLocalWorkspace = (input: {
       installation: {
         workspaceId: input.workspaceId,
         accountId: input.accountId,
-        organizationId: "org_local_personal" as never,
       },
       loadedConfig,
     } satisfies RuntimeLocalWorkspaceState;

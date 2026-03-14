@@ -24,9 +24,7 @@ describe("local-installation", () => {
       const runtime = yield* makeRuntime;
       const installation = runtime.localInstallation;
 
-      expect(installation.id.startsWith("local_")).toBe(true);
       expect(installation.accountId).toBe("acc_local_default");
-      expect(installation.organizationId).toBe("org_local_personal");
       expect(installation.workspaceId.startsWith("ws_local_")).toBe(true);
       expect(existsSync(join(TEST_WORKSPACE_ROOT, ".executor", "executor.jsonc"))).toBe(false);
     }),
@@ -42,13 +40,10 @@ describe("local-installation", () => {
 
       const first = runtime.localInstallation;
       const second = yield* getOrProvisionLocalInstallation({
-        rows: runtime.persistence.rows,
         context,
       });
 
-      expect(second.id).toBe(first.id);
       expect(second.accountId).toBe(first.accountId);
-      expect(second.organizationId).toBe(first.organizationId);
       expect(second.workspaceId).toBe(first.workspaceId);
     }),
   );

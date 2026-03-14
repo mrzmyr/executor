@@ -8,26 +8,19 @@ import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 
-import { requirePermission, withPolicy } from "#domain";
 import { RuntimeSourceAuthServiceTag } from "../../runtime/source-auth-service";
 import { ControlPlaneApi } from "../api";
 import {
   ControlPlaneBadRequestError,
   ControlPlaneStorageError,
 } from "../errors";
+import { requireLocalWorkspaceAccess } from "../local-context";
 import {
   SourceOAuthPopupResultSchema,
   type SourceOAuthPopupResult,
 } from "./api";
-import { withWorkspaceRequestActor } from "../http-auth";
 
 const OAUTH_RESULT_STORAGE_KEY_PREFIX = "executor:oauth-result:";
-
-const requireWriteSources = (workspaceId: WorkspaceId) =>
-  requirePermission({
-    permission: "sources:write",
-    workspaceId,
-  });
 
 const escapeHtml = (value: string): string =>
   value
@@ -241,14 +234,14 @@ export const ControlPlaneOAuthLive = HttpApiBuilder.group(
   (handlers) =>
     handlers
       .handle("startSourceAuth", ({ path, payload }) =>
-        withWorkspaceRequestActor("oauth.start_source_auth", path.workspaceId, (actor) =>
-          withPolicy(requireWriteSources(path.workspaceId))(
+        requireLocalWorkspaceAccess("oauth.start_source_auth", path.workspaceId).pipe(
+          Effect.flatMap((runtimeLocalWorkspace) =>
             Effect.gen(function* () {
               const request = yield* HttpServerRequest.HttpServerRequest;
               const sourceAuthService = yield* RuntimeSourceAuthServiceTag;
               return yield* sourceAuthService.startSourceOAuthSession({
                 workspaceId: path.workspaceId,
-                actorAccountId: actor.principal.accountId,
+                actorAccountId: runtimeLocalWorkspace.installation.accountId,
                 baseUrl: resolveRequestOrigin(request),
                 displayName: payload.name,
                 provider: {
@@ -270,7 +263,7 @@ export const ControlPlaneOAuthLive = HttpApiBuilder.group(
                   }),
                 ),
               ),
-            ),
+            )
           ),
         ),
       )

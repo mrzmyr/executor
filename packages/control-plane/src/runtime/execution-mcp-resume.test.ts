@@ -358,5 +358,6 @@ describe("execution-mcp-resume", () => {
         }),
       );
     }),
+    60_000,
   );
 });

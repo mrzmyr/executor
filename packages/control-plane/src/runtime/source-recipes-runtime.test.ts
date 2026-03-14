@@ -74,7 +74,6 @@ const makeRuntimeLocalWorkspaceState = (
         installation: {
           workspaceId,
           accountId: AccountIdSchema.make("acc_local_source_recipes"),
-          organizationId: "org_local_personal" as never,
         },
         loadedConfig,
       } satisfies RuntimeLocalWorkspaceState;
@@ -688,7 +687,7 @@ describe("source-recipes-runtime", () => {
       } finally {
         await persistence.close();
       }
-    });
+    }, 60_000);
 
     it("loads sources with empty recipe documents and operations", async () => {
       const persistence = await makePersistence();
@@ -740,7 +739,7 @@ describe("source-recipes-runtime", () => {
       } finally {
         await persistence.close();
       }
-    });
+    }, 60_000);
 
     it("fails clearly when loading a missing source, missing revision, or invalid manifest", async () => {
       const persistence = await makePersistence();

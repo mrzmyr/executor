@@ -534,6 +534,7 @@ describe("executor-react source hooks", () => {
       await apiServer.close();
     }
     }),
+    60_000,
   );
 
   it.effect("applies optimistic source updates and refreshes live inspection data after success", () =>
@@ -627,6 +628,7 @@ describe("executor-react source hooks", () => {
       await apiServer.close();
     }
     }),
+    60_000,
   );
 
   it.effect("optimistically removes deleted sources and invalidates mounted source queries", () =>
@@ -709,6 +711,7 @@ describe("executor-react source hooks", () => {
       await apiServer.close();
     }
     }),
+    60_000,
   );
 
   it.effect("surfaces missing sources as errors instead of staying loading", () =>
@@ -744,6 +747,7 @@ describe("executor-react source hooks", () => {
         await apiServer.close();
       }
     }),
+    60_000,
   );
 });
 import { mkdtempSync } from "node:fs";

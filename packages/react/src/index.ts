@@ -230,14 +230,16 @@ const logExecutorDevError = (label: string, details: Record<string, unknown>): v
 };
 
 const runControlPlane = async <A>(input: {
+  baseUrl?: string;
   accountId?: string;
   execute: (client: ControlPlaneClient) => Effect.Effect<A, unknown, never>;
 }): Promise<A> => {
+  const baseUrl = input.baseUrl ?? apiBaseUrl;
   const accountId = input.accountId;
 
   const exit = await Effect.runPromiseExit(
     createControlPlaneClient({
-      baseUrl: apiBaseUrl,
+      baseUrl,
       ...(accountId !== undefined ? { accountId } : {}),
     }).pipe(Effect.flatMap(input.execute)),
   );
@@ -248,7 +250,7 @@ const runControlPlane = async <A>(input: {
 
   const error = Cause.squash(exit.cause);
   logExecutorDevError("control-plane request failed", {
-    baseUrl: apiBaseUrl,
+    baseUrl,
     accountId,
     error: describeExecutorDevError(error),
     cause: Cause.pretty(exit.cause),
@@ -257,6 +259,7 @@ const runControlPlane = async <A>(input: {
 };
 
 const controlPlaneRequest = <A>(input: {
+  baseUrl?: string;
   accountId?: string;
   execute: (client: ControlPlaneClient) => Effect.Effect<A, unknown, never>;
 }): Effect.Effect<A, Error> =>
@@ -265,23 +268,32 @@ const controlPlaneRequest = <A>(input: {
     catch: toError,
   });
 
-const localInstallationAtom = Atom.make(
-  controlPlaneRequest({
-    execute: (client) => client.local.installation({}),
-  }),
-).pipe(Atom.keepAlive);
+const localInstallationAtom = Atom.family((baseUrl: string) =>
+  Atom.make(
+    controlPlaneRequest({
+      baseUrl,
+      execute: (client) => client.local.installation({}),
+    }),
+  ).pipe(Atom.keepAlive),
+);
 
-const instanceConfigAtom = Atom.make(
-  controlPlaneRequest({
-    execute: (client) => client.local.config({}),
-  }),
-).pipe(Atom.keepAlive);
+const instanceConfigAtom = Atom.family((baseUrl: string) =>
+  Atom.make(
+    controlPlaneRequest({
+      baseUrl,
+      execute: (client) => client.local.config({}),
+    }),
+  ).pipe(Atom.keepAlive),
+);
 
-const secretsAtom = Atom.make(
-  controlPlaneRequest({
-    execute: (client) => client.local.listSecrets({}),
-  }),
-).pipe(Atom.keepAlive);
+const secretsAtom = Atom.family((baseUrl: string) =>
+  Atom.make(
+    controlPlaneRequest({
+      baseUrl,
+      execute: (client) => client.local.listSecrets({}),
+    }),
+  ).pipe(Atom.keepAlive),
+);
 
 const sourcesAtom = Atom.family((key: string) => {
   const [enabled, workspaceId, accountId] = decodeAtomKey<SourcesKeyParts>(key);
@@ -453,7 +465,7 @@ const useLoadableAtom = <T>(atom: Atom.Atom<Result.Result<T, Error>>): Loadable<
 };
 
 const useWorkspaceContext = (): Loadable<WorkspaceContext> => {
-  const installation = useLoadableAtom(localInstallationAtom);
+  const installation = useLoadableAtom(localInstallationAtom(apiBaseUrl));
 
   return React.useMemo(() => {
     if (installation.status !== "ready") {
@@ -810,18 +822,18 @@ export const useInvalidateExecutorQueries = (): (() => void) => {
 };
 
 export const useLocalInstallation = (): Loadable<LocalInstallation> =>
-  useLoadableAtom(localInstallationAtom);
+  useLoadableAtom(localInstallationAtom(apiBaseUrl));
 
 export const useInstanceConfig = (): Loadable<InstanceConfig> =>
-  useLoadableAtom(instanceConfigAtom);
+  useLoadableAtom(instanceConfigAtom(apiBaseUrl));
 
 export const useSecrets = (): Loadable<ReadonlyArray<SecretListItem>> =>
-  useLoadableAtom(secretsAtom);
+  useLoadableAtom(secretsAtom(apiBaseUrl));
 
 export const useRefreshSecrets = (): (() => void) => {
   const registry = React.useContext(RegistryContext);
   return React.useCallback(() => {
-    registry.refresh(secretsAtom);
+    registry.refresh(secretsAtom(apiBaseUrl));
   }, [registry]);
 };
 
@@ -850,7 +862,7 @@ const useSecretMutation = <TInput, TOutput>(
 
     try {
       const data = await execute(payload);
-      registry.refresh(secretsAtom);
+      registry.refresh(secretsAtom(apiBaseUrl));
       setState({ status: "success", data, error: null });
       return data;
     } catch (cause) {

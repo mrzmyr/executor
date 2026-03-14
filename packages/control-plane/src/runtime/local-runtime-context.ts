@@ -2,7 +2,7 @@ import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 
-import type { AccountId, OrganizationId, WorkspaceId } from "#schema";
+import type { AccountId, WorkspaceId } from "#schema";
 import type {
   LoadedLocalExecutorConfig,
   ResolvedLocalWorkspaceContext,
@@ -13,7 +13,6 @@ export type RuntimeLocalWorkspaceState = {
   installation: {
     workspaceId: WorkspaceId;
     accountId: AccountId;
-    organizationId: OrganizationId;
   };
   loadedConfig: LoadedLocalExecutorConfig;
 };
@@ -48,3 +47,8 @@ export const requireRuntimeLocalWorkspace = (workspaceId?: WorkspaceId) =>
 
     return Effect.succeed(runtimeLocalWorkspace);
   });
+
+export const requireRuntimeLocalAccountId = (workspaceId?: WorkspaceId) =>
+  requireRuntimeLocalWorkspace(workspaceId).pipe(
+    Effect.map((runtimeLocalWorkspace) => runtimeLocalWorkspace.installation.accountId),
+  );

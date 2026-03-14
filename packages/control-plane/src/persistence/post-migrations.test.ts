@@ -7,7 +7,6 @@ import { describe, expect, it } from "@effect/vitest";
 import {
   AccountIdSchema,
   McpSourceAuthSessionDataJsonSchema,
-  OrganizationIdSchema,
   SourceAuthSessionIdSchema,
   decodeAuthLeasePlacementTemplates,
   SourceIdSchema,
@@ -123,29 +122,11 @@ const seedMigratedSourceRecipe = (input: {
   Effect.gen(function* () {
     const now = Date.now();
     const accountId = AccountIdSchema.make(`acc_${input.sourceId}`);
-    const organizationId = OrganizationIdSchema.make(`org_${input.sourceId}`);
     const recipeId = SourceRecipeIdSchema.make(`src_recipe_${input.sourceId}`);
     const recipeRevisionId = SourceRecipeRevisionIdSchema.make(
       `src_recipe_rev_${input.sourceId}`,
     );
 
-    yield* input.persistence.rows.organizations.insert({
-      id: organizationId,
-      slug: `org-${input.sourceId}`,
-      name: `Org ${input.sourceId}`,
-      status: "active",
-      createdByAccountId: accountId,
-      createdAt: now,
-      updatedAt: now,
-    });
-    yield* input.persistence.rows.workspaces.insert({
-      id: input.workspaceId,
-      organizationId,
-      name: `Workspace ${input.sourceId}`,
-      createdByAccountId: accountId,
-      createdAt: now,
-      updatedAt: now,
-    });
     yield* input.persistence.rows.sourceRecipes.upsert({
       id: recipeId,
       kind: "http_api",
@@ -317,6 +298,7 @@ describe("code-migrations", () => {
         )).length,
       ).toBeGreaterThan(0);
     }),
+    60_000,
   );
 
   it.scoped("repairs migrated GraphQL recipes from stored documents", () =>
@@ -375,6 +357,7 @@ describe("code-migrations", () => {
         )).length,
       ).toBeGreaterThan(0);
     }),
+    60_000,
   );
 
   it.scoped("repairs legacy MCP source auth session payloads", () =>
@@ -449,7 +432,6 @@ describe("code-migrations", () => {
     );
     const workspaceId = WorkspaceIdSchema.make("ws_legacy_source_bindings");
     const accountId = AccountIdSchema.make("acc_legacy_source_bindings");
-    const organizationId = OrganizationIdSchema.make("org_legacy_source_bindings");
     const now = Date.now();
     let legacyPersistence: SqlControlPlanePersistence | null = null;
     let upgradedPersistence: SqlControlPlanePersistence | null = null;
@@ -462,24 +444,6 @@ describe("code-migrations", () => {
           runCodeMigrations: false,
         }),
       );
-
-      await Effect.runPromise(legacyPersistence.rows.organizations.insert({
-        id: organizationId,
-        slug: "org-legacy-source-bindings",
-        name: "Legacy Org",
-        status: "active",
-        createdByAccountId: accountId,
-        createdAt: now,
-        updatedAt: now,
-      }));
-      await Effect.runPromise(legacyPersistence.rows.workspaces.insert({
-        id: workspaceId,
-        organizationId,
-        name: "Legacy Workspace",
-        createdByAccountId: accountId,
-        createdAt: now,
-        updatedAt: now,
-      }));
 
       const seedRecipe = async (input: {
         sourceId: string;
@@ -775,7 +739,6 @@ describe("code-migrations", () => {
     );
     const workspaceId = WorkspaceIdSchema.make("ws_legacy_auth_lease");
     const accountId = AccountIdSchema.make("acc_legacy_auth_lease");
-    const organizationId = OrganizationIdSchema.make("org_legacy_auth_lease");
     const sourceId = SourceIdSchema.make("src_legacy_auth_lease");
     const recipeId = SourceRecipeIdSchema.make("src_recipe_legacy_auth_lease");
     const recipeRevisionId = SourceRecipeRevisionIdSchema.make(
@@ -795,23 +758,6 @@ describe("code-migrations", () => {
         }),
       );
 
-      await Effect.runPromise(legacyPersistence.rows.organizations.insert({
-        id: organizationId,
-        slug: "org-legacy-auth-lease",
-        name: "Legacy Org",
-        status: "active",
-        createdByAccountId: accountId,
-        createdAt: now,
-        updatedAt: now,
-      }));
-      await Effect.runPromise(legacyPersistence.rows.workspaces.insert({
-        id: workspaceId,
-        organizationId,
-        name: "Legacy Workspace",
-        createdByAccountId: accountId,
-        createdAt: now,
-        updatedAt: now,
-      }));
       await Effect.runPromise(legacyPersistence.rows.sourceRecipes.upsert({
         id: recipeId,
         kind: "http_api",

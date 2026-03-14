@@ -1064,7 +1064,6 @@ const makeRuntimeLocalWorkspaceState = (workspaceId: WorkspaceId): Effect.Effect
       installation: {
         workspaceId,
         accountId: AccountIdSchema.make("acc_local_test"),
-        organizationId: "org_local_personal" as never,
       },
       loadedConfig,
     } satisfies RuntimeLocalWorkspaceState;

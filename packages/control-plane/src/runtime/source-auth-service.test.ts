@@ -194,7 +194,6 @@ const makeRuntimeLocalWorkspaceState = async (
         installation: {
           workspaceId,
           accountId,
-          organizationId: "org_local_personal" as never,
         },
         loadedConfig,
       } satisfies RuntimeLocalWorkspaceState;

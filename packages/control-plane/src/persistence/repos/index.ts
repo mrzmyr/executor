@@ -1,7 +1,4 @@
 export { createAccountsRepo } from "./accounts-repo";
-export { createOrganizationsRepo } from "./organizations-repo";
-export { createOrganizationMembershipsRepo } from "./organization-memberships-repo";
-export { createWorkspacesRepo } from "./workspaces-repo";
 export { createSourcesRepo } from "./sources-repo";
 export { createSourceRecipesRepo } from "./source-recipes-repo";
 export { createSourceRecipeRevisionsRepo } from "./source-recipe-revisions-repo";
@@ -14,6 +11,5 @@ export { createAuthLeasesRepo } from "./auth-leases-repo";
 export { createSourceOauthClientsRepo } from "./source-oauth-clients-repo";
 export { createSecretMaterialsRepo } from "./secret-materials-repo";
 export { createSourceAuthSessionsRepo } from "./source-auth-sessions-repo";
-export { createLocalInstallationsRepo } from "./local-installations-repo";
 export { createExecutionsRepo } from "./executions-repo";
 export { createExecutionInteractionsRepo } from "./execution-interactions-repo";

@@ -2,10 +2,6 @@ import { HttpApiBuilder } from "@effect/platform";
 import * as Layer from "effect/Layer";
 
 import { ControlPlaneApi } from "./api";
-import {
-  ControlPlaneActorResolver,
-  type ControlPlaneActorResolverShape,
-} from "./auth/actor-resolver";
 import { ControlPlaneExecutionsLive } from "./executions/http";
 import { ControlPlaneLocalLive } from "./local/http";
 import { ControlPlaneOAuthLive } from "./oauth/http";
@@ -34,7 +30,3 @@ export const createControlPlaneApiLayer = <ERuntime>(
   ControlPlaneApiLive.pipe(
     Layer.provide(runtimeLayer),
   );
-
-export const ControlPlaneActorResolverLive = (
-  resolver: ControlPlaneActorResolverShape,
-) => Layer.succeed(ControlPlaneActorResolver, resolver);

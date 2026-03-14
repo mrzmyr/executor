@@ -17,19 +17,8 @@ export {
   ControlPlaneApiLive,
   type ControlPlaneApiRuntimeContext,
   type BuiltControlPlaneApiLayer,
-  ControlPlaneActorResolverLive,
   createControlPlaneApiLayer,
 } from "./http";
-
-export {
-  ControlPlaneActorResolver,
-  type ControlPlaneActorResolverShape,
-  type ResolveActorInput,
-  type ResolveWorkspaceActorInput,
-} from "./auth/actor-resolver";
-
-export { deriveWorkspaceMembershipsForPrincipal } from "./auth/workspace-membership";
-
 
 export {
   CreateExecutionPayloadSchema,

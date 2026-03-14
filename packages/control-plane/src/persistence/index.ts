@@ -11,9 +11,6 @@ import {
   createCodeMigrationsRepo,
   createExecutionInteractionsRepo,
   createExecutionsRepo,
-  createLocalInstallationsRepo,
-  createOrganizationMembershipsRepo,
-  createOrganizationsRepo,
   createSecretMaterialsRepo,
   createSourceAuthSessionsRepo,
   createSourceOauthClientsRepo,
@@ -23,7 +20,6 @@ import {
   createSourceRecipeRevisionsRepo,
   createSourceRecipesRepo,
   createSourcesRepo,
-  createWorkspacesRepo,
 } from "./repos";
 import { drizzleSchema, tableNames, type DrizzleTables } from "./schema";
 import {
@@ -54,9 +50,6 @@ export {
 
 const createRows = (client: DrizzleClient, tables: DrizzleTables = drizzleSchema) => ({
   accounts: createAccountsRepo(client, tables),
-  organizations: createOrganizationsRepo(client, tables),
-  organizationMemberships: createOrganizationMembershipsRepo(client, tables),
-  workspaces: createWorkspacesRepo(client, tables),
   sources: createSourcesRepo(client, tables),
   sourceRecipes: createSourceRecipesRepo(client, tables),
   sourceRecipeRevisions: createSourceRecipeRevisionsRepo(client, tables),
@@ -69,7 +62,6 @@ const createRows = (client: DrizzleClient, tables: DrizzleTables = drizzleSchema
   sourceOauthClients: createSourceOauthClientsRepo(client, tables),
   secretMaterials: createSecretMaterialsRepo(client, tables),
   sourceAuthSessions: createSourceAuthSessionsRepo(client, tables),
-  localInstallations: createLocalInstallationsRepo(client, tables),
   executions: createExecutionsRepo(client, tables),
   executionInteractions: createExecutionInteractionsRepo(client, tables),
 });

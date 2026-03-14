@@ -6,8 +6,6 @@ import * as Scope from "effect/Scope";
 
 import {
   type ControlPlaneApiRuntimeContext,
-  ControlPlaneActorResolver,
-  type ControlPlaneActorResolverShape,
 } from "#api";
 import {
   SqlControlPlanePersistenceLive,
@@ -21,11 +19,8 @@ import {
 import type { LocalInstallation } from "#schema";
 
 import {
-  ControlPlaneAuthHeaders,
-  createHeaderActorResolver,
-  RuntimeActorResolverLive,
-} from "./actor-resolver";
-import { type ResolveExecutionEnvironment } from "./execution-state";
+  type ResolveExecutionEnvironment,
+} from "./execution-state";
 import {
   createLiveExecutionManager,
   LiveExecutionManagerLive,
@@ -55,11 +50,6 @@ import {
   RuntimeExecutionResolverService,
 } from "./workspace-execution-environment";
 
-export {
-  ControlPlaneAuthHeaders,
-  createHeaderActorResolver,
-};
-
 export * from "./execution-state";
 export * from "./executor-tools";
 export * from "./live-execution";
@@ -78,7 +68,6 @@ export * from "./source-discovery";
 export * from "./execution-service";
 
 export type RuntimeControlPlaneOptions = {
-  actorResolver?: ControlPlaneActorResolverShape;
   executionResolver?: ResolveExecutionEnvironment;
   resolveSecretMaterial?: ResolveSecretMaterial;
   getLocalServerBaseUrl?: () => string | undefined;
@@ -108,7 +97,6 @@ export type RuntimeControlPlaneLayer = Layer.Layer<
 >;
 
 const runtimeContextTags = [
-  ControlPlaneActorResolver,
   ControlPlaneStore,
   LiveExecutionManagerService,
   RuntimeLocalWorkspaceService,
@@ -118,8 +106,7 @@ const runtimeContextTags = [
 
 const createRuntimeLayerFromContext = (
   context: Context.Context<
-    ControlPlaneActorResolver
-    | ControlPlaneStore
+    ControlPlaneStore
     | LiveExecutionManagerService
     | RuntimeLocalWorkspaceService
     | RuntimeSourceAuthServiceTag
@@ -129,8 +116,7 @@ const createRuntimeLayerFromContext = (
   const runtimeContext = context.pipe(
     Context.pick(...runtimeContextTags),
   ) as Context.Context<
-    ControlPlaneActorResolver
-    | ControlPlaneStore
+    ControlPlaneStore
     | LiveExecutionManagerService
     | RuntimeLocalWorkspaceService
     | RuntimeSourceAuthServiceTag
@@ -158,7 +144,6 @@ export const createRuntimeControlPlaneLayer = (
 
   return Layer.mergeAll(
     ControlPlaneStoreLive,
-    RuntimeActorResolverLive(options.actorResolver),
     liveExecutionManagerLayer,
     sourceAuthLayer,
     executionResolverLayer,
@@ -204,7 +189,6 @@ export const createControlPlaneRuntime = (
     );
 
     const localInstallation = yield* getOrProvisionLocalInstallation({
-      rows,
       context: localWorkspaceContext,
     }).pipe(
       Effect.mapError(toLocalRuntimeBootstrapError),
@@ -253,7 +237,6 @@ export const createControlPlaneRuntime = (
         installation: {
           workspaceId: localInstallation.workspaceId,
           accountId: localInstallation.accountId,
-          organizationId: localInstallation.organizationId,
         },
         loadedConfig: {
           ...loadedLocalConfig,
@@ -268,11 +251,8 @@ export const createControlPlaneRuntime = (
         sourceAuthService,
         resolveSecretMaterial,
       });
-    const actorResolver =
-      options.actorResolver ?? createHeaderActorResolver();
 
     const runtimeContext = Context.empty().pipe(
-      Context.add(ControlPlaneActorResolver, actorResolver),
       Context.add(ControlPlaneStore, rows),
       Context.add(LiveExecutionManagerService, liveExecutionManager),
       Context.add(RuntimeLocalWorkspaceService, {
@@ -280,7 +260,6 @@ export const createControlPlaneRuntime = (
         installation: {
           workspaceId: localInstallation.workspaceId,
           accountId: localInstallation.accountId,
-          organizationId: localInstallation.organizationId,
         },
         loadedConfig: {
           ...loadedLocalConfig,
