@@ -1,8 +1,9 @@
 import { createServer } from "node:http";
-import { mkdtempSync, readFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
+import { FileSystem } from "@effect/platform";
+import { NodeFileSystem } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import { assertTrue } from "@effect/vitest/utils";
 import * as Effect from "effect/Effect";
@@ -13,6 +14,7 @@ import type { AccountId } from "#schema";
 import {
   ExecutionIdSchema,
   ExecutionInteractionIdSchema,
+  type ExecutionInteraction,
   SecretMaterialIdSchema,
   SourceIdSchema,
 } from "#schema";
@@ -21,19 +23,24 @@ import type { ToolPath } from "@executor/codemode-core";
 import {
   createControlPlaneRuntime,
   LiveExecutionManagerService,
+  provideControlPlaneRuntime,
 } from "./index";
 import { createSourceFromPayload } from "./source-definitions";
 import { decodeSourceCredentialSelectionContent } from "./source-credential-interactions";
 import { persistSource } from "./source-store";
 import { withControlPlaneClient } from "./test-http-client";
 
-const makeRuntime = Effect.acquireRelease(
-  createControlPlaneRuntime({
-    localDataDir: ":memory:",
-    workspaceRoot: mkdtempSync(join(tmpdir(), "executor-control-plane-runtime-")),
-  }),
-  (runtime) => Effect.promise(() => runtime.close()).pipe(Effect.orDie),
-);
+const makeRuntime = Effect.gen(function* () {
+  const fs = yield* FileSystem.FileSystem;
+  const workspaceRoot = yield* fs.makeTempDirectoryScoped({
+    prefix: "executor-control-plane-runtime-",
+  });
+
+  return yield* Effect.acquireRelease(
+    createControlPlaneRuntime({ workspaceRoot }),
+    (runtime) => Effect.promise(() => runtime.close()).pipe(Effect.orDie),
+  );
+}).pipe(Effect.provide(NodeFileSystem.layer));
 
 type OpenApiSpecServer = {
   baseUrl: string;
@@ -121,10 +128,12 @@ const expectLeft = <A, E>(effect: Effect.Effect<A, E, never>) =>
 describe("control-plane-runtime", () => {
   it.scoped("writes local source changes through executor.jsonc", () =>
     Effect.gen(function* () {
-      const workspaceRoot = mkdtempSync(join(tmpdir(), "executor-local-config-runtime-"));
+      const fs = yield* FileSystem.FileSystem;
+      const workspaceRoot = yield* fs.makeTempDirectoryScoped({
+        prefix: "executor-local-config-runtime-",
+      });
       const runtime = yield* Effect.acquireRelease(
         createControlPlaneRuntime({
-          localDataDir: ":memory:",
           workspaceRoot,
         }),
         (createdRuntime) => Effect.promise(() => createdRuntime.close()).pipe(Effect.orDie),
@@ -174,7 +183,7 @@ describe("control-plane-runtime", () => {
         sources?: Record<string, unknown>;
       };
       expect(removedConfig.sources?.github).toBeUndefined();
-    }),
+    }).pipe(Effect.provide(NodeFileSystem.layer)),
     60_000,
   );
 
@@ -228,10 +237,7 @@ describe("control-plane-runtime", () => {
       }).pipe(Effect.orDie);
       yield* persistSource(runtime.persistence.rows, localSource, {
         actorAccountId: installation.accountId,
-      }).pipe(
-        Effect.provide(runtime.runtimeLayer),
-        Effect.orDie,
-      );
+      }).pipe((effect) => provideControlPlaneRuntime(effect, runtime), Effect.orDie);
 
       const interactionFiber = yield* Effect.gen(function* () {
         const liveExecutionManager = yield* LiveExecutionManagerService;
@@ -260,14 +266,24 @@ describe("control-plane-runtime", () => {
           },
         });
       }).pipe(
-        Effect.provide(runtime.runtimeLayer),
+        (effect) => provideControlPlaneRuntime(effect, runtime),
         Effect.fork,
       );
 
-      yield* Effect.yieldNow();
+      const waitForPendingInteraction = (
+        remaining: number,
+      ): Effect.Effect<Option.Option<ExecutionInteraction>, Error> =>
+        runtime.persistence.rows.executionInteractions.getPendingByExecutionId(executionId).pipe(
+          Effect.flatMap((pendingInteraction) =>
+            Option.isSome(pendingInteraction) || remaining <= 0
+              ? Effect.succeed(pendingInteraction)
+              : Effect.yieldNow().pipe(
+                  Effect.zipRight(waitForPendingInteraction(remaining - 1)),
+                ),
+          ),
+        );
 
-      const pendingInteraction = yield* runtime.persistence.rows.executionInteractions
-        .getPendingByExecutionId(executionId);
+      const pendingInteraction = yield* waitForPendingInteraction(20);
       assertTrue(Option.isSome(pendingInteraction));
       expect(pendingInteraction.value.id).toBe(interactionId);
 
@@ -391,10 +407,7 @@ describe("control-plane-runtime", () => {
       }).pipe(Effect.orDie);
       yield* persistSource(runtime.persistence.rows, localSource, {
         actorAccountId: installation.accountId,
-      }).pipe(
-        Effect.provide(runtime.runtimeLayer),
-        Effect.orDie,
-      );
+      }).pipe((effect) => provideControlPlaneRuntime(effect, runtime), Effect.orDie);
 
       const interactionFiber = yield* Effect.gen(function* () {
         const liveExecutionManager = yield* LiveExecutionManagerService;
@@ -423,14 +436,24 @@ describe("control-plane-runtime", () => {
           },
         });
       }).pipe(
-        Effect.provide(runtime.runtimeLayer),
+        (effect) => provideControlPlaneRuntime(effect, runtime),
         Effect.fork,
       );
 
-      yield* Effect.yieldNow();
+      const waitForPendingInteraction = (
+        remaining: number,
+      ): Effect.Effect<Option.Option<ExecutionInteraction>, Error> =>
+        runtime.persistence.rows.executionInteractions.getPendingByExecutionId(executionId).pipe(
+          Effect.flatMap((pendingInteraction) =>
+            Option.isSome(pendingInteraction) || remaining <= 0
+              ? Effect.succeed(pendingInteraction)
+              : Effect.yieldNow().pipe(
+                  Effect.zipRight(waitForPendingInteraction(remaining - 1)),
+                ),
+          ),
+        );
 
-      const pendingInteraction = yield* runtime.persistence.rows.executionInteractions
-        .getPendingByExecutionId(executionId);
+      const pendingInteraction = yield* waitForPendingInteraction(20);
       assertTrue(Option.isSome(pendingInteraction));
 
       const submittedPage = yield* withControlPlaneClient(

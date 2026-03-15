@@ -9,12 +9,14 @@ import { SecretMaterialIdSchema } from "#schema";
 import {
   getLocalInstallation,
 } from "../../runtime/local-operations";
+import { requireRuntimeLocalWorkspace } from "../../runtime/local-runtime-context";
 import {
   ENV_SECRET_PROVIDER_ID,
   KEYCHAIN_SECRET_PROVIDER_ID,
   LOCAL_SECRET_PROVIDER_ID,
   parseSecretStoreProviderId,
 } from "../../runtime/secret-material-providers";
+import { RuntimeSourceStoreService } from "../../runtime/source-store";
 import { ControlPlaneStore } from "../../runtime/store";
 import type {
   CreateSecretResult,
@@ -84,16 +86,25 @@ export const ControlPlaneLocalLive = HttpApiBuilder.group(
       .handle("config", () =>
         getInstanceConfig(),
       )
-      .handle("listSecrets", () =>
-        Effect.gen(function* () {
-          const store = yield* ControlPlaneStore;
-          const rows = yield* store.secretMaterials.listAll().pipe(
-            Effect.mapError(() => storageError("Failed listing secrets.")),
-          );
-          const linkedSourcesMap = yield* store.secretMaterials.listLinkedSources().pipe(
-            Effect.mapError(() => storageError("Failed loading linked sources.")),
-          );
-          return rows.map((row) => ({
+        .handle("listSecrets", () =>
+          Effect.gen(function* () {
+            const store = yield* ControlPlaneStore;
+            const sourceStore = yield* RuntimeSourceStoreService;
+            const runtimeLocalWorkspace = yield* requireRuntimeLocalWorkspace().pipe(
+              Effect.mapError(() => storageError("Failed resolving local workspace.")),
+            );
+            const rows = yield* store.secretMaterials.listAll().pipe(
+              Effect.mapError(() => storageError("Failed listing secrets.")),
+            );
+            const linkedSourcesMap = yield* sourceStore.listLinkedSecretSourcesInWorkspace(
+              runtimeLocalWorkspace.installation.workspaceId,
+              {
+                actorAccountId: runtimeLocalWorkspace.installation.accountId,
+              },
+            ).pipe(
+              Effect.mapError(() => storageError("Failed loading linked sources.")),
+            );
+            return rows.map((row) => ({
             ...row,
             linkedSources: linkedSourcesMap.get(row.id) ?? [],
           }));

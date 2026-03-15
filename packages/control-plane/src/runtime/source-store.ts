@@ -9,7 +9,9 @@ import type {
   WorkspaceId,
 } from "#schema";
 import { SourceIdSchema } from "#schema";
+import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
 
 import {
   stableSourceRecipeId,
@@ -34,6 +36,8 @@ import {
 } from "./local-errors";
 import {
   requireRuntimeLocalWorkspace,
+  RuntimeLocalWorkspaceService,
+  type RuntimeLocalWorkspaceState,
 } from "./local-runtime-context";
 import type {
   SourceArtifactStoreShape,
@@ -56,7 +60,7 @@ import {
 import { createDefaultSecretMaterialDeleter } from "./secret-material-providers";
 import { authArtifactSecretMaterialRefs } from "./auth-artifacts";
 import { removeAuthLeaseAndSecrets } from "./auth-leases";
-import type { ControlPlaneStoreShape } from "./store";
+import { ControlPlaneStore, type ControlPlaneStoreShape } from "./store";
 import { getSourceAdapter } from "./source-adapters";
 import { slugify } from "./slug";
 
@@ -143,6 +147,27 @@ const deriveLocalSourceId = (
     counter += 1;
   }
   return SourceIdSchema.make(candidate);
+};
+
+type RuntimeSourceStoreDeps = {
+  rows: ControlPlaneStoreShape;
+  runtimeLocalWorkspace: RuntimeLocalWorkspaceState;
+  workspaceConfigStore: WorkspaceConfigStoreShape;
+  workspaceStateStore: WorkspaceStateStoreShape;
+  sourceArtifactStore: SourceArtifactStoreShape;
+};
+
+type ResolvedSourceStoreWorkspace = {
+  context: ResolvedLocalWorkspaceContext;
+  installation: {
+    workspaceId: WorkspaceId;
+    accountId: AccountId;
+  };
+  workspaceConfigStore: WorkspaceConfigStoreShape;
+  workspaceStateStore: WorkspaceStateStoreShape;
+  sourceArtifactStore: SourceArtifactStoreShape;
+  loadedConfig: LoadedLocalExecutorConfig;
+  workspaceState: LocalWorkspaceState;
 };
 
 const resolveLocalConfigSecretProviderAlias = (config: LoadedLocalExecutorConfig["config"]): string | null => {
@@ -243,45 +268,71 @@ const configAuthFromSource = (input: {
   return input.existingConfigAuth;
 };
 
-const resolveRuntimeLocalWorkspace = (workspaceId: WorkspaceId): Effect.Effect<{
-  context: ResolvedLocalWorkspaceContext;
-  installation: {
-    workspaceId: WorkspaceId;
-    accountId: AccountId;
-  };
-  workspaceConfigStore: WorkspaceConfigStoreShape;
-  workspaceStateStore: WorkspaceStateStoreShape;
-  sourceArtifactStore: SourceArtifactStoreShape;
-  loadedConfig: LoadedLocalExecutorConfig;
-  workspaceState: LocalWorkspaceState;
-},
+const resolveRuntimeLocalWorkspaceFromDeps = (
+  deps: RuntimeSourceStoreDeps,
+  workspaceId: WorkspaceId,
+): Effect.Effect<ResolvedSourceStoreWorkspace,
   | RuntimeLocalWorkspaceUnavailableError
   | RuntimeLocalWorkspaceMismatchError
   | LocalFileSystemError
   | LocalExecutorConfigDecodeError
   | LocalWorkspaceStateDecodeError
   | Error,
-WorkspaceStorageServices> =>
+never> =>
+  Effect.gen(function* () {
+    if (deps.runtimeLocalWorkspace.installation.workspaceId !== workspaceId) {
+      return yield* Effect.fail(
+        new RuntimeLocalWorkspaceMismatchError({
+          message: `Runtime local workspace mismatch: expected ${workspaceId}, got ${deps.runtimeLocalWorkspace.installation.workspaceId}`,
+          requestedWorkspaceId: workspaceId,
+          activeWorkspaceId: deps.runtimeLocalWorkspace.installation.workspaceId,
+        }),
+      );
+    }
+
+    const loadedConfig = yield* deps.workspaceConfigStore.load(
+      deps.runtimeLocalWorkspace.context,
+    );
+    const workspaceState = yield* deps.workspaceStateStore.load(
+      deps.runtimeLocalWorkspace.context,
+    );
+
+    return {
+      context: deps.runtimeLocalWorkspace.context,
+      installation: deps.runtimeLocalWorkspace.installation,
+      workspaceConfigStore: deps.workspaceConfigStore,
+      workspaceStateStore: deps.workspaceStateStore,
+      sourceArtifactStore: deps.sourceArtifactStore,
+      loadedConfig,
+      workspaceState,
+    };
+  });
+
+const loadRuntimeSourceStoreDeps = (
+  rows: ControlPlaneStoreShape,
+  workspaceId: WorkspaceId,
+): Effect.Effect<
+  RuntimeSourceStoreDeps,
+  | RuntimeLocalWorkspaceUnavailableError
+  | RuntimeLocalWorkspaceMismatchError
+  | LocalFileSystemError
+  | LocalExecutorConfigDecodeError
+  | LocalWorkspaceStateDecodeError
+  | Error,
+  WorkspaceStorageServices
+> =>
   Effect.gen(function* () {
     const runtimeLocalWorkspace = yield* requireRuntimeLocalWorkspace(workspaceId);
     const workspaceConfigStore = yield* WorkspaceConfigStore;
     const workspaceStateStore = yield* WorkspaceStateStore;
     const sourceArtifactStore = yield* SourceArtifactStore;
-    const loadedConfig = yield* workspaceConfigStore.load(
-      runtimeLocalWorkspace.context,
-    );
-    const workspaceState = yield* workspaceStateStore.load(
-      runtimeLocalWorkspace.context,
-    );
 
     return {
-      context: runtimeLocalWorkspace.context,
-      installation: runtimeLocalWorkspace.installation,
+      rows,
+      runtimeLocalWorkspace,
       workspaceConfigStore,
       workspaceStateStore,
       sourceArtifactStore,
-      loadedConfig,
-      workspaceState,
     };
   });
 
@@ -396,8 +447,8 @@ const buildLocalSourceRecord = (input: {
     };
   });
 
-export const loadSourcesInWorkspace = (
-  rows: ControlPlaneStoreShape,
+const loadSourcesInWorkspaceWithDeps = (
+  deps: RuntimeSourceStoreDeps,
   workspaceId: WorkspaceId,
   options: {
     actorAccountId?: AccountId | null;
@@ -411,11 +462,11 @@ export const loadSourcesInWorkspace = (
   | LocalWorkspaceStateDecodeError
   | LocalConfiguredSourceNotFoundError
   | Error,
-  WorkspaceStorageServices
+  never
 > =>
   Effect.gen(function* () {
-    const localWorkspace = yield* resolveRuntimeLocalWorkspace(workspaceId);
-    const authArtifacts = yield* rows.authArtifacts.listByWorkspaceId(workspaceId);
+    const localWorkspace = yield* resolveRuntimeLocalWorkspaceFromDeps(deps, workspaceId);
+    const authArtifacts = yield* deps.rows.authArtifacts.listByWorkspaceId(workspaceId);
     return yield* Effect.forEach(
       Object.keys(localWorkspace.loadedConfig.config?.sources ?? {}),
       (sourceId) =>
@@ -435,7 +486,104 @@ export const loadSourcesInWorkspace = (
     );
   });
 
-export const loadSourceById = (rows: ControlPlaneStoreShape, input: {
+export const loadSourcesInWorkspace = (
+  rows: ControlPlaneStoreShape,
+  workspaceId: WorkspaceId,
+  options: {
+    actorAccountId?: AccountId | null;
+  } = {},
+): Effect.Effect<
+  readonly Source[],
+  | RuntimeLocalWorkspaceUnavailableError
+  | RuntimeLocalWorkspaceMismatchError
+  | LocalFileSystemError
+  | LocalExecutorConfigDecodeError
+  | LocalWorkspaceStateDecodeError
+  | LocalConfiguredSourceNotFoundError
+  | Error,
+  WorkspaceStorageServices
+> =>
+  Effect.flatMap(
+    loadRuntimeSourceStoreDeps(rows, workspaceId),
+    (deps) => loadSourcesInWorkspaceWithDeps(deps, workspaceId, options),
+  );
+
+const listLinkedSecretSourcesInWorkspaceWithDeps = (
+  deps: RuntimeSourceStoreDeps,
+  workspaceId: WorkspaceId,
+  options: {
+    actorAccountId?: AccountId | null;
+  } = {},
+): Effect.Effect<
+  Map<string, Array<{ sourceId: string; sourceName: string }>>,
+  | RuntimeLocalWorkspaceUnavailableError
+  | RuntimeLocalWorkspaceMismatchError
+  | LocalFileSystemError
+  | LocalExecutorConfigDecodeError
+  | LocalWorkspaceStateDecodeError
+  | LocalConfiguredSourceNotFoundError
+  | Error,
+  never
+> =>
+  Effect.gen(function* () {
+    const [sources, authArtifacts, materialIds] = yield* Effect.all([
+      loadSourcesInWorkspaceWithDeps(deps, workspaceId, {
+        actorAccountId: options.actorAccountId,
+      }),
+      deps.rows.authArtifacts.listByWorkspaceId(workspaceId),
+      deps.rows.secretMaterials.listAll().pipe(
+        Effect.map((materials) => new Set(materials.map((material) => String(material.id)))),
+      ),
+    ]);
+
+    const sourceNames = new Map(
+      sources.map((source) => [source.id, source.name] as const),
+    );
+    const linkedSources = new Map<string, Array<{ sourceId: string; sourceName: string }>>();
+
+    for (const artifact of authArtifacts) {
+      for (const ref of authArtifactSecretMaterialRefs(artifact)) {
+        if (!materialIds.has(ref.handle)) {
+          continue;
+        }
+
+        const existing = linkedSources.get(ref.handle) ?? [];
+        if (!existing.some((link) => link.sourceId === artifact.sourceId)) {
+          existing.push({
+            sourceId: artifact.sourceId,
+            sourceName: sourceNames.get(artifact.sourceId) ?? artifact.sourceId,
+          });
+          linkedSources.set(ref.handle, existing);
+        }
+      }
+    }
+
+    return linkedSources;
+  });
+
+export const listLinkedSecretSourcesInWorkspace = (
+  rows: ControlPlaneStoreShape,
+  workspaceId: WorkspaceId,
+  options: {
+    actorAccountId?: AccountId | null;
+  } = {},
+): Effect.Effect<
+  Map<string, Array<{ sourceId: string; sourceName: string }>>,
+  | RuntimeLocalWorkspaceUnavailableError
+  | RuntimeLocalWorkspaceMismatchError
+  | LocalFileSystemError
+  | LocalExecutorConfigDecodeError
+  | LocalWorkspaceStateDecodeError
+  | LocalConfiguredSourceNotFoundError
+  | Error,
+  WorkspaceStorageServices
+> =>
+  Effect.flatMap(
+    loadRuntimeSourceStoreDeps(rows, workspaceId),
+    (deps) => listLinkedSecretSourcesInWorkspaceWithDeps(deps, workspaceId, options),
+  );
+
+const loadSourceByIdWithDeps = (deps: RuntimeSourceStoreDeps, input: {
   workspaceId: WorkspaceId;
   sourceId: Source["id"];
   actorAccountId?: AccountId | null;
@@ -448,11 +596,11 @@ export const loadSourceById = (rows: ControlPlaneStoreShape, input: {
   | LocalWorkspaceStateDecodeError
   | LocalConfiguredSourceNotFoundError
   | Error,
-  WorkspaceStorageServices
+  never
 > =>
   Effect.gen(function* () {
-    const localWorkspace = yield* resolveRuntimeLocalWorkspace(input.workspaceId);
-    const authArtifacts = yield* rows.authArtifacts.listByWorkspaceId(input.workspaceId);
+    const localWorkspace = yield* resolveRuntimeLocalWorkspaceFromDeps(deps, input.workspaceId);
+    const authArtifacts = yield* deps.rows.authArtifacts.listByWorkspaceId(input.workspaceId);
     if (!localWorkspace.loadedConfig.config?.sources?.[input.sourceId]) {
       return yield* Effect.fail(
         new LocalConfiguredSourceNotFoundError({
@@ -475,6 +623,26 @@ export const loadSourceById = (rows: ControlPlaneStoreShape, input: {
 
     return localSource.source;
   });
+
+export const loadSourceById = (rows: ControlPlaneStoreShape, input: {
+  workspaceId: WorkspaceId;
+  sourceId: Source["id"];
+  actorAccountId?: AccountId | null;
+}): Effect.Effect<
+  Source,
+  | RuntimeLocalWorkspaceUnavailableError
+  | RuntimeLocalWorkspaceMismatchError
+  | LocalFileSystemError
+  | LocalExecutorConfigDecodeError
+  | LocalWorkspaceStateDecodeError
+  | LocalConfiguredSourceNotFoundError
+  | Error,
+  WorkspaceStorageServices
+> =>
+  Effect.flatMap(
+    loadRuntimeSourceStoreDeps(rows, input.workspaceId),
+    (deps) => loadSourceByIdWithDeps(deps, input),
+  );
 
 const configSourceFromLocalSource = (input: {
   source: Source;
@@ -571,12 +739,12 @@ const removeAuthArtifactsForSource = (rows: ControlPlaneStoreShape, input: {
     return existingAuthArtifacts.length;
   });
 
-export const removeSourceById = (rows: ControlPlaneStoreShape, input: {
+const removeSourceByIdWithDeps = (deps: RuntimeSourceStoreDeps, input: {
   workspaceId: WorkspaceId;
   sourceId: Source["id"];
-}): Effect.Effect<boolean, Error, WorkspaceStorageServices> =>
+}): Effect.Effect<boolean, Error, never> =>
   Effect.gen(function* () {
-    const localWorkspace = yield* resolveRuntimeLocalWorkspace(input.workspaceId);
+    const localWorkspace = yield* resolveRuntimeLocalWorkspaceFromDeps(deps, input.workspaceId);
     if (!localWorkspace.loadedConfig.config?.sources?.[input.sourceId]) {
       return false;
     }
@@ -611,28 +779,37 @@ export const removeSourceById = (rows: ControlPlaneStoreShape, input: {
       sourceId: input.sourceId,
     });
 
-    yield* rows.sourceAuthSessions.removeByWorkspaceAndSourceId(
+    yield* deps.rows.sourceAuthSessions.removeByWorkspaceAndSourceId(
       input.workspaceId,
       input.sourceId,
     );
-    yield* rows.sourceOauthClients.removeByWorkspaceAndSourceId({
+    yield* deps.rows.sourceOauthClients.removeByWorkspaceAndSourceId({
       workspaceId: input.workspaceId,
       sourceId: input.sourceId,
     });
-    yield* removeAuthArtifactsForSource(rows, input);
+    yield* removeAuthArtifactsForSource(deps.rows, input);
 
     return true;
   });
 
-export const persistSource = (
-  rows: ControlPlaneStoreShape,
+export const removeSourceById = (rows: ControlPlaneStoreShape, input: {
+  workspaceId: WorkspaceId;
+  sourceId: Source["id"];
+}): Effect.Effect<boolean, Error, WorkspaceStorageServices> =>
+  Effect.flatMap(
+    loadRuntimeSourceStoreDeps(rows, input.workspaceId),
+    (deps) => removeSourceByIdWithDeps(deps, input),
+  );
+
+const persistSourceWithDeps = (
+  deps: RuntimeSourceStoreDeps,
   source: Source,
   options: {
     actorAccountId?: AccountId | null;
   } = {},
-): Effect.Effect<Source, Error, WorkspaceStorageServices> =>
+): Effect.Effect<Source, Error, never> =>
   Effect.gen(function* () {
-    const localWorkspace = yield* resolveRuntimeLocalWorkspace(source.workspaceId);
+    const localWorkspace = yield* resolveRuntimeLocalWorkspaceFromDeps(deps, source.workspaceId);
     const nextSource = {
       ...source,
       id:
@@ -644,7 +821,7 @@ export const persistSource = (
               new Set(Object.keys(localWorkspace.loadedConfig.config?.sources ?? {})),
             ),
     } satisfies Source;
-    const existingAuthArtifacts = yield* rows.authArtifacts.listByWorkspaceAndSourceId({
+    const existingAuthArtifacts = yield* deps.rows.authArtifacts.listByWorkspaceAndSourceId({
       workspaceId: nextSource.workspaceId,
       sourceId: nextSource.id,
     });
@@ -687,58 +864,58 @@ export const persistSource = (
 
     if (runtimeAuthArtifact === null) {
       if (existingRuntimeAuthArtifact !== null) {
-        yield* removeAuthLeaseAndSecrets(rows, {
+        yield* removeAuthLeaseAndSecrets(deps.rows, {
           authArtifactId: existingRuntimeAuthArtifact.id,
         });
       }
-      yield* rows.authArtifacts.removeByWorkspaceSourceAndActor({
+      yield* deps.rows.authArtifacts.removeByWorkspaceSourceAndActor({
         workspaceId: nextSource.workspaceId,
         sourceId: nextSource.id,
         actorAccountId: options.actorAccountId ?? null,
         slot: "runtime",
       });
     } else {
-      yield* rows.authArtifacts.upsert(runtimeAuthArtifact);
+      yield* deps.rows.authArtifacts.upsert(runtimeAuthArtifact);
       if (
         existingRuntimeAuthArtifact !== null
         && existingRuntimeAuthArtifact.id !== runtimeAuthArtifact.id
       ) {
-        yield* removeAuthLeaseAndSecrets(rows, {
+        yield* removeAuthLeaseAndSecrets(deps.rows, {
           authArtifactId: existingRuntimeAuthArtifact.id,
         });
       }
     }
 
-    yield* cleanupAuthArtifactSecretRefs(rows, {
+    yield* cleanupAuthArtifactSecretRefs(deps.rows, {
       previous: existingRuntimeAuthArtifact ?? null,
       next: runtimeAuthArtifact,
     });
 
     if (importAuthArtifact === null) {
       if (existingImportAuthArtifact !== null) {
-        yield* removeAuthLeaseAndSecrets(rows, {
+        yield* removeAuthLeaseAndSecrets(deps.rows, {
           authArtifactId: existingImportAuthArtifact.id,
         });
       }
-      yield* rows.authArtifacts.removeByWorkspaceSourceAndActor({
+      yield* deps.rows.authArtifacts.removeByWorkspaceSourceAndActor({
         workspaceId: nextSource.workspaceId,
         sourceId: nextSource.id,
         actorAccountId: options.actorAccountId ?? null,
         slot: "import",
       });
     } else {
-      yield* rows.authArtifacts.upsert(importAuthArtifact);
+      yield* deps.rows.authArtifacts.upsert(importAuthArtifact);
       if (
         existingImportAuthArtifact !== null
         && existingImportAuthArtifact.id !== importAuthArtifact.id
       ) {
-        yield* removeAuthLeaseAndSecrets(rows, {
+        yield* removeAuthLeaseAndSecrets(deps.rows, {
           authArtifactId: existingImportAuthArtifact.id,
         });
       }
     }
 
-    yield* cleanupAuthArtifactSecretRefs(rows, {
+    yield* cleanupAuthArtifactSecretRefs(deps.rows, {
       previous: existingImportAuthArtifact ?? null,
       next: importAuthArtifact,
     });
@@ -762,9 +939,83 @@ export const persistSource = (
       state: workspaceState,
     });
 
-    return yield* loadSourceById(rows, {
+    return yield* loadSourceByIdWithDeps(deps, {
       workspaceId: nextSource.workspaceId,
       sourceId: nextSource.id,
       actorAccountId: options.actorAccountId,
     });
   });
+
+export const persistSource = (
+  rows: ControlPlaneStoreShape,
+  source: Source,
+  options: {
+    actorAccountId?: AccountId | null;
+  } = {},
+): Effect.Effect<Source, Error, WorkspaceStorageServices> =>
+  Effect.flatMap(
+    loadRuntimeSourceStoreDeps(rows, source.workspaceId),
+    (deps) => persistSourceWithDeps(deps, source, options),
+  );
+
+type RuntimeSourceStoreShape = {
+  loadSourcesInWorkspace: (
+    workspaceId: WorkspaceId,
+    options?: { actorAccountId?: AccountId | null },
+  ) => ReturnType<typeof loadSourcesInWorkspaceWithDeps>;
+  listLinkedSecretSourcesInWorkspace: (
+    workspaceId: WorkspaceId,
+    options?: { actorAccountId?: AccountId | null },
+  ) => ReturnType<typeof listLinkedSecretSourcesInWorkspaceWithDeps>;
+  loadSourceById: (input: {
+    workspaceId: WorkspaceId;
+    sourceId: Source["id"];
+    actorAccountId?: AccountId | null;
+  }) => ReturnType<typeof loadSourceByIdWithDeps>;
+  removeSourceById: (input: {
+    workspaceId: WorkspaceId;
+    sourceId: Source["id"];
+  }) => ReturnType<typeof removeSourceByIdWithDeps>;
+  persistSource: (
+    source: Source,
+    options?: { actorAccountId?: AccountId | null },
+  ) => ReturnType<typeof persistSourceWithDeps>;
+};
+
+export type RuntimeSourceStore = RuntimeSourceStoreShape;
+
+export class RuntimeSourceStoreService extends Context.Tag(
+  "#runtime/RuntimeSourceStoreService",
+)<RuntimeSourceStoreService, RuntimeSourceStoreShape>() {}
+
+export const RuntimeSourceStoreLive = Layer.effect(
+  RuntimeSourceStoreService,
+  Effect.gen(function* () {
+    const rows = yield* ControlPlaneStore;
+    const runtimeLocalWorkspace = yield* RuntimeLocalWorkspaceService;
+    const workspaceConfigStore = yield* WorkspaceConfigStore;
+    const workspaceStateStore = yield* WorkspaceStateStore;
+    const sourceArtifactStore = yield* SourceArtifactStore;
+
+    const deps: RuntimeSourceStoreDeps = {
+      rows,
+      runtimeLocalWorkspace,
+      workspaceConfigStore,
+      workspaceStateStore,
+      sourceArtifactStore,
+    };
+
+    return RuntimeSourceStoreService.of({
+      loadSourcesInWorkspace: (workspaceId, options = {}) =>
+        loadSourcesInWorkspaceWithDeps(deps, workspaceId, options),
+      listLinkedSecretSourcesInWorkspace: (workspaceId, options = {}) =>
+        listLinkedSecretSourcesInWorkspaceWithDeps(deps, workspaceId, options),
+      loadSourceById: (input) =>
+        loadSourceByIdWithDeps(deps, input),
+      removeSourceById: (input) =>
+        removeSourceByIdWithDeps(deps, input),
+      persistSource: (source, options = {}) =>
+        persistSourceWithDeps(deps, source, options),
+    });
+  }),
+);

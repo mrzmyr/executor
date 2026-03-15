@@ -11,11 +11,15 @@ import {
   SecretMaterialIdSchema,
   type SecretRef,
 } from "#schema";
+import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 
 import { resolveConfigRelativePath } from "./local-config";
 import { fromConfigSecretProviderId } from "./local-config-secrets";
+import { getRuntimeLocalWorkspaceOption } from "./local-runtime-context";
+import { ControlPlaneStore } from "./store";
 import type { ControlPlaneStoreShape } from "./store";
 
 export const ENV_SECRET_PROVIDER_ID = "env";
@@ -45,6 +49,18 @@ export type StoreSecretMaterial = (input: {
 export type DeleteSecretMaterial = (
   ref: SecretRef,
 ) => Effect.Effect<boolean, Error, never>;
+
+export class SecretMaterialResolverService extends Context.Tag(
+  "#runtime/SecretMaterialResolverService",
+)<SecretMaterialResolverService, ResolveSecretMaterial>() {}
+
+export class SecretMaterialStorerService extends Context.Tag(
+  "#runtime/SecretMaterialStorerService",
+)<SecretMaterialStorerService, StoreSecretMaterial>() {}
+
+export class SecretMaterialDeleterService extends Context.Tag(
+  "#runtime/SecretMaterialDeleterService",
+)<SecretMaterialDeleterService, DeleteSecretMaterial>() {}
 
 type SecretMaterialProviderRuntime = {
   rows: ControlPlaneStoreShape;
@@ -740,3 +756,95 @@ export const createDefaultSecretMaterialDeleter = (input: {
       });
     });
 };
+
+const resolveRuntimeSecretMaterialConfig = (input: {
+  localConfig?: LocalExecutorConfig | null;
+  workspaceRoot?: string | null;
+}) =>
+  Effect.gen(function* () {
+    const runtimeLocalWorkspace = yield* getRuntimeLocalWorkspaceOption();
+
+    return {
+      localConfig: input.localConfig
+        ?? runtimeLocalWorkspace?.loadedConfig.config
+        ?? null,
+      workspaceRoot: input.workspaceRoot
+        ?? runtimeLocalWorkspace?.context.workspaceRoot
+        ?? null,
+    };
+  });
+
+export const SecretMaterialResolverLive = (input: {
+  resolveSecretMaterial?: ResolveSecretMaterial;
+  dangerouslyAllowEnvSecrets?: boolean;
+  keychainServiceName?: string;
+  localConfig?: LocalExecutorConfig | null;
+  workspaceRoot?: string | null;
+} = {}) =>
+  input.resolveSecretMaterial
+    ? Layer.succeed(SecretMaterialResolverService, input.resolveSecretMaterial)
+    : Layer.effect(
+        SecretMaterialResolverService,
+        Effect.gen(function* () {
+          const rows = yield* ControlPlaneStore;
+          const runtimeConfig = yield* resolveRuntimeSecretMaterialConfig(input);
+
+          return createDefaultSecretMaterialResolver({
+            rows,
+            dangerouslyAllowEnvSecrets: input.dangerouslyAllowEnvSecrets,
+            keychainServiceName: input.keychainServiceName,
+            localConfig: runtimeConfig.localConfig,
+            workspaceRoot: runtimeConfig.workspaceRoot,
+          });
+        }),
+      );
+
+export const SecretMaterialStorerLive = (input: {
+  storeProviderId?: SecretStoreProviderId;
+  dangerouslyAllowEnvSecrets?: boolean;
+  keychainServiceName?: string;
+} = {}) =>
+  Layer.effect(
+    SecretMaterialStorerService,
+    Effect.gen(function* () {
+      const rows = yield* ControlPlaneStore;
+
+      return createDefaultSecretMaterialStorer({
+        rows,
+        storeProviderId: input.storeProviderId,
+        dangerouslyAllowEnvSecrets: input.dangerouslyAllowEnvSecrets,
+        keychainServiceName: input.keychainServiceName,
+      });
+    }),
+  );
+
+export const SecretMaterialDeleterLive = (input: {
+  dangerouslyAllowEnvSecrets?: boolean;
+  keychainServiceName?: string;
+} = {}) =>
+  Layer.effect(
+    SecretMaterialDeleterService,
+    Effect.gen(function* () {
+      const rows = yield* ControlPlaneStore;
+
+      return createDefaultSecretMaterialDeleter({
+        rows,
+        dangerouslyAllowEnvSecrets: input.dangerouslyAllowEnvSecrets,
+        keychainServiceName: input.keychainServiceName,
+      });
+    }),
+  );
+
+export const SecretMaterialLive = (input: {
+  resolveSecretMaterial?: ResolveSecretMaterial;
+  storeProviderId?: SecretStoreProviderId;
+  dangerouslyAllowEnvSecrets?: boolean;
+  keychainServiceName?: string;
+  localConfig?: LocalExecutorConfig | null;
+  workspaceRoot?: string | null;
+} = {}) =>
+  Layer.mergeAll(
+    SecretMaterialResolverLive(input),
+    SecretMaterialStorerLive(input),
+    SecretMaterialDeleterLive(input),
+  );

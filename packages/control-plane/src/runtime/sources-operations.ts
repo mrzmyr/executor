@@ -24,14 +24,10 @@ import {
 import {
   operationErrors,
 } from "./operation-errors";
-import { createDefaultSecretMaterialResolver } from "./secret-material-providers";
 import { ControlPlaneStore, type ControlPlaneStoreShape } from "./store";
-import { syncSourceMaterialization } from "./source-materialization";
+import { RuntimeSourceMaterializationService } from "./source-materialization";
 import {
-  loadSourceById,
-  loadSourcesInWorkspace,
-  persistSource,
-  removeSourceById,
+  RuntimeSourceStoreService,
 } from "./source-store";
 
 const sourceOps = {
@@ -47,6 +43,7 @@ const shouldAutoProbeSource = (source: Source): boolean =>
 
 const syncArtifactsForSource = (input: {
   store: ControlPlaneStoreShape;
+  sourceStore: Effect.Effect.Success<typeof RuntimeSourceStoreService>;
   source: Source;
   actorAccountId: AccountId;
   operation:
@@ -54,9 +51,7 @@ const syncArtifactsForSource = (input: {
     | typeof sourceOps.update;
 }) =>
   Effect.gen(function* () {
-    const resolveSecretMaterial = createDefaultSecretMaterialResolver({
-      rows: input.store,
-    });
+    const materializationService = yield* RuntimeSourceMaterializationService;
 
     // For HTTP-backed source kinds that can validate themselves from a remote
     // document, automatically attempt to probe and connect. This mirrors the
@@ -68,11 +63,9 @@ const syncArtifactsForSource = (input: {
       : input.source;
 
     const synced = yield* Effect.either(
-      syncSourceMaterialization({
-        rows: input.store,
+      materializationService.sync({
         source: sourceForSync,
         actorAccountId: input.actorAccountId,
-        resolveSecretMaterial,
       }),
     );
 
@@ -94,7 +87,7 @@ const syncArtifactsForSource = (input: {
             );
             yield* mapPersistenceError(
               input.operation.child("source_connected"),
-              persistSource(input.store, connectedSource, {
+              input.sourceStore.persistSource(connectedSource, {
                 actorAccountId: input.actorAccountId,
               }),
             );
@@ -123,7 +116,7 @@ const syncArtifactsForSource = (input: {
 
             yield* mapPersistenceError(
               input.operation.child("source_error"),
-              persistSource(input.store, erroredSource, {
+              input.sourceStore.persistSource(erroredSource, {
                 actorAccountId: input.actorAccountId,
               }),
             );
@@ -142,7 +135,9 @@ export const listSources = (input: {
 }) =>
   Effect.flatMap(ControlPlaneStore, (store) =>
     Effect.gen(function* () {
-      return yield* loadSourcesInWorkspace(store, input.workspaceId, {
+      const sourceStore = yield* RuntimeSourceStoreService;
+
+      return yield* sourceStore.loadSourcesInWorkspace(input.workspaceId, {
         actorAccountId: input.accountId,
       }).pipe(
         Effect.mapError((error) =>
@@ -161,6 +156,7 @@ export const createSource = (input: {
 }) =>
   Effect.flatMap(ControlPlaneStore, (store) =>
     Effect.gen(function* () {
+      const sourceStore = yield* RuntimeSourceStoreService;
       const now = Date.now();
 
       const source = yield* createSourceFromPayload({
@@ -179,13 +175,14 @@ export const createSource = (input: {
 
       const persistedSource = yield* mapPersistenceError(
         sourceOps.create.child("persist"),
-        persistSource(store, source, {
+        sourceStore.persistSource(source, {
           actorAccountId: input.accountId,
         }),
       );
 
       const synchronizedSource = yield* syncArtifactsForSource({
         store,
+        sourceStore,
         source: persistedSource,
         actorAccountId: input.accountId,
         operation: sourceOps.create,
@@ -201,7 +198,9 @@ export const getSource = (input: {
 }) =>
   Effect.flatMap(ControlPlaneStore, (store) =>
     Effect.gen(function* () {
-      return yield* loadSourceById(store, {
+      const sourceStore = yield* RuntimeSourceStoreService;
+
+      return yield* sourceStore.loadSourceById({
         workspaceId: input.workspaceId,
         sourceId: input.sourceId,
         actorAccountId: input.accountId,
@@ -228,7 +227,8 @@ export const updateSource = (input: {
 }) =>
   Effect.flatMap(ControlPlaneStore, (store) =>
     Effect.gen(function* () {
-      const existingSource = yield* loadSourceById(store, {
+      const sourceStore = yield* RuntimeSourceStoreService;
+      const existingSource = yield* sourceStore.loadSourceById({
         workspaceId: input.workspaceId,
         sourceId: input.sourceId,
         actorAccountId: input.accountId,
@@ -261,13 +261,14 @@ export const updateSource = (input: {
 
       const persistedSource = yield* mapPersistenceError(
         sourceOps.update.child("persist"),
-        persistSource(store, updatedSource, {
+        sourceStore.persistSource(updatedSource, {
           actorAccountId: input.accountId,
         }),
       );
 
       const synchronizedSource = yield* syncArtifactsForSource({
         store,
+        sourceStore,
         source: persistedSource,
         actorAccountId: input.accountId,
         operation: sourceOps.update,
@@ -282,9 +283,10 @@ export const removeSource = (input: {
 }) =>
   Effect.flatMap(ControlPlaneStore, (store) =>
     Effect.gen(function* () {
+      const sourceStore = yield* RuntimeSourceStoreService;
       const removed = yield* mapPersistenceError(
         sourceOps.remove.child("remove"),
-        removeSourceById(store, {
+        sourceStore.removeSourceById({
           workspaceId: input.workspaceId,
           sourceId: input.sourceId,
         }),

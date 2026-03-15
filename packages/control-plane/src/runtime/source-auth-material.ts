@@ -4,10 +4,12 @@ import type {
   Source,
   SourceAuth,
 } from "#schema";
+import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 
-import type { ControlPlaneStoreShape } from "./store";
+import { ControlPlaneStore, type ControlPlaneStoreShape } from "./store";
 import {
   authArtifactFromSourceAuth,
   resolveAuthArtifactMaterial,
@@ -18,6 +20,7 @@ import type {
   ResolveSecretMaterial,
   SecretMaterialResolveContext,
 } from "./secret-material-providers";
+import { SecretMaterialResolverService } from "./secret-material-providers";
 
 const authForSlot = (input: {
   source: Source;
@@ -38,7 +41,20 @@ const authForSlot = (input: {
   return input.source.importAuth;
 };
 
-export const resolveSourceAuthMaterial = (input: {
+export type RuntimeSourceAuthMaterialShape = {
+  resolve: (input: {
+    source: Source;
+    slot?: CredentialSlot;
+    actorAccountId?: AccountId | null;
+    context?: SecretMaterialResolveContext;
+  }) => Effect.Effect<ResolvedSourceAuthMaterial, Error, never>;
+};
+
+export class RuntimeSourceAuthMaterialService extends Context.Tag(
+  "#runtime/RuntimeSourceAuthMaterialService",
+)<RuntimeSourceAuthMaterialService, RuntimeSourceAuthMaterialShape>() {}
+
+export const resolveSourceAuthMaterialWithDeps = (input: {
   source: Source;
   slot?: CredentialSlot;
   actorAccountId?: AccountId | null;
@@ -105,5 +121,30 @@ export const resolveSourceAuthMaterial = (input: {
       context: input.context,
     });
   });
+
+export const resolveSourceAuthMaterial = (input: {
+  source: Source;
+  slot?: CredentialSlot;
+  actorAccountId?: AccountId | null;
+  context?: SecretMaterialResolveContext;
+}): Effect.Effect<ResolvedSourceAuthMaterial, Error, RuntimeSourceAuthMaterialService> =>
+  Effect.flatMap(RuntimeSourceAuthMaterialService, (service) => service.resolve(input));
+
+export const RuntimeSourceAuthMaterialLive = Layer.effect(
+  RuntimeSourceAuthMaterialService,
+  Effect.gen(function* () {
+    const rows = yield* ControlPlaneStore;
+    const resolveSecretMaterial = yield* SecretMaterialResolverService;
+
+    return RuntimeSourceAuthMaterialService.of({
+      resolve: (input) =>
+        resolveSourceAuthMaterialWithDeps({
+          ...input,
+          rows,
+          resolveSecretMaterial,
+        }),
+    });
+  }),
+);
 
 export type { ResolvedSourceAuthMaterial } from "./auth-artifacts";

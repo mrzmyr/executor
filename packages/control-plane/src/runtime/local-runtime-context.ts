@@ -1,5 +1,6 @@
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 
 import type { AccountId, WorkspaceId } from "#schema";
@@ -24,6 +25,18 @@ export type RuntimeLocalWorkspaceState = {
 export class RuntimeLocalWorkspaceService extends Context.Tag(
   "#runtime/RuntimeLocalWorkspaceService",
 )<RuntimeLocalWorkspaceService, RuntimeLocalWorkspaceState>() {}
+
+export const RuntimeLocalWorkspaceLive = (
+  runtimeLocalWorkspace: RuntimeLocalWorkspaceState,
+) => Layer.succeed(RuntimeLocalWorkspaceService, runtimeLocalWorkspace);
+
+export const provideOptionalRuntimeLocalWorkspace = <A, E, R>(
+  effect: Effect.Effect<A, E, R>,
+  runtimeLocalWorkspace: RuntimeLocalWorkspaceState | null | undefined,
+): Effect.Effect<A, E, R> =>
+  runtimeLocalWorkspace === null || runtimeLocalWorkspace === undefined
+    ? effect
+    : effect.pipe(Effect.provide(RuntimeLocalWorkspaceLive(runtimeLocalWorkspace)));
 
 export const getRuntimeLocalWorkspaceOption = () =>
   Effect.contextWith((context) =>

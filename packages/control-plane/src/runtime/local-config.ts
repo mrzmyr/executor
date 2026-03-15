@@ -1,7 +1,6 @@
 import { homedir } from "node:os";
 import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 import { FileSystem } from "@effect/platform";
-import { NodeFileSystem } from "@effect/platform-node";
 import {
   type ParseError as JsoncParseError,
   parse as parseJsoncDocument,
@@ -29,15 +28,6 @@ const PROJECT_CONFIG_BASENAME = "executor.jsonc";
 const PROJECT_CONFIG_FALLBACK_BASENAME = "executor.json";
 const PROJECT_CONFIG_DIRECTORY = ".executor";
 const EXECUTOR_CONFIG_DIR_ENV = "EXECUTOR_CONFIG_DIR";
-
-const provideNodeFileSystem = <A, E, R>(
-  effect: Effect.Effect<A, E, R | FileSystem.FileSystem>,
-): Effect.Effect<A, E, Exclude<R, FileSystem.FileSystem>> =>
-  effect.pipe(Effect.provide(NodeFileSystem.layer)) as Effect.Effect<
-    A,
-    E,
-    Exclude<R, FileSystem.FileSystem>
-  >;
 
 const mapFileSystemError = (path: string, action: string) => (cause: unknown) =>
   new LocalFileSystemError({
@@ -114,8 +104,8 @@ export const resolveHomeConfigPath = (input: {
   env?: NodeJS.ProcessEnv;
   platform?: NodeJS.Platform;
   homeDirectory?: string;
-} = {}): Effect.Effect<string, LocalFileSystemError> =>
-  provideNodeFileSystem(Effect.gen(function* () {
+} = {}): Effect.Effect<string, LocalFileSystemError, FileSystem.FileSystem> =>
+  Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
     const candidates = resolveDefaultHomeConfigCandidates(input);
 
@@ -129,7 +119,7 @@ export const resolveHomeConfigPath = (input: {
     }
 
     return candidates[0]!;
-  }));
+  });
 
 const formatJsoncParseErrors = (content: string, errors: readonly JsoncParseError[]): string => {
   const lines = content.split("\n");
@@ -338,8 +328,12 @@ export type LoadedLocalExecutorConfig = {
 export const resolveLocalWorkspaceContext = (input: {
   cwd?: string;
   workspaceRoot?: string;
-} = {}): Effect.Effect<ResolvedLocalWorkspaceContext, LocalFileSystemError> =>
-  provideNodeFileSystem(Effect.gen(function* () {
+} = {}): Effect.Effect<
+  ResolvedLocalWorkspaceContext,
+  LocalFileSystemError,
+  FileSystem.FileSystem
+> =>
+  Effect.gen(function* () {
     const cwd = resolve(input.cwd ?? process.cwd());
     const workspaceRoot = resolve(
       input.workspaceRoot ?? (yield* resolveWorkspaceRootFromCwdEffect(cwd)),
@@ -358,12 +352,16 @@ export const resolveLocalWorkspaceContext = (input: {
       artifactsDirectory: join(workspaceRoot, PROJECT_CONFIG_DIRECTORY, "artifacts"),
       stateDirectory: join(workspaceRoot, PROJECT_CONFIG_DIRECTORY, "state"),
     };
-  }));
+  });
 
 export const readOptionalLocalExecutorConfig = (
   path: string,
-): Effect.Effect<LocalExecutorConfig | null, LocalFileSystemError | LocalExecutorConfigDecodeError> =>
-  provideNodeFileSystem(Effect.gen(function* () {
+): Effect.Effect<
+  LocalExecutorConfig | null,
+  LocalFileSystemError | LocalExecutorConfigDecodeError,
+  FileSystem.FileSystem
+> =>
+  Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
     const exists = yield* fs.exists(path).pipe(
       Effect.mapError(mapFileSystemError(path, "check config path")),
@@ -386,13 +384,14 @@ export const readOptionalLocalExecutorConfig = (
               details: unknownLocalErrorDetails(cause),
             }),
     });
-  }));
+  });
 
 export const loadLocalExecutorConfig = (
   context: ResolvedLocalWorkspaceContext,
 ): Effect.Effect<
   LoadedLocalExecutorConfig,
-  LocalFileSystemError | LocalExecutorConfigDecodeError
+  LocalFileSystemError | LocalExecutorConfigDecodeError,
+  FileSystem.FileSystem
 > =>
   Effect.gen(function* () {
     const [homeConfig, projectConfig] = yield* Effect.all([
@@ -415,8 +414,8 @@ export const encodeLocalExecutorConfig = (config: LocalExecutorConfig): string =
 export const writeProjectLocalExecutorConfig = (input: {
   context: ResolvedLocalWorkspaceContext;
   config: LocalExecutorConfig;
-}): Effect.Effect<void, LocalFileSystemError> =>
-  provideNodeFileSystem(Effect.gen(function* () {
+}): Effect.Effect<void, LocalFileSystemError, FileSystem.FileSystem> =>
+  Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
     yield* fs.makeDirectory(input.context.configDirectory, { recursive: true }).pipe(
       Effect.mapError(mapFileSystemError(input.context.configDirectory, "create config directory")),
@@ -427,7 +426,7 @@ export const writeProjectLocalExecutorConfig = (input: {
     ).pipe(
       Effect.mapError(mapFileSystemError(input.context.projectConfigPath, "write config")),
     );
-  }));
+  });
 
 export const resolveConfigRelativePath = (input: {
   path: string;

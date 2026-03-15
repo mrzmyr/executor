@@ -26,14 +26,12 @@ import {
   getSourceAdapterForOperation,
 } from "./source-adapters";
 import {
-  loadSourceWithRecipe,
+  RuntimeSourceRecipeStoreService,
   recipeToolMetadata,
   recipeToolPath,
 } from "./source-recipes-runtime";
 import type { SourceAdapterPersistedOperationMetadata } from "./source-adapters/types";
 import { namespaceFromSourceName } from "./source-names";
-import { loadSourceById } from "./source-store";
-import { ControlPlaneStore } from "./store";
 
 const sourceInspectOps = {
   bundle: operationErrors("sources.inspect.bundle"),
@@ -109,10 +107,9 @@ const loadSourceRecipeRecord = (input: {
   workspaceId: WorkspaceId;
   sourceId: SourceId;
 }) =>
-  Effect.flatMap(ControlPlaneStore, (store) =>
+  Effect.flatMap(RuntimeSourceRecipeStoreService, (sourceRecipeStore) =>
     Effect.gen(function* () {
-      const recipe = yield* loadSourceWithRecipe({
-        rows: store,
+      const recipe = yield* sourceRecipeStore.loadSourceWithRecipe({
         workspaceId: input.workspaceId,
         sourceId: input.sourceId,
       }).pipe(
@@ -390,10 +387,9 @@ export const getSourceInspectionSchemaBundle = (input: {
   sourceId: SourceId;
   schemaBundleId: string;
 }) =>
-  Effect.flatMap(ControlPlaneStore, (store) =>
+  Effect.flatMap(RuntimeSourceRecipeStoreService, (sourceRecipeStore) =>
     Effect.gen(function* () {
-      const recipe = yield* loadSourceWithRecipe({
-        rows: store,
+      const recipe = yield* sourceRecipeStore.loadSourceWithRecipe({
         workspaceId: input.workspaceId,
         sourceId: input.sourceId,
       }).pipe(

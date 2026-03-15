@@ -1,6 +1,7 @@
 import { existsSync, mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { NodeFileSystem } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 
@@ -45,6 +46,6 @@ describe("local-installation", () => {
 
       expect(second.accountId).toBe(first.accountId);
       expect(second.workspaceId).toBe(first.workspaceId);
-    }),
+    }).pipe(Effect.provide(NodeFileSystem.layer)),
   );
 });

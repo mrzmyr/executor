@@ -25,9 +25,7 @@ import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
-import { authArtifactSecretMaterialRefs } from "./auth-artifacts";
 import type { ResolvedLocalWorkspaceContext } from "./local-config";
-import { loadLocalExecutorConfig } from "./local-config";
 import {
   LocalFileSystemError,
   unknownLocalErrorDetails,
@@ -303,7 +301,10 @@ const createStateManager = (context: ResolvedLocalWorkspaceContext) => {
     operation: (state: LocalControlPlaneState) => A | Promise<A>,
   ): Effect.Effect<A, LocalFileSystemError> =>
     Effect.tryPromise({
-      try: async () => operation(cloneValue(await ensureLoaded())),
+      try: async () => {
+        await mutationQueue;
+        return operation(cloneValue(await ensureLoaded()));
+      },
       catch: mapFileSystemError(
         localControlPlaneStatePath(context),
         "read control plane state",
@@ -771,45 +772,6 @@ export const createLocalControlPlaneStore = (
             },
             value: nextMaterials.length !== state.secretMaterials.length,
           } satisfies StateMutationResult<boolean>;
-        }),
-
-      listLinkedSources: () =>
-        Effect.gen(function* () {
-          const [state, loadedConfig] = yield* Effect.all([
-            stateManager.read((current) => current),
-            loadLocalExecutorConfig(context),
-          ]);
-
-          const sourceNames = new Map<string, string>();
-          for (const [sourceId, source] of Object.entries(
-            loadedConfig.config?.sources ?? {},
-          )) {
-            sourceNames.set(sourceId, source.name ?? sourceId);
-          }
-
-          const materialIds = new Set(
-            state.secretMaterials.map((material) => String(material.id)),
-          );
-          const linkedSources = new Map<string, Array<{ sourceId: string; sourceName: string }>>();
-
-          for (const artifact of state.authArtifacts) {
-            for (const ref of authArtifactSecretMaterialRefs(artifact)) {
-              if (!materialIds.has(ref.handle)) {
-                continue;
-              }
-
-              const existing = linkedSources.get(ref.handle) ?? [];
-              if (!existing.some((link) => link.sourceId === artifact.sourceId)) {
-                existing.push({
-                  sourceId: artifact.sourceId,
-                  sourceName: sourceNames.get(artifact.sourceId) ?? artifact.sourceId,
-                });
-                linkedSources.set(ref.handle, existing);
-              }
-            }
-          }
-
-          return linkedSources;
         }),
     },
 

@@ -4,6 +4,7 @@ import {
   HttpClientRequest,
 } from "@effect/platform";
 import {
+  allowAllToolInteractions,
   applyCookiePlacementsToHeaders,
   applyHttpQueryPlacementsToUrl,
   makeToolInvokerFromTools,
@@ -563,6 +564,7 @@ export const openApiSourceAdapter: SourceAdapter = {
         tools: {
           [path]: tool,
         },
+        onToolInteraction: allowAllToolInteractions,
         onElicitation,
       }).invoke({
         path,

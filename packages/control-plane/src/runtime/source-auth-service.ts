@@ -7,7 +7,6 @@ import {
   AccountId,
   type CredentialSlot,
   ExecutionIdSchema,
-  type LocalExecutorConfig,
   McpSourceAuthSessionDataJsonSchema,
   type McpSourceAuthSessionData,
   OAuth2PkceSourceAuthSessionDataJsonSchema,
@@ -42,7 +41,8 @@ import {
   type LiveExecutionManager,
 } from "./live-execution";
 import {
-  RuntimeLocalWorkspaceService,
+  getRuntimeLocalWorkspaceOption,
+  provideOptionalRuntimeLocalWorkspace,
   type RuntimeLocalWorkspaceState,
 } from "./local-runtime-context";
 import {
@@ -61,15 +61,15 @@ import {
 import { isSourceCredentialRequiredError } from "./source-adapters/shared";
 import {
   createDefaultSecretMaterialDeleter,
-  createDefaultSecretMaterialResolver,
-  createDefaultSecretMaterialStorer,
   type ResolveSecretMaterial,
+  SecretMaterialResolverService,
+  SecretMaterialStorerService,
   type StoreSecretMaterial,
 } from "./secret-material-providers";
 import { upsertOauth2AuthorizedUserLeaseFromTokenResponse } from "./auth-leases";
 import {
-  persistMcpRecipeMaterializationFromManifest,
-  syncSourceMaterialization,
+  RuntimeSourceMaterializationService,
+  type RuntimeSourceMaterializationShape,
 } from "./source-materialization";
 import {
   buildOAuth2AuthorizationUrl,
@@ -81,6 +81,8 @@ import {
   loadSourceById,
   loadSourcesInWorkspace,
   persistSource,
+  type RuntimeSourceStore,
+  RuntimeSourceStoreService,
 } from "./source-store";
 import type { WorkspaceStorageServices } from "./local-storage";
 import { ControlPlaneStore, type ControlPlaneStoreShape } from "./store";
@@ -358,7 +360,7 @@ const serializeJson = (value: unknown): string | null => {
   return JSON.stringify(value);
 };
 
-const updateSourceStatus = (rows: ControlPlaneStoreShape, source: Source, input: {
+const updateSourceStatus = (sourceStore: RuntimeSourceStore, source: Source, input: {
   actorAccountId?: AccountId | null;
   status: Source["status"];
   lastError?: string | null;
@@ -366,13 +368,13 @@ const updateSourceStatus = (rows: ControlPlaneStoreShape, source: Source, input:
   importAuth?: Source["importAuth"];
 }) =>
   Effect.gen(function* () {
-    const latest = yield* loadSourceById(rows, {
+    const latest = yield* sourceStore.loadSourceById({
       workspaceId: source.workspaceId,
       sourceId: source.id,
       actorAccountId: input.actorAccountId,
     });
 
-    return yield* persistSource(rows, {
+    return yield* sourceStore.persistSource({
       ...latest,
       status: input.status,
       lastError: input.lastError ?? null,
@@ -857,6 +859,7 @@ const resolveExistingSourceOauthClient = (input: {
 
 const startOauth2PkceSourceCredentialSetup = (input: {
   rows: ControlPlaneStoreShape;
+  sourceStore: RuntimeSourceStore;
   source: Source;
   actorAccountId?: AccountId | null;
   executionId?: SourceAuthSession["executionId"];
@@ -951,7 +954,7 @@ const startOauth2PkceSourceCredentialSetup = (input: {
         updatedAt: now,
       });
 
-      const authRequiredSource = yield* updateSourceStatus(input.rows, input.source, {
+      const authRequiredSource = yield* updateSourceStatus(input.sourceStore, input.source, {
         actorAccountId: input.actorAccountId,
         status: "auth_required",
         lastError: null,
@@ -974,6 +977,8 @@ const startOauth2PkceSourceCredentialSetup = (input: {
 
 const connectMcpSourceInternal = (input: {
   rows: ControlPlaneStoreShape;
+  sourceStore: RuntimeSourceStore;
+  sourceMaterialization: RuntimeSourceMaterializationShape;
   getLocalServerBaseUrl?: () => string | undefined;
   baseUrl?: string | null;
   workspaceId: WorkspaceId;
@@ -995,7 +1000,7 @@ const connectMcpSourceInternal = (input: {
     const normalizedEndpoint = normalizeEndpoint(input.endpoint);
     const existing = yield* (
       input.sourceId
-        ? loadSourceById(input.rows, {
+        ? input.sourceStore.loadSourceById({
             workspaceId: input.workspaceId,
             sourceId: input.sourceId,
             actorAccountId: input.actorAccountId,
@@ -1006,7 +1011,7 @@ const connectMcpSourceInternal = (input: {
                 : Effect.fail(new Error(`Expected MCP source, received ${source.kind}`)),
             ),
           )
-        : loadSourcesInWorkspace(input.rows, input.workspaceId, {
+        : input.sourceStore.loadSourcesInWorkspace(input.workspaceId, {
             actorAccountId: input.actorAccountId,
           }).pipe(
             Effect.map((sources) =>
@@ -1079,14 +1084,12 @@ const connectMcpSourceInternal = (input: {
           now,
         });
 
-    const persistedDraft = yield* persistSource(input.rows, draftSource, {
+    const persistedDraft = yield* input.sourceStore.persistSource(draftSource, {
       actorAccountId: input.actorAccountId,
     });
-    yield* syncSourceMaterialization({
-      rows: input.rows,
+    yield* input.sourceMaterialization.sync({
       source: persistedDraft,
       actorAccountId: input.actorAccountId,
-      resolveSecretMaterial: input.resolveSecretMaterial,
     });
 
     const discovered = yield* Effect.either(
@@ -1100,15 +1103,14 @@ const connectMcpSourceInternal = (input: {
       onLeft: () => Effect.succeed(null),
       onRight: (result) =>
         Effect.gen(function* () {
-          const connected = yield* updateSourceStatus(input.rows, persistedDraft, {
+          const connected = yield* updateSourceStatus(input.sourceStore, persistedDraft, {
             actorAccountId: input.actorAccountId,
             status: "connected",
             lastError: null,
             auth: { kind: "none" },
           });
           const indexed = yield* Effect.either(
-            persistMcpRecipeMaterializationFromManifest({
-              rows: input.rows,
+            input.sourceMaterialization.persistMcpRecipeMaterializationFromManifest({
               source: connected,
               manifestEntries: result.manifest.tools,
             }),
@@ -1116,7 +1118,7 @@ const connectMcpSourceInternal = (input: {
 
           return yield* Either.match(indexed, {
             onLeft: (error) =>
-              updateSourceStatus(input.rows, connected, {
+              updateSourceStatus(input.sourceStore, connected, {
                 actorAccountId: input.actorAccountId,
                 status: "error",
                 lastError: error.message,
@@ -1156,7 +1158,7 @@ const connectMcpSourceInternal = (input: {
       state,
     });
 
-    const authRequiredSource = yield* updateSourceStatus(input.rows, persistedDraft, {
+    const authRequiredSource = yield* updateSourceStatus(input.sourceStore, persistedDraft, {
       actorAccountId: input.actorAccountId,
       status: "auth_required",
       lastError: null,
@@ -1203,6 +1205,8 @@ const connectMcpSourceInternal = (input: {
 
 const addExecutorHttpSource = (input: {
   rows: ControlPlaneStoreShape;
+  sourceStore: RuntimeSourceStore;
+  sourceMaterialization: RuntimeSourceMaterializationShape;
   sourceInput: Extract<ExecutorAddSourceInput, { kind: "openapi" | "graphql" }>;
   storeSecretMaterial: StoreSecretMaterial;
   resolveSecretMaterial: ResolveSecretMaterial;
@@ -1214,8 +1218,7 @@ const addExecutorHttpSource = (input: {
     const normalizedSpecUrl = input.sourceInput.kind === "openapi"
       ? normalizeEndpoint(input.sourceInput.specUrl)
       : null;
-    const existingSources = yield* loadSourcesInWorkspace(
-      input.rows,
+    const existingSources = yield* input.sourceStore.loadSourcesInWorkspace(
       input.sourceInput.workspaceId,
       {
         actorAccountId: input.sourceInput.actorAccountId,
@@ -1313,7 +1316,7 @@ const addExecutorHttpSource = (input: {
           now,
         });
 
-    const persistedDraft = yield* persistSource(input.rows, draftSource, {
+    const persistedDraft = yield* input.sourceStore.persistSource(draftSource, {
       actorAccountId: input.sourceInput.actorAccountId,
     });
 
@@ -1327,6 +1330,7 @@ const addExecutorHttpSource = (input: {
       if (baseUrl) {
         const oauthRequired = yield* startOauth2PkceSourceCredentialSetup({
           rows: input.rows,
+          sourceStore: input.sourceStore,
           source: persistedDraft,
           actorAccountId: input.sourceInput.actorAccountId,
           executionId: input.sourceInput.executionId,
@@ -1340,7 +1344,7 @@ const addExecutorHttpSource = (input: {
         }
       }
 
-      const authRequiredSource = yield* updateSourceStatus(input.rows, persistedDraft, {
+      const authRequiredSource = yield* updateSourceStatus(input.sourceStore, persistedDraft, {
         actorAccountId: input.sourceInput.actorAccountId,
         status: "auth_required",
         lastError: null,
@@ -1354,21 +1358,19 @@ const addExecutorHttpSource = (input: {
     }
 
     const synced = yield* Effect.either(
-      syncSourceMaterialization({
-        rows: input.rows,
+      input.sourceMaterialization.sync({
         source: {
           ...persistedDraft,
           status: "connected",
         },
         actorAccountId: input.sourceInput.actorAccountId,
-        resolveSecretMaterial: input.resolveSecretMaterial,
       }),
     );
 
     return yield* Either.match(synced, {
       onLeft: (error) =>
         isSourceCredentialRequiredError(error)
-          ? updateSourceStatus(input.rows, persistedDraft, {
+          ? updateSourceStatus(input.sourceStore, persistedDraft, {
               actorAccountId: input.sourceInput.actorAccountId,
               status: "auth_required",
               lastError: null,
@@ -1381,7 +1383,7 @@ const addExecutorHttpSource = (input: {
                 } satisfies ExecutorSourceAddResult)
               ),
             )
-          : updateSourceStatus(input.rows, persistedDraft, {
+          : updateSourceStatus(input.sourceStore, persistedDraft, {
               actorAccountId: input.sourceInput.actorAccountId,
               status: "error",
               lastError: error.message,
@@ -1389,7 +1391,7 @@ const addExecutorHttpSource = (input: {
               Effect.zipRight(Effect.fail(error)),
             ),
       onRight: () =>
-        updateSourceStatus(input.rows, persistedDraft, {
+        updateSourceStatus(input.sourceStore, persistedDraft, {
           actorAccountId: input.sourceInput.actorAccountId,
           status: "connected",
           lastError: null,
@@ -1406,6 +1408,8 @@ const addExecutorHttpSource = (input: {
 
 const addExecutorGoogleDiscoverySource = (input: {
   rows: ControlPlaneStoreShape;
+  sourceStore: RuntimeSourceStore;
+  sourceMaterialization: RuntimeSourceMaterializationShape;
   sourceInput: Extract<ExecutorAddSourceInput, { kind: "google_discovery" }>;
   storeSecretMaterial: StoreSecretMaterial;
   resolveSecretMaterial: ResolveSecretMaterial;
@@ -1419,8 +1423,7 @@ const addExecutorGoogleDiscoverySource = (input: {
       trimOrNull(input.sourceInput.discoveryUrl)
         ?? defaultGoogleDiscoveryUrl(normalizedService, normalizedVersion),
     );
-    const existingSources = yield* loadSourcesInWorkspace(
-      input.rows,
+    const existingSources = yield* input.sourceStore.loadSourcesInWorkspace(
       input.sourceInput.workspaceId,
       {
         actorAccountId: input.sourceInput.actorAccountId,
@@ -1524,7 +1527,7 @@ const addExecutorGoogleDiscoverySource = (input: {
           now,
         });
 
-    const persistedDraft = yield* persistSource(input.rows, draftSource, {
+    const persistedDraft = yield* input.sourceStore.persistSource(draftSource, {
       actorAccountId: input.sourceInput.actorAccountId,
     });
 
@@ -1547,6 +1550,7 @@ const addExecutorGoogleDiscoverySource = (input: {
       if (baseUrl) {
         const oauthRequired = yield* startOauth2PkceSourceCredentialSetup({
           rows: input.rows,
+          sourceStore: input.sourceStore,
           source: persistedDraft,
           actorAccountId: input.sourceInput.actorAccountId,
           executionId: input.sourceInput.executionId,
@@ -1560,7 +1564,7 @@ const addExecutorGoogleDiscoverySource = (input: {
         }
       }
 
-      const authRequiredSource = yield* updateSourceStatus(input.rows, persistedDraft, {
+      const authRequiredSource = yield* updateSourceStatus(input.sourceStore, persistedDraft, {
         actorAccountId: input.sourceInput.actorAccountId,
         status: "auth_required",
         lastError: null,
@@ -1574,21 +1578,19 @@ const addExecutorGoogleDiscoverySource = (input: {
     }
 
     const synced = yield* Effect.either(
-      syncSourceMaterialization({
-        rows: input.rows,
+      input.sourceMaterialization.sync({
         source: {
           ...persistedDraft,
           status: "connected",
         },
         actorAccountId: input.sourceInput.actorAccountId,
-        resolveSecretMaterial: input.resolveSecretMaterial,
       }),
     );
 
     return yield* Either.match(synced, {
       onLeft: (error) =>
         isSourceCredentialRequiredError(error)
-          ? updateSourceStatus(input.rows, persistedDraft, {
+          ? updateSourceStatus(input.sourceStore, persistedDraft, {
               actorAccountId: input.sourceInput.actorAccountId,
               status: "auth_required",
               lastError: null,
@@ -1601,7 +1603,7 @@ const addExecutorGoogleDiscoverySource = (input: {
                 } satisfies ExecutorSourceAddResult)
               ),
             )
-          : updateSourceStatus(input.rows, persistedDraft, {
+          : updateSourceStatus(input.sourceStore, persistedDraft, {
               actorAccountId: input.sourceInput.actorAccountId,
               status: "error",
               lastError: error.message,
@@ -1609,7 +1611,7 @@ const addExecutorGoogleDiscoverySource = (input: {
               Effect.zipRight(Effect.fail(error)),
             ),
       onRight: () =>
-        updateSourceStatus(input.rows, persistedDraft, {
+        updateSourceStatus(input.sourceStore, persistedDraft, {
           actorAccountId: input.sourceInput.actorAccountId,
           status: "connected",
           lastError: null,
@@ -1668,19 +1670,13 @@ type RuntimeSourceAuthServiceShape = {
 export const createRuntimeSourceAuthService = (input: {
   rows: ControlPlaneStoreShape;
   liveExecutionManager: LiveExecutionManager;
+  sourceStore: RuntimeSourceStore;
+  sourceMaterialization: RuntimeSourceMaterializationShape;
+  resolveSecretMaterial: ResolveSecretMaterial;
+  storeSecretMaterial: StoreSecretMaterial;
   getLocalServerBaseUrl?: () => string | undefined;
-  localConfig?: LocalExecutorConfig | null;
-  workspaceRoot?: string | null;
   localWorkspaceState?: RuntimeLocalWorkspaceState;
 }) => {
-  const resolveSecretMaterial = createDefaultSecretMaterialResolver({
-    rows: input.rows,
-    localConfig: input.localConfig,
-    workspaceRoot: input.workspaceRoot,
-  });
-  const storeSecretMaterial = createDefaultSecretMaterialStorer({
-    rows: input.rows,
-  });
   const mirrorLocalSourceResult = (
     result: ExecutorSourceAddResult,
   ): Effect.Effect<ExecutorSourceAddResult, Error, WorkspaceStorageServices> =>
@@ -1690,27 +1686,20 @@ export const createRuntimeSourceAuthService = (input: {
   ): Effect.Effect<McpSourceConnectResult, Error, WorkspaceStorageServices> =>
     Effect.succeed(result);
   const provideLocalWorkspace = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
-    input.localWorkspaceState
-      ? effect.pipe(
-          Effect.provideService(
-            RuntimeLocalWorkspaceService,
-            input.localWorkspaceState,
-          ),
-        )
-      : effect;
+    provideOptionalRuntimeLocalWorkspace(effect, input.localWorkspaceState);
 
   return {
   getLocalServerBaseUrl: () => input.getLocalServerBaseUrl?.() ?? null,
 
   storeSecretMaterial: ({ purpose, value }) =>
-    storeSecretMaterial({
+    input.storeSecretMaterial({
       purpose,
       value,
     }),
 
   getSourceById: ({ workspaceId, sourceId, actorAccountId }) =>
     provideLocalWorkspace(
-      loadSourceById(input.rows, {
+      input.sourceStore.loadSourceById({
         workspaceId,
         sourceId,
         actorAccountId,
@@ -1722,26 +1711,32 @@ export const createRuntimeSourceAuthService = (input: {
       (sourceInput.kind === "google_discovery"
         ? addExecutorGoogleDiscoverySource({
             rows: input.rows,
+            sourceStore: input.sourceStore,
+            sourceMaterialization: input.sourceMaterialization,
             sourceInput,
-            storeSecretMaterial,
-            resolveSecretMaterial,
+            storeSecretMaterial: input.storeSecretMaterial,
+            resolveSecretMaterial: input.resolveSecretMaterial,
             getLocalServerBaseUrl: input.getLocalServerBaseUrl,
             baseUrl: options?.baseUrl,
           })
         : hasSourceAdapterFamily(sourceInput.kind ?? "mcp", "http_api")
         ? addExecutorHttpSource({
             rows: input.rows,
+            sourceStore: input.sourceStore,
+            sourceMaterialization: input.sourceMaterialization,
             sourceInput: sourceInput as Extract<
               ExecutorAddSourceInput,
               { kind: "openapi" | "graphql" }
             >,
-            storeSecretMaterial,
-            resolveSecretMaterial,
+            storeSecretMaterial: input.storeSecretMaterial,
+            resolveSecretMaterial: input.resolveSecretMaterial,
             getLocalServerBaseUrl: input.getLocalServerBaseUrl,
             baseUrl: options?.baseUrl,
           })
         : connectMcpSourceInternal({
             rows: input.rows,
+            sourceStore: input.sourceStore,
+            sourceMaterialization: input.sourceMaterialization,
             getLocalServerBaseUrl: input.getLocalServerBaseUrl,
             workspaceId: sourceInput.workspaceId,
             actorAccountId: sourceInput.actorAccountId,
@@ -1752,7 +1747,7 @@ export const createRuntimeSourceAuthService = (input: {
             namespace: sourceInput.namespace,
             mcpDiscoveryElicitation: options?.mcpDiscoveryElicitation,
             baseUrl: options?.baseUrl,
-            resolveSecretMaterial,
+            resolveSecretMaterial: input.resolveSecretMaterial,
           })).pipe(
             Effect.flatMap(mirrorLocalSourceResult),
           ),
@@ -1762,6 +1757,8 @@ export const createRuntimeSourceAuthService = (input: {
     provideLocalWorkspace(
       connectMcpSourceInternal({
         rows: input.rows,
+        sourceStore: input.sourceStore,
+        sourceMaterialization: input.sourceMaterialization,
         getLocalServerBaseUrl: input.getLocalServerBaseUrl,
         workspaceId: sourceInput.workspaceId,
         actorAccountId: sourceInput.actorAccountId,
@@ -1776,7 +1773,7 @@ export const createRuntimeSourceAuthService = (input: {
         queryParams: sourceInput.queryParams,
         headers: sourceInput.headers,
         baseUrl: sourceInput.baseUrl,
-        resolveSecretMaterial,
+        resolveSecretMaterial: input.resolveSecretMaterial,
       }).pipe(
         Effect.flatMap(mirrorLocalMcpSourceResult),
       ),
@@ -1912,13 +1909,13 @@ export const createRuntimeSourceAuthService = (input: {
         displayName: readSourceOAuthSessionDisplayName(session.state),
         endpoint: sessionData.endpoint,
       });
-      const accessTokenRef = yield* storeSecretMaterial({
+      const accessTokenRef = yield* input.storeSecretMaterial({
         purpose: "oauth_access_token",
         value: exchanged.tokens.access_token,
         name: oauthSecretName,
       });
       const refreshTokenRef = exchanged.tokens.refresh_token
-        ? yield* storeSecretMaterial({
+        ? yield* input.storeSecretMaterial({
             purpose: "oauth_refresh_token",
             value: exchanged.tokens.refresh_token,
             name: `${oauthSecretName} Refresh`,
@@ -1991,7 +1988,7 @@ export const createRuntimeSourceAuthService = (input: {
         );
       }
 
-      const source = yield* loadSourceById(input.rows, {
+      const source = yield* input.sourceStore.loadSourceById({
         workspaceId: session.workspaceId,
         sourceId: session.sourceId,
         actorAccountId: session.actorAccountId,
@@ -2024,16 +2021,14 @@ export const createRuntimeSourceAuthService = (input: {
             errorText: reason,
           }),
         );
-        const failedSource = yield* updateSourceStatus(input.rows, source, {
+        const failedSource = yield* updateSourceStatus(input.sourceStore, source, {
           actorAccountId: session.actorAccountId,
           status: "error",
           lastError: reason,
         });
-        yield* syncSourceMaterialization({
-          rows: input.rows,
+        yield* input.sourceMaterialization.sync({
           source: failedSource,
           actorAccountId: session.actorAccountId,
-          resolveSecretMaterial,
         });
         yield* completeLiveInteraction({
           rows: input.rows,
@@ -2063,7 +2058,7 @@ export const createRuntimeSourceAuthService = (input: {
         const oauthSessionData = decodeOauth2PkceSourceAuthSessionData(session);
         let clientSecret: string | null = null;
         if (oauthSessionData.clientSecret) {
-          clientSecret = yield* resolveSecretMaterial({
+          clientSecret = yield* input.resolveSecretMaterial({
             ref: oauthSessionData.clientSecret,
           });
         }
@@ -2084,7 +2079,7 @@ export const createRuntimeSourceAuthService = (input: {
           );
         }
 
-        const refreshTokenRef = yield* storeSecretMaterial({
+        const refreshTokenRef = yield* input.storeSecretMaterial({
           purpose: "oauth_refresh_token",
           value: refreshToken,
           name: `${source.name} Refresh`,
@@ -2092,7 +2087,7 @@ export const createRuntimeSourceAuthService = (input: {
         const grantedScopes = trimOrNull(exchanged.scope)
           ? exchanged.scope!.split(/\s+/).filter((scope) => scope.length > 0)
           : [...oauthSessionData.scopes];
-        connectedSource = yield* updateSourceStatus(input.rows, source, {
+        connectedSource = yield* updateSourceStatus(input.sourceStore, source, {
           actorAccountId: session.actorAccountId,
           status: "connected",
           lastError: null,
@@ -2157,20 +2152,20 @@ export const createRuntimeSourceAuthService = (input: {
           displayName: source.name,
           endpoint: source.endpoint,
         });
-        const accessTokenRef = yield* storeSecretMaterial({
+        const accessTokenRef = yield* input.storeSecretMaterial({
           purpose: "oauth_access_token",
           value: exchanged.tokens.access_token,
           name: oauthSecretName,
         });
         const refreshTokenRef = exchanged.tokens.refresh_token
-          ? yield* storeSecretMaterial({
+          ? yield* input.storeSecretMaterial({
               purpose: "oauth_refresh_token",
               value: exchanged.tokens.refresh_token,
               name: `${oauthSecretName} Refresh`,
             })
           : null;
 
-        connectedSource = yield* updateSourceStatus(input.rows, source, {
+        connectedSource = yield* updateSourceStatus(input.sourceStore, source, {
           actorAccountId: session.actorAccountId,
           status: "connected",
           lastError: null,
@@ -2204,16 +2199,14 @@ export const createRuntimeSourceAuthService = (input: {
         );
       }
       const indexed = yield* Effect.either(
-        syncSourceMaterialization({
-          rows: input.rows,
+        input.sourceMaterialization.sync({
           source: connectedSource,
           actorAccountId: session.actorAccountId,
-          resolveSecretMaterial,
         }),
       );
       yield* Either.match(indexed, {
         onLeft: (error) =>
-          updateSourceStatus(input.rows, connectedSource, {
+          updateSourceStatus(input.sourceStore, connectedSource, {
             actorAccountId: session.actorAccountId,
             status: "error",
             lastError: error.message,
@@ -2245,23 +2238,27 @@ export class RuntimeSourceAuthServiceTag extends Context.Tag(
 
 export const RuntimeSourceAuthServiceLive = (input: {
   getLocalServerBaseUrl?: () => string | undefined;
-  localConfig?: LocalExecutorConfig | null;
-  workspaceRoot?: string | null;
-  localWorkspaceState?: RuntimeLocalWorkspaceState;
 } = {}) =>
   Layer.effect(
     RuntimeSourceAuthServiceTag,
     Effect.gen(function* () {
       const rows = yield* ControlPlaneStore;
       const liveExecutionManager = yield* LiveExecutionManagerService;
+      const sourceStore = yield* RuntimeSourceStoreService;
+      const sourceMaterialization = yield* RuntimeSourceMaterializationService;
+      const resolveSecretMaterial = yield* SecretMaterialResolverService;
+      const storeSecretMaterial = yield* SecretMaterialStorerService;
+      const runtimeLocalWorkspace = yield* getRuntimeLocalWorkspaceOption();
 
       return createRuntimeSourceAuthService({
         rows,
         liveExecutionManager,
+        sourceStore,
+        sourceMaterialization,
+        resolveSecretMaterial,
+        storeSecretMaterial,
         getLocalServerBaseUrl: input.getLocalServerBaseUrl,
-        localConfig: input.localConfig,
-        workspaceRoot: input.workspaceRoot,
-        localWorkspaceState: input.localWorkspaceState,
+        localWorkspaceState: runtimeLocalWorkspace ?? undefined,
       });
     }),
   );

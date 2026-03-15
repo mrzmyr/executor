@@ -7,7 +7,7 @@ import {
   type Source,
 } from "#schema";
 
-import { resolveSourceAuthMaterial } from "./source-auth-material";
+import { resolveSourceAuthMaterialWithDeps } from "./source-auth-material";
 
 const makeSource = (overrides: Partial<Source> = {}): Source => ({
   id: SourceIdSchema.make("src_tool_artifacts"),
@@ -36,113 +36,119 @@ const makeSource = (overrides: Partial<Source> = {}): Source => ({
 describe("source-auth-material", () => {
   describe("resolveSourceAuthMaterial", () => {
     it("returns empty headers for auth.kind none", async () => {
-      const auth = await Effect.runPromise(resolveSourceAuthMaterial({
-        source: makeSource({
-          auth: { kind: "none" },
-        }),
-        resolveSecretMaterial: () => Effect.die("should not be called"),
-      }));
+      await Effect.runPromise(Effect.gen(function* () {
+        const auth = yield* resolveSourceAuthMaterialWithDeps({
+          source: makeSource({
+            auth: { kind: "none" },
+          }),
+          resolveSecretMaterial: () => Effect.die("should not be called"),
+        });
 
-      expect(auth).toEqual({
-        placements: [],
-        headers: {},
-        queryParams: {},
-        cookies: {},
-        bodyValues: {},
-        expiresAt: null,
-        refreshAfter: null,
-      });
+        expect(auth).toEqual({
+          placements: [],
+          headers: {},
+          queryParams: {},
+          cookies: {},
+          bodyValues: {},
+          expiresAt: null,
+          refreshAfter: null,
+        });
+      }));
     });
 
     it("resolves bearer auth headers from the configured token ref", async () => {
       const calls: string[] = [];
 
-      const auth = await Effect.runPromise(resolveSourceAuthMaterial({
-        source: makeSource({
-          auth: {
-            kind: "bearer",
-            headerName: "X-Api-Key",
-            prefix: "Token ",
-            token: {
-              providerId: "local",
-              handle: "sec_bearer",
+      await Effect.runPromise(Effect.gen(function* () {
+        const auth = yield* resolveSourceAuthMaterialWithDeps({
+          source: makeSource({
+            auth: {
+              kind: "bearer",
+              headerName: "X-Api-Key",
+              prefix: "Token ",
+              token: {
+                providerId: "local",
+                handle: "sec_bearer",
+              },
             },
+          }),
+          resolveSecretMaterial: ({ ref }) => {
+            calls.push(`${ref.providerId}:${ref.handle}`);
+            return Effect.succeed("resolved-bearer-token");
           },
-        }),
-        resolveSecretMaterial: ({ ref }) => {
-          calls.push(`${ref.providerId}:${ref.handle}`);
-          return Effect.succeed("resolved-bearer-token");
-        },
-      }));
+        });
 
-      expect(calls).toEqual(["local:sec_bearer"]);
-      expect(auth).toEqual({
-        placements: [
-          {
-            location: "header",
-            name: "X-Api-Key",
-            value: "Token resolved-bearer-token",
+        expect(calls).toEqual(["local:sec_bearer"]);
+        expect(auth).toEqual({
+          placements: [
+            {
+              location: "header",
+              name: "X-Api-Key",
+              value: "Token resolved-bearer-token",
+            },
+          ],
+          headers: {
+            "X-Api-Key": "Token resolved-bearer-token",
           },
-        ],
-        headers: {
-          "X-Api-Key": "Token resolved-bearer-token",
-        },
-        queryParams: {},
-        cookies: {},
-        bodyValues: {},
-        expiresAt: null,
-        refreshAfter: null,
-      });
+          queryParams: {},
+          cookies: {},
+          bodyValues: {},
+          expiresAt: null,
+          refreshAfter: null,
+        });
+      }));
     });
 
     it("uses the oauth access token ref and ignores the refresh token", async () => {
       const calls: string[] = [];
 
-      const auth = await Effect.runPromise(resolveSourceAuthMaterial({
-        source: makeSource({
-          kind: "graphql",
-          endpoint: "https://example.com/graphql",
-          binding: {
-            defaultHeaders: null,
-          },
-          auth: {
-            kind: "oauth2",
-            headerName: "Authorization",
-            prefix: "Bearer ",
-            accessToken: {
-              providerId: "local",
-              handle: "sec_access",
+      await Effect.runPromise(Effect.gen(function* () {
+        const auth = yield* resolveSourceAuthMaterialWithDeps({
+          source: makeSource({
+            kind: "graphql",
+            endpoint: "https://example.com/graphql",
+            binding: {
+              defaultHeaders: null,
             },
-            refreshToken: {
-              providerId: "local",
-              handle: "sec_refresh",
+            auth: {
+              kind: "oauth2",
+              headerName: "Authorization",
+              prefix: "Bearer ",
+              accessToken: {
+                providerId: "local",
+                handle: "sec_access",
+              },
+              refreshToken: {
+                providerId: "local",
+                handle: "sec_refresh",
+              },
             },
+          }),
+          resolveSecretMaterial: ({ ref }) => {
+            calls.push(`${ref.providerId}:${ref.handle}`);
+            return Effect.succeed("resolved-access-token");
           },
-        }),
-        resolveSecretMaterial: ({ ref }) => {
-          calls.push(`${ref.providerId}:${ref.handle}`);
-          return Effect.succeed("resolved-access-token");
-        },
-      }));
+        });
 
-      expect(calls).toEqual(["local:sec_access"]);
-      expect(auth).toEqual({
-        placements: [
-          {
-            location: "header",
-            name: "Authorization",
-            value: "Bearer resolved-access-token",
+        expect(calls).toEqual(["local:sec_access"]);
+        expect(auth).toEqual({
+          placements: [
+            {
+              location: "header",
+              name: "Authorization",
+              value: "Bearer resolved-access-token",
+            },
+          ],
+          headers: {
+            Authorization: "Bearer resolved-access-token",
           },
-        ],
-        headers: {
-          Authorization: "Bearer resolved-access-token",
-        },
-        queryParams: {},
-        cookies: {},
-        bodyValues: {},
-        expiresAt: null,
-        refreshAfter: null,
-      });
+          queryParams: {},
+          cookies: {},
+          bodyValues: {},
+          expiresAt: null,
+          refreshAfter: null,
+        });
+      }));
     });
   });
 });

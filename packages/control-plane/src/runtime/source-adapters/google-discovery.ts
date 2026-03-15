@@ -4,6 +4,7 @@ import {
   HttpClientRequest,
 } from "@effect/platform";
 import {
+  allowAllToolInteractions,
   makeToolInvokerFromTools,
   typeSignatureFromSchemaJson,
 } from "@executor/codemode-core";
@@ -616,6 +617,13 @@ export const googleDiscoverySourceAdapter: SourceAdapter = {
         tools: {
           [path]: tool,
         },
+        // Authorization was already handled by authorizePersistedToolInvocation
+        // at the workspace level, so skip the redundant tool-level interaction
+        // gate. Without this, the default "required" interaction on write tools
+        // would re-elicit approval and then merge the approval form content
+        // (e.g. { approve: true }) into the tool args, breaking schemas that
+        // use additionalProperties: false.
+        onToolInteraction: allowAllToolInteractions,
         onElicitation,
       }).invoke({
         path,

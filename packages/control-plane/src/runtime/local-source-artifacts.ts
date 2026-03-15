@@ -1,6 +1,5 @@
 import { join } from "node:path";
 import { FileSystem } from "@effect/platform";
-import { NodeFileSystem } from "@effect/platform-node";
 
 import {
   SourceIdSchema,
@@ -47,15 +46,6 @@ export const LocalSourceArtifactSchema = Schema.Struct({
 export type LocalSourceArtifact = typeof LocalSourceArtifactSchema.Type;
 
 const decodeLocalSourceArtifact = Schema.decodeUnknownSync(LocalSourceArtifactSchema);
-
-const provideNodeFileSystem = <A, E, R>(
-  effect: Effect.Effect<A, E, R | FileSystem.FileSystem>,
-): Effect.Effect<A, E, Exclude<R, FileSystem.FileSystem>> =>
-  effect.pipe(Effect.provide(NodeFileSystem.layer)) as Effect.Effect<
-    A,
-    E,
-    Exclude<R, FileSystem.FileSystem>
-  >;
 
 const mapFileSystemError = (path: string, action: string) => (cause: unknown) =>
   new LocalFileSystemError({
@@ -167,9 +157,10 @@ export const readLocalSourceArtifact = (input: {
   sourceId: string;
 }): Effect.Effect<
   LocalSourceArtifact | null,
-  LocalFileSystemError | LocalSourceArtifactDecodeError
+  LocalFileSystemError | LocalSourceArtifactDecodeError,
+  FileSystem.FileSystem
 > =>
-  provideNodeFileSystem(Effect.gen(function* () {
+  Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
     const path = localSourceArtifactPath(input);
     const exists = yield* fs.exists(path).pipe(
@@ -192,14 +183,14 @@ export const readLocalSourceArtifact = (input: {
         });
       },
     });
-  }));
+  });
 
 export const writeLocalSourceArtifact = (input: {
   context: ResolvedLocalWorkspaceContext;
   sourceId: string;
   artifact: LocalSourceArtifact;
-}): Effect.Effect<void, LocalFileSystemError> =>
-  provideNodeFileSystem(Effect.gen(function* () {
+}): Effect.Effect<void, LocalFileSystemError, FileSystem.FileSystem> =>
+  Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
     const directory = join(input.context.artifactsDirectory, "sources");
     const path = localSourceArtifactPath(input);
@@ -209,13 +200,13 @@ export const writeLocalSourceArtifact = (input: {
     yield* fs.writeFileString(path, `${JSON.stringify(input.artifact, null, 2)}\n`).pipe(
       Effect.mapError(mapFileSystemError(path, "write source artifact")),
     );
-  }));
+  });
 
 export const removeLocalSourceArtifact = (input: {
   context: ResolvedLocalWorkspaceContext;
   sourceId: string;
-}): Effect.Effect<void, LocalFileSystemError> =>
-  provideNodeFileSystem(Effect.gen(function* () {
+}): Effect.Effect<void, LocalFileSystemError, FileSystem.FileSystem> =>
+  Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
     const path = localSourceArtifactPath(input);
     const exists = yield* fs.exists(path).pipe(
@@ -227,4 +218,4 @@ export const removeLocalSourceArtifact = (input: {
     yield* fs.remove(path).pipe(
       Effect.mapError(mapFileSystemError(path, "remove source artifact")),
     );
-  }));
+  });

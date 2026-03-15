@@ -15,6 +15,7 @@ import * as Layer from "effect/Layer";
 import type { ControlPlaneStoreShape } from "./store";
 
 type VisibleExecutionState =
+  | "running"
   | "waiting_for_interaction"
   | "completed"
   | "failed";
@@ -208,6 +209,10 @@ export const createLiveExecutionManager = () => {
           yield* rows.executions.update(executionId, {
             status: "running",
             updatedAt: resolvedAt,
+          });
+          yield* publishState({
+            executionId,
+            state: "running",
           });
 
           run.currentInteraction = null;

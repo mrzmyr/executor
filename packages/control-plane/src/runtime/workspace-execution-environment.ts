@@ -29,19 +29,14 @@ import {
   type RuntimeSourceAuthService,
 } from "./source-auth-service";
 import {
-  loadSourceWithRecipe,
-  loadWorkspaceSourceRecipeToolByPath,
-  loadWorkspaceSourceRecipeToolIndex,
-  loadWorkspaceSourceRecipes,
+  RuntimeSourceRecipeStoreService,
   type LoadedSourceRecipeToolIndexEntry,
   recipeToolCatalogEntry,
 } from "./source-recipes-runtime";
-import { resolveSourceAuthMaterial } from "./source-auth-material";
+import { RuntimeSourceAuthMaterialService } from "./source-auth-material";
 import { namespaceFromSourceName } from "./source-names";
 import { getSourceAdapterForOperation } from "./source-adapters";
 import {
-  createDefaultSecretMaterialResolver,
-  type ResolveSecretMaterial,
   type SecretMaterialResolveContext,
 } from "./secret-material-providers";
 import {
@@ -51,12 +46,17 @@ import {
 import { loadRuntimeLocalWorkspacePolicies } from "./policies-operations";
 import {
   getRuntimeLocalWorkspaceOption,
-  RuntimeLocalWorkspaceService,
+  provideOptionalRuntimeLocalWorkspace,
   type RuntimeLocalWorkspaceState,
 } from "./local-runtime-context";
-import { loadLocalToolRuntime, type LocalToolRuntime } from "./local-tools";
+import {
+  LocalToolRuntimeLoaderService,
+  type LocalToolRuntime,
+  type LocalToolRuntimeLoaderShape,
+} from "./local-tools";
 import {
   SourceArtifactStore,
+  makeWorkspaceStorageLayer,
   type SourceArtifactStoreShape,
   WorkspaceConfigStore,
   type WorkspaceConfigStoreShape,
@@ -64,7 +64,6 @@ import {
   type WorkspaceStateStoreShape,
   type WorkspaceStorageServices,
 } from "./local-storage";
-import { ControlPlaneStore, type ControlPlaneStoreShape } from "./store";
 
 const asToolPath = (value: string): ToolPath => value as ToolPath;
 
@@ -147,14 +146,13 @@ const queryTokenWeight = (token: string): number =>
   LOW_SIGNAL_QUERY_TOKENS.has(token) ? 0.25 : 1;
 
 const loadWorkspaceRecipeTools = (input: {
-  rows: ControlPlaneStoreShape;
   workspaceId: Source["workspaceId"];
   accountId: AccountId;
+  sourceRecipeStore: Effect.Effect.Success<typeof RuntimeSourceRecipeStoreService>;
   includeSchemas: boolean;
 }): Effect.Effect<readonly LoadedSourceRecipeToolIndexEntry[], Error, WorkspaceStorageServices> =>
   Effect.map(
-    loadWorkspaceSourceRecipeToolIndex({
-      rows: input.rows,
+    input.sourceRecipeStore.loadWorkspaceSourceRecipeToolIndex({
       workspaceId: input.workspaceId,
       actorAccountId: input.accountId,
       includeSchemas: input.includeSchemas,
@@ -166,14 +164,13 @@ const loadWorkspaceRecipeTools = (input: {
   );
 
 const loadWorkspaceRecipeToolByPath = (input: {
-  rows: ControlPlaneStoreShape;
   workspaceId: Source["workspaceId"];
   accountId: AccountId;
+  sourceRecipeStore: Effect.Effect.Success<typeof RuntimeSourceRecipeStoreService>;
   path: string;
   includeSchemas: boolean;
 }): Effect.Effect<LoadedSourceRecipeToolIndexEntry | null, Error, WorkspaceStorageServices> =>
-  loadWorkspaceSourceRecipeToolByPath({
-    rows: input.rows,
+  input.sourceRecipeStore.loadWorkspaceSourceRecipeToolByPath({
     workspaceId: input.workspaceId,
     path: input.path,
     actorAccountId: input.accountId,
@@ -187,27 +184,25 @@ const loadWorkspaceRecipeToolByPath = (input: {
   );
 
 const loadWorkspaceSchemaBundle = (input: {
-  rows: ControlPlaneStoreShape;
   workspaceId: Source["workspaceId"];
+  sourceRecipeStore: Effect.Effect.Success<typeof RuntimeSourceRecipeStoreService>;
   id: SourceRecipeSchemaBundleId;
 }): Effect.Effect<ToolSchemaBundle | null, Error, WorkspaceStorageServices> =>
-  Effect.gen(function* () {
-    const recipes = yield* loadWorkspaceSourceRecipes({
-      rows: input.rows,
+  Effect.map(
+    input.sourceRecipeStore.loadWorkspaceSchemaBundle({
       workspaceId: input.workspaceId,
-    });
-    const localBundle = recipes
-      .flatMap((recipe) => recipe.schemaBundles)
-      .find((schemaBundle) => schemaBundle.id === input.id);
-    return localBundle
-      ? {
-          id: localBundle.id,
-          kind: localBundle.bundleKind,
-          hash: localBundle.contentHash,
-          refsJson: localBundle.refsJson,
-        }
-      : null;
-  });
+      id: input.id,
+    }),
+    (bundle) =>
+      bundle
+        ? {
+            id: bundle.id,
+            kind: bundle.kind as ToolSchemaBundle["kind"],
+            hash: bundle.hash,
+            refsJson: bundle.refsJson,
+          }
+        : null,
+  );
 
 const scoreRecipeTool = (
   queryTokens: readonly string[],
@@ -363,7 +358,6 @@ const toInvocationDescriptorFromRecipeTool = (input: {
 });
 
 const authorizePersistedToolInvocation = (input: {
-  rows: ControlPlaneStoreShape;
   workspaceId: Source["workspaceId"];
   accountId: AccountId;
   descriptor: InvocationDescriptor;
@@ -456,38 +450,31 @@ const provideRuntimeLocalWorkspace = <A, E, R>(
   effect: Effect.Effect<A, E, R>,
   runtimeLocalWorkspace: RuntimeLocalWorkspaceState | null,
 ): Effect.Effect<A, E, R> =>
-  runtimeLocalWorkspace === null
-    ? effect
-    : effect.pipe(
-        Effect.provideService(
-          RuntimeLocalWorkspaceService,
-          runtimeLocalWorkspace,
-        ),
-      );
+  provideOptionalRuntimeLocalWorkspace(effect, runtimeLocalWorkspace);
 
 const createWorkspaceRecipeCatalog = (input: {
   workspaceId: Source["workspaceId"];
   accountId: AccountId;
-  rows: ControlPlaneStoreShape;
+  sourceRecipeStore: Effect.Effect.Success<typeof RuntimeSourceRecipeStoreService>;
   workspaceConfigStore: WorkspaceConfigStoreShape;
   workspaceStateStore: WorkspaceStateStoreShape;
   sourceArtifactStore: SourceArtifactStoreShape;
   runtimeLocalWorkspace: RuntimeLocalWorkspaceState | null;
 }): ToolCatalog => {
-  const workspaceStorageLayer = Layer.mergeAll(
-    Layer.succeed(WorkspaceConfigStore, input.workspaceConfigStore),
-    Layer.succeed(WorkspaceStateStore, input.workspaceStateStore),
-    Layer.succeed(SourceArtifactStore, input.sourceArtifactStore),
-  );
+  const workspaceStorageLayer = makeWorkspaceStorageLayer({
+    workspaceConfigStore: input.workspaceConfigStore,
+    workspaceStateStore: input.workspaceStateStore,
+    sourceArtifactStore: input.sourceArtifactStore,
+  });
   const provideWorkspaceStorage = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
     effect.pipe(Effect.provide(workspaceStorageLayer));
 
   const createSharedCatalog = (includeSchemas: boolean): Effect.Effect<ToolCatalog, Error, never> =>
     provideWorkspaceStorage(Effect.gen(function* () {
       const recipeTools = yield* loadWorkspaceRecipeTools({
-        rows: input.rows,
         workspaceId: input.workspaceId,
         accountId: input.accountId,
+        sourceRecipeStore: input.sourceRecipeStore,
         includeSchemas,
       });
 
@@ -500,8 +487,8 @@ const createWorkspaceRecipeCatalog = (input: {
         ),
         getSchemaBundle: ({ id }) =>
           provideWorkspaceStorage(loadWorkspaceSchemaBundle({
-            rows: input.rows,
             workspaceId: input.workspaceId,
+            sourceRecipeStore: input.sourceRecipeStore,
             id: SourceRecipeSchemaBundleIdSchema.make(id),
           })),
       });
@@ -562,11 +549,11 @@ const createWorkspaceRecipeCatalog = (input: {
 const createWorkspaceToolInvoker = (input: {
   workspaceId: Source["workspaceId"];
   accountId: AccountId;
-  rows: ControlPlaneStoreShape;
+  sourceRecipeStore: Effect.Effect.Success<typeof RuntimeSourceRecipeStoreService>;
   workspaceConfigStore: WorkspaceConfigStoreShape;
   workspaceStateStore: WorkspaceStateStoreShape;
   sourceArtifactStore: SourceArtifactStoreShape;
-  resolveSecretMaterial: ResolveSecretMaterial;
+  sourceAuthMaterialService: Effect.Effect.Success<typeof RuntimeSourceAuthMaterialService>;
   sourceAuthService: RuntimeSourceAuthService;
   runtimeLocalWorkspace: RuntimeLocalWorkspaceState | null;
   localToolRuntime: LocalToolRuntime;
@@ -577,11 +564,11 @@ const createWorkspaceToolInvoker = (input: {
   catalog: ToolCatalog;
   toolInvoker: ToolInvoker;
 } => {
-  const workspaceStorageLayer = Layer.mergeAll(
-    Layer.succeed(WorkspaceConfigStore, input.workspaceConfigStore),
-    Layer.succeed(WorkspaceStateStore, input.workspaceStateStore),
-    Layer.succeed(SourceArtifactStore, input.sourceArtifactStore),
-  );
+  const workspaceStorageLayer = makeWorkspaceStorageLayer({
+    workspaceConfigStore: input.workspaceConfigStore,
+    workspaceStateStore: input.workspaceStateStore,
+    sourceArtifactStore: input.sourceArtifactStore,
+  });
   const provideWorkspaceStorage = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
     effect.pipe(Effect.provide(workspaceStorageLayer));
 
@@ -594,7 +581,7 @@ const createWorkspaceToolInvoker = (input: {
   const recipeCatalog = createWorkspaceRecipeCatalog({
     workspaceId: input.workspaceId,
     accountId: input.accountId,
-    rows: input.rows,
+    sourceRecipeStore: input.sourceRecipeStore,
     workspaceConfigStore: input.workspaceConfigStore,
     workspaceStateStore: input.workspaceStateStore,
     sourceArtifactStore: input.sourceArtifactStore,
@@ -635,9 +622,9 @@ const createWorkspaceToolInvoker = (input: {
     provideRuntimeLocalWorkspace(
       provideWorkspaceStorage(Effect.gen(function* () {
         const recipeTool = yield* loadWorkspaceRecipeToolByPath({
-          rows: input.rows,
           workspaceId: input.workspaceId,
           accountId: input.accountId,
+          sourceRecipeStore: input.sourceRecipeStore,
           path: invocation.path,
           includeSchemas: false,
         });
@@ -648,7 +635,6 @@ const createWorkspaceToolInvoker = (input: {
         }
 
         yield* authorizePersistedToolInvocation({
-          rows: input.rows,
           workspaceId: input.workspaceId,
           accountId: input.accountId,
           descriptor: toInvocationDescriptorFromRecipeTool({
@@ -660,24 +646,21 @@ const createWorkspaceToolInvoker = (input: {
           onElicitation: input.onElicitation,
         });
 
-        const auth = yield* resolveSourceAuthMaterial({
-          rows: input.rows,
+        const auth = yield* input.sourceAuthMaterialService.resolve({
           source: recipeTool.source,
           actorAccountId: input.accountId,
-          resolveSecretMaterial: input.resolveSecretMaterial,
           context: toSecretResolutionContext(invocation.context),
         });
         const schemaBundle = recipeTool.schemaBundleId
           ? yield* loadWorkspaceSchemaBundle({
-              rows: input.rows,
               workspaceId: input.workspaceId,
+              sourceRecipeStore: input.sourceRecipeStore,
               id: SourceRecipeSchemaBundleIdSchema.make(
                 recipeTool.schemaBundleId,
               ),
             })
           : null;
-        const recipe = yield* loadSourceWithRecipe({
-          rows: input.rows,
+        const recipe = yield* input.sourceRecipeStore.loadSourceWithRecipe({
           workspaceId: input.workspaceId,
           sourceId: recipeTool.source.id,
           actorAccountId: input.accountId,
@@ -686,7 +669,6 @@ const createWorkspaceToolInvoker = (input: {
         return yield* getSourceAdapterForOperation(
           recipeTool.operation,
         ).invokePersistedTool({
-          rows: input.rows,
           workspaceId: input.workspaceId,
           accountId: input.accountId,
           source: recipeTool.source,
@@ -718,20 +700,15 @@ const createWorkspaceToolInvoker = (input: {
 };
 
 export const createWorkspaceExecutionEnvironmentResolver = (input: {
-  rows: ControlPlaneStoreShape;
-  resolveSecretMaterial?: ResolveSecretMaterial;
+  sourceAuthMaterialService: Effect.Effect.Success<typeof RuntimeSourceAuthMaterialService>;
   sourceAuthService: RuntimeSourceAuthService;
+  sourceRecipeStore: Effect.Effect.Success<typeof RuntimeSourceRecipeStoreService>;
+  localToolRuntimeLoader: LocalToolRuntimeLoaderShape;
   workspaceConfigStore: WorkspaceConfigStoreShape;
   workspaceStateStore: WorkspaceStateStoreShape;
   sourceArtifactStore: SourceArtifactStoreShape;
-}): ResolveExecutionEnvironment => {
-  const resolveSecretMaterial =
-    input.resolveSecretMaterial ??
-    createDefaultSecretMaterialResolver({
-      rows: input.rows,
-    });
-
-  return ({ workspaceId, accountId, onElicitation }) =>
+}): ResolveExecutionEnvironment =>
+  ({ workspaceId, accountId, onElicitation }) =>
     Effect.gen(function* () {
       const runtimeLocalWorkspace = yield* getRuntimeLocalWorkspaceOption();
       const localToolRuntime =
@@ -742,15 +719,15 @@ export const createWorkspaceExecutionEnvironmentResolver = (input: {
               toolInvoker: makeToolInvokerFromTools({ tools: {} }),
               toolPaths: new Set<string>(),
             }
-          : yield* loadLocalToolRuntime(runtimeLocalWorkspace.context);
+          : yield* input.localToolRuntimeLoader.load(runtimeLocalWorkspace.context);
       const { catalog, toolInvoker } = createWorkspaceToolInvoker({
         workspaceId,
         accountId,
-        rows: input.rows,
+        sourceRecipeStore: input.sourceRecipeStore,
         workspaceConfigStore: input.workspaceConfigStore,
         workspaceStateStore: input.workspaceStateStore,
         sourceArtifactStore: input.sourceArtifactStore,
-        resolveSecretMaterial,
+        sourceAuthMaterialService: input.sourceAuthMaterialService,
         sourceAuthService: input.sourceAuthService,
         runtimeLocalWorkspace,
         localToolRuntime,
@@ -765,7 +742,6 @@ export const createWorkspaceExecutionEnvironmentResolver = (input: {
         catalog,
       } satisfies ExecutionEnvironment;
     });
-};
 
 export class RuntimeExecutionResolverService extends Context.Tag(
   "#runtime/RuntimeExecutionResolverService",
@@ -777,7 +753,6 @@ export class RuntimeExecutionResolverService extends Context.Tag(
 export const RuntimeExecutionResolverLive = (
   input: {
     executionResolver?: ResolveExecutionEnvironment;
-    resolveSecretMaterial?: ResolveSecretMaterial;
   } = {},
 ) =>
   input.executionResolver
@@ -785,16 +760,19 @@ export const RuntimeExecutionResolverLive = (
       : Layer.effect(
         RuntimeExecutionResolverService,
         Effect.gen(function* () {
-          const rows = yield* ControlPlaneStore;
+          const sourceAuthMaterialService = yield* RuntimeSourceAuthMaterialService;
           const sourceAuthService = yield* RuntimeSourceAuthServiceTag;
+          const sourceRecipeStore = yield* RuntimeSourceRecipeStoreService;
+          const localToolRuntimeLoader = yield* LocalToolRuntimeLoaderService;
           const workspaceConfigStore = yield* WorkspaceConfigStore;
           const workspaceStateStore = yield* WorkspaceStateStore;
           const sourceArtifactStore = yield* SourceArtifactStore;
 
           return createWorkspaceExecutionEnvironmentResolver({
-            rows,
             sourceAuthService,
-            resolveSecretMaterial: input.resolveSecretMaterial,
+            sourceAuthMaterialService,
+            sourceRecipeStore,
+            localToolRuntimeLoader,
             workspaceConfigStore,
             workspaceStateStore,
             sourceArtifactStore,

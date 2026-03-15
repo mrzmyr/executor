@@ -24,7 +24,6 @@ import * as Schema from "effect/Schema";
 
 import type { ResolvedSourceAuthMaterial } from "../source-auth-material";
 import type { ResolveSecretMaterial } from "../secret-material-providers";
-import type { ControlPlaneStoreShape } from "../store";
 
 export type SourceAdapterFamily = "http_api" | "mcp" | "internal";
 export type SourceAdapterInputSchema = Schema.Schema<any, any, never>;
@@ -82,7 +81,6 @@ export type SourceAdapterOauth2SetupConfig = {
 };
 
 export type SourceAdapterInvokePersistedToolInput = {
-  rows: ControlPlaneStoreShape;
   workspaceId: Source["workspaceId"];
   accountId: AccountId;
   source: Source;

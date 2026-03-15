@@ -2,6 +2,7 @@ import { mkdtempSync } from "node:fs";
 import { mkdir, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { NodeFileSystem } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 
@@ -50,7 +51,7 @@ describe("local-config", () => {
       expect(loaded.config?.sources?.github?.connection.endpoint).toBe(
         "https://api.github.com",
       );
-    }),
+    }).pipe(Effect.provide(NodeFileSystem.layer)),
   );
 
   it.effect("reports jsonc syntax errors with line and column details", () =>
@@ -81,7 +82,7 @@ describe("local-config", () => {
 
       expect(failure.message).toContain("Invalid executor config");
       expect(failure.message).toContain("line 5, column 7");
-    }),
+    }).pipe(Effect.provide(NodeFileSystem.layer)),
   );
 
   it("uses platform-standard home config candidates", () => {
@@ -123,6 +124,6 @@ describe("local-config", () => {
       });
 
       expect(resolvedPath).toBe(join(legacyConfigDirectory, "executor.jsonc"));
-    }),
+    }).pipe(Effect.provide(NodeFileSystem.layer)),
   );
 });

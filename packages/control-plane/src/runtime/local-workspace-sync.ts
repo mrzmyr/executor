@@ -1,3 +1,4 @@
+import { FileSystem } from "@effect/platform";
 import * as Effect from "effect/Effect";
 
 import {
@@ -42,7 +43,7 @@ export const derivePolicyConfigKey = (
 const pruneLocalWorkspaceState = (input: {
   context: ResolvedLocalWorkspaceContext;
   loadedConfig: LoadedLocalExecutorConfig;
-}): Effect.Effect<LocalWorkspaceState, Error, never> =>
+}): Effect.Effect<LocalWorkspaceState, Error, FileSystem.FileSystem> =>
   Effect.gen(function* () {
     const currentState = yield* loadLocalWorkspaceState(input.context);
 
@@ -82,7 +83,7 @@ const pruneLocalWorkspaceState = (input: {
 export const synchronizeLocalWorkspaceState = (input: {
   context: ResolvedLocalWorkspaceContext;
   loadedConfig: LoadedLocalExecutorConfig;
-}): Effect.Effect<LoadedLocalExecutorConfig["config"], Error, never> =>
+}): Effect.Effect<LoadedLocalExecutorConfig["config"], Error, FileSystem.FileSystem> =>
   Effect.gen(function* () {
     yield* pruneLocalWorkspaceState({
       context: input.context,

@@ -124,11 +124,6 @@ export type ControlPlaneStoreShape = {
       never
     >;
     removeById: (id: SecretMaterial["id"]) => Effect.Effect<boolean, Error, never>;
-    listLinkedSources: () => Effect.Effect<
-      Map<string, Array<{ sourceId: string; sourceName: string }>>,
-      Error,
-      never
-    >;
   };
   executions: {
     getById: (

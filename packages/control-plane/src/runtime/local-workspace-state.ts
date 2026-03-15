@@ -1,6 +1,5 @@
 import { join } from "node:path";
 import { FileSystem } from "@effect/platform";
-import { NodeFileSystem } from "@effect/platform-node";
 
 import {
   PolicyIdSchema,
@@ -51,15 +50,6 @@ export type LocalWorkspaceState = typeof LocalWorkspaceStateSchema.Type;
 
 const decodeLocalWorkspaceState = Schema.decodeUnknownSync(LocalWorkspaceStateSchema);
 
-const provideNodeFileSystem = <A, E, R>(
-  effect: Effect.Effect<A, E, R | FileSystem.FileSystem>,
-): Effect.Effect<A, E, Exclude<R, FileSystem.FileSystem>> =>
-  effect.pipe(Effect.provide(NodeFileSystem.layer)) as Effect.Effect<
-    A,
-    E,
-    Exclude<R, FileSystem.FileSystem>
-  >;
-
 const mapFileSystemError = (path: string, action: string) => (cause: unknown) =>
   new LocalFileSystemError({
     message: `Failed to ${action} ${path}: ${unknownLocalErrorDetails(cause)}`,
@@ -80,8 +70,12 @@ export const localWorkspaceStatePath = (
 
 export const loadLocalWorkspaceState = (
   context: ResolvedLocalWorkspaceContext,
-): Effect.Effect<LocalWorkspaceState, LocalFileSystemError | LocalWorkspaceStateDecodeError> =>
-  provideNodeFileSystem(Effect.gen(function* () {
+): Effect.Effect<
+  LocalWorkspaceState,
+  LocalFileSystemError | LocalWorkspaceStateDecodeError,
+  FileSystem.FileSystem
+> =>
+  Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
     const path = localWorkspaceStatePath(context);
     const exists = yield* fs.exists(path).pipe(
@@ -104,13 +98,13 @@ export const loadLocalWorkspaceState = (
         });
       },
     });
-  }));
+  });
 
 export const writeLocalWorkspaceState = (input: {
   context: ResolvedLocalWorkspaceContext;
   state: LocalWorkspaceState;
-}): Effect.Effect<void, LocalFileSystemError> =>
-  provideNodeFileSystem(Effect.gen(function* () {
+}): Effect.Effect<void, LocalFileSystemError, FileSystem.FileSystem> =>
+  Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
     yield* fs.makeDirectory(input.context.stateDirectory, { recursive: true }).pipe(
       Effect.mapError(mapFileSystemError(input.context.stateDirectory, "create state directory")),
@@ -121,4 +115,4 @@ export const writeLocalWorkspaceState = (input: {
     ).pipe(
       Effect.mapError(mapFileSystemError(localWorkspaceStatePath(input.context), "write workspace state")),
     );
-  }));
+  });

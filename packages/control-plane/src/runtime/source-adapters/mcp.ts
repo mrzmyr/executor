@@ -1,4 +1,5 @@
 import {
+  allowAllToolInteractions,
   applyCookiePlacementsToHeaders,
   makeToolInvokerFromTools,
 } from "@executor/codemode-core";
@@ -409,6 +410,7 @@ export const mcpSourceAdapter: SourceAdapter = {
 
       return yield* makeToolInvokerFromTools({
         tools,
+        onToolInteraction: allowAllToolInteractions,
         onElicitation,
       }).invoke({
         path,

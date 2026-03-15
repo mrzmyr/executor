@@ -12,24 +12,29 @@ import type {
   StoredSourceRecipeRevisionRecord,
   WorkspaceId,
 } from "#schema";
+import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
 import { LocalSourceArtifactMissingError } from "./local-errors";
 import {
-  requireRuntimeLocalWorkspace,
+  RuntimeLocalWorkspaceService,
+  type RuntimeLocalWorkspaceState,
 } from "./local-runtime-context";
 import {
-  type WorkspaceStorageServices,
   SourceArtifactStore,
+  type SourceArtifactStoreShape,
 } from "./local-storage";
 import { namespaceFromSourceName } from "./source-names";
 import {
   getSourceAdapterForOperation,
   getSourceAdapterForSource,
 } from "./source-adapters";
-import type { ControlPlaneStoreShape } from "./store";
 import type { SourceAdapterPersistedOperationMetadata } from "./source-adapters/types";
 import { firstSchemaBundle } from "./source-adapters/shared";
-import { loadSourceById, loadSourcesInWorkspace } from "./source-store";
+import {
+  RuntimeSourceStoreService,
+  type RuntimeSourceStore,
+} from "./source-store";
 
 type RecipeManifest = unknown | null;
 
@@ -167,45 +172,118 @@ const primarySchemaBundleForRevision = (input: {
     : null;
 };
 
-export const loadWorkspaceSourceRecipes = (input: {
-  rows: ControlPlaneStoreShape;
+const sourceRecordFromRecipeArtifact = (input: {
+  source: Source;
+  artifact: {
+    recipeId: StoredSourceRecord["recipeId"];
+    revision: StoredSourceRecipeRevisionRecord;
+  };
+}): StoredSourceRecord => ({
+  id: input.source.id,
+  workspaceId: input.source.workspaceId,
+  recipeId: input.artifact.recipeId,
+  recipeRevisionId: input.artifact.revision.id,
+  name: input.source.name,
+  kind: input.source.kind,
+  endpoint: input.source.endpoint,
+  status: input.source.status,
+  enabled: input.source.enabled,
+  namespace: input.source.namespace,
+  importAuthPolicy: input.source.importAuthPolicy,
+  bindingConfigJson: getSourceAdapterForSource(input.source).serializeBindingConfig(input.source),
+  sourceHash: input.source.sourceHash,
+  lastError: input.source.lastError,
+  createdAt: input.source.createdAt,
+  updatedAt: input.source.updatedAt,
+});
+
+type RuntimeSourceRecipeStoreShape = {
+  loadWorkspaceSourceRecipes: (input: {
+    workspaceId: WorkspaceId;
+    actorAccountId?: AccountId | null;
+  }) => Effect.Effect<readonly LoadedSourceRecipe[], Error, never>;
+  loadSourceWithRecipe: (input: {
+    workspaceId: WorkspaceId;
+    sourceId: Source["id"];
+    actorAccountId?: AccountId | null;
+  }) => Effect.Effect<LoadedSourceRecipe, Error | LocalSourceArtifactMissingError, never>;
+  loadWorkspaceSourceRecipeToolIndex: (input: {
+    workspaceId: WorkspaceId;
+    actorAccountId?: AccountId | null;
+    includeSchemas: boolean;
+  }) => Effect.Effect<readonly LoadedSourceRecipeToolIndexEntry[], Error, never>;
+  loadWorkspaceSourceRecipeToolByPath: (input: {
+    workspaceId: WorkspaceId;
+    path: string;
+    actorAccountId?: AccountId | null;
+    includeSchemas: boolean;
+  }) => Effect.Effect<LoadedSourceRecipeToolIndexEntry | null, Error, never>;
+  loadWorkspaceSchemaBundle: (input: {
+    workspaceId: WorkspaceId;
+    id: string;
+  }) => Effect.Effect<
+    { id: string; kind: string; hash: string; refsJson: string } | null,
+    Error,
+    never
+  >;
+};
+
+export type RuntimeSourceRecipeStore = RuntimeSourceRecipeStoreShape;
+
+export class RuntimeSourceRecipeStoreService extends Context.Tag(
+  "#runtime/RuntimeSourceRecipeStoreService",
+)<RuntimeSourceRecipeStoreService, RuntimeSourceRecipeStoreShape>() {}
+
+type RuntimeSourceRecipeStoreDeps = {
+  runtimeLocalWorkspace: RuntimeLocalWorkspaceState;
+  sourceStore: RuntimeSourceStore;
+  sourceArtifactStore: SourceArtifactStoreShape;
+};
+
+type SourceRecipeRuntimeServices =
+  | RuntimeLocalWorkspaceService
+  | RuntimeSourceStoreService
+  | SourceArtifactStore;
+
+const ensureRuntimeRecipeWorkspace = (
+  deps: RuntimeSourceRecipeStoreDeps,
+  workspaceId: WorkspaceId,
+) => {
+  if (deps.runtimeLocalWorkspace.installation.workspaceId !== workspaceId) {
+    return Effect.fail(
+      new Error(
+        `Runtime local workspace mismatch: expected ${workspaceId}, got ${deps.runtimeLocalWorkspace.installation.workspaceId}`,
+      ),
+    );
+  }
+
+  return Effect.succeed(deps.runtimeLocalWorkspace.context);
+};
+
+const loadWorkspaceSourceRecipesWithDeps = (deps: RuntimeSourceRecipeStoreDeps, input: {
   workspaceId: WorkspaceId;
   actorAccountId?: AccountId | null;
-}): Effect.Effect<readonly LoadedSourceRecipe[], Error, WorkspaceStorageServices> =>
+}): Effect.Effect<readonly LoadedSourceRecipe[], Error, never> =>
   Effect.gen(function* () {
-    const runtimeLocalWorkspace = yield* requireRuntimeLocalWorkspace(input.workspaceId);
-    const sourceArtifactStore = yield* SourceArtifactStore;
-    const sources = yield* loadSourcesInWorkspace(input.rows, input.workspaceId, {
-      actorAccountId: input.actorAccountId,
-    });
+    const workspaceContext = yield* ensureRuntimeRecipeWorkspace(
+      deps,
+      input.workspaceId,
+    );
+    const sources = yield* deps.sourceStore.loadSourcesInWorkspace(
+      input.workspaceId,
+      {
+        actorAccountId: input.actorAccountId,
+      },
+    );
     const localRecipes = yield* Effect.forEach(sources, (source) =>
       Effect.gen(function* () {
-        const artifact = yield* sourceArtifactStore.read({
-          context: runtimeLocalWorkspace.context,
+        const artifact = yield* deps.sourceArtifactStore.read({
+          context: workspaceContext,
           sourceId: source.id,
         });
         if (artifact === null) {
           return null;
         }
-
-        const sourceRecord: StoredSourceRecord = {
-          id: source.id,
-          workspaceId: source.workspaceId,
-          recipeId: artifact.recipeId,
-          recipeRevisionId: artifact.revision.id,
-          name: source.name,
-          kind: source.kind,
-          endpoint: source.endpoint,
-          status: source.status,
-          enabled: source.enabled,
-          namespace: source.namespace,
-          importAuthPolicy: source.importAuthPolicy,
-          bindingConfigJson: getSourceAdapterForSource(source).serializeBindingConfig(source),
-          sourceHash: source.sourceHash,
-          lastError: source.lastError,
-          createdAt: source.createdAt,
-          updatedAt: source.updatedAt,
-        };
 
         const manifest = yield* parseManifestForRecipe({
           source,
@@ -214,7 +292,7 @@ export const loadWorkspaceSourceRecipes = (input: {
 
         return {
           source,
-          sourceRecord,
+          sourceRecord: sourceRecordFromRecipeArtifact({ source, artifact }),
           revision: artifact.revision,
           documents: artifact.documents,
           schemaBundles: artifact.schemaBundles,
@@ -226,22 +304,23 @@ export const loadWorkspaceSourceRecipes = (input: {
     return localRecipes.filter((recipe): recipe is LoadedSourceRecipe => recipe !== null);
   });
 
-export const loadSourceWithRecipe = (input: {
-  rows: ControlPlaneStoreShape;
+const loadSourceWithRecipeWithDeps = (deps: RuntimeSourceRecipeStoreDeps, input: {
   workspaceId: WorkspaceId;
   sourceId: Source["id"];
   actorAccountId?: AccountId | null;
-}): Effect.Effect<LoadedSourceRecipe, Error | LocalSourceArtifactMissingError, WorkspaceStorageServices> =>
+}): Effect.Effect<LoadedSourceRecipe, Error | LocalSourceArtifactMissingError, never> =>
   Effect.gen(function* () {
-    const runtimeLocalWorkspace = yield* requireRuntimeLocalWorkspace(input.workspaceId);
-    const sourceArtifactStore = yield* SourceArtifactStore;
-    const source = yield* loadSourceById(input.rows, {
+    const workspaceContext = yield* ensureRuntimeRecipeWorkspace(
+      deps,
+      input.workspaceId,
+    );
+    const source = yield* deps.sourceStore.loadSourceById({
       workspaceId: input.workspaceId,
       sourceId: input.sourceId,
       actorAccountId: input.actorAccountId,
     });
-    const artifact = yield* sourceArtifactStore.read({
-      context: runtimeLocalWorkspace.context,
+    const artifact = yield* deps.sourceArtifactStore.read({
+      context: workspaceContext,
       sourceId: source.id,
     });
     if (artifact === null) {
@@ -253,24 +332,6 @@ export const loadSourceWithRecipe = (input: {
       );
     }
 
-    const sourceRecord: StoredSourceRecord = {
-      id: source.id,
-      workspaceId: source.workspaceId,
-      recipeId: artifact.recipeId,
-      recipeRevisionId: artifact.revision.id,
-      name: source.name,
-      kind: source.kind,
-      endpoint: source.endpoint,
-      status: source.status,
-      enabled: source.enabled,
-      namespace: source.namespace,
-      importAuthPolicy: source.importAuthPolicy,
-      bindingConfigJson: getSourceAdapterForSource(source).serializeBindingConfig(source),
-      sourceHash: source.sourceHash,
-      lastError: source.lastError,
-      createdAt: source.createdAt,
-      updatedAt: source.updatedAt,
-    };
     const manifest = yield* parseManifestForRecipe({
       source,
       revision: artifact.revision,
@@ -278,13 +339,56 @@ export const loadSourceWithRecipe = (input: {
 
     return {
       source,
-      sourceRecord,
+      sourceRecord: sourceRecordFromRecipeArtifact({ source, artifact }),
       revision: artifact.revision,
       documents: artifact.documents,
       schemaBundles: artifact.schemaBundles,
       operations: artifact.operations,
       manifest,
     } satisfies LoadedSourceRecipe;
+  });
+
+export const loadWorkspaceSourceRecipes = (input: {
+  workspaceId: WorkspaceId;
+  actorAccountId?: AccountId | null;
+}): Effect.Effect<readonly LoadedSourceRecipe[], Error, SourceRecipeRuntimeServices> =>
+  Effect.gen(function* () {
+    const runtimeLocalWorkspace = yield* RuntimeLocalWorkspaceService;
+    const sourceStore = yield* RuntimeSourceStoreService;
+    const sourceArtifactStore = yield* SourceArtifactStore;
+
+    return yield* loadWorkspaceSourceRecipesWithDeps(
+      {
+        runtimeLocalWorkspace,
+        sourceStore,
+        sourceArtifactStore,
+      },
+      input,
+    );
+  });
+
+export const loadSourceWithRecipe = (input: {
+  workspaceId: WorkspaceId;
+  sourceId: Source["id"];
+  actorAccountId?: AccountId | null;
+}): Effect.Effect<
+  LoadedSourceRecipe,
+  Error | LocalSourceArtifactMissingError,
+  SourceRecipeRuntimeServices
+> =>
+  Effect.gen(function* () {
+    const runtimeLocalWorkspace = yield* RuntimeLocalWorkspaceService;
+    const sourceStore = yield* RuntimeSourceStoreService;
+    const sourceArtifactStore = yield* SourceArtifactStore;
+
+    return yield* loadSourceWithRecipeWithDeps(
+      {
+        runtimeLocalWorkspace,
+        sourceStore,
+        sourceArtifactStore,
+      },
+      input,
+    );
   });
 
 export const expandRecipeTools = (input: {
@@ -348,14 +452,16 @@ export const expandRecipeTools = (input: {
   );
 
 export const loadWorkspaceSourceRecipeToolIndex = (input: {
-  rows: ControlPlaneStoreShape;
   workspaceId: WorkspaceId;
   actorAccountId?: AccountId | null;
   includeSchemas: boolean;
-}): Effect.Effect<readonly LoadedSourceRecipeToolIndexEntry[], Error, WorkspaceStorageServices> =>
+}): Effect.Effect<
+  readonly LoadedSourceRecipeToolIndexEntry[],
+  Error,
+  SourceRecipeRuntimeServices
+> =>
   Effect.gen(function* () {
     const recipes = yield* loadWorkspaceSourceRecipes({
-      rows: input.rows,
       workspaceId: input.workspaceId,
       actorAccountId: input.actorAccountId,
     });
@@ -377,15 +483,17 @@ export const loadWorkspaceSourceRecipeToolIndex = (input: {
   });
 
 export const loadWorkspaceSourceRecipeToolByPath = (input: {
-  rows: ControlPlaneStoreShape;
   workspaceId: WorkspaceId;
   path: string;
   actorAccountId?: AccountId | null;
   includeSchemas: boolean;
-}): Effect.Effect<LoadedSourceRecipeToolIndexEntry | null, Error, WorkspaceStorageServices> =>
+}): Effect.Effect<
+  LoadedSourceRecipeToolIndexEntry | null,
+  Error,
+  SourceRecipeRuntimeServices
+> =>
   Effect.gen(function* () {
     const recipes = yield* loadWorkspaceSourceRecipes({
-      rows: input.rows,
       workspaceId: input.workspaceId,
       actorAccountId: input.actorAccountId,
     });
@@ -408,3 +516,83 @@ export const loadWorkspaceSourceRecipeToolByPath = (input: {
         }
       : null;
   });
+
+export const RuntimeSourceRecipeStoreLive = Layer.effect(
+  RuntimeSourceRecipeStoreService,
+  Effect.gen(function* () {
+    const runtimeLocalWorkspace = yield* RuntimeLocalWorkspaceService;
+    const sourceStore = yield* RuntimeSourceStoreService;
+    const sourceArtifactStore = yield* SourceArtifactStore;
+
+    const deps: RuntimeSourceRecipeStoreDeps = {
+      runtimeLocalWorkspace,
+      sourceStore,
+      sourceArtifactStore,
+    };
+
+    return RuntimeSourceRecipeStoreService.of({
+      loadWorkspaceSourceRecipes: (input) =>
+        loadWorkspaceSourceRecipesWithDeps(deps, input),
+      loadSourceWithRecipe: (input) =>
+        loadSourceWithRecipeWithDeps(deps, input),
+      loadWorkspaceSourceRecipeToolIndex: (input) =>
+        Effect.gen(function* () {
+          const recipes = yield* loadWorkspaceSourceRecipesWithDeps(deps, input);
+          const tools = yield* expandRecipeTools({
+            recipes,
+            includeSchemas: input.includeSchemas,
+          });
+          return tools.map((tool) => ({
+            path: tool.path,
+            searchNamespace: tool.searchNamespace,
+            searchText: tool.searchText,
+            source: tool.source,
+            sourceRecord: tool.sourceRecord,
+            operation: tool.operation,
+            metadata: tool.metadata,
+            schemaBundleId: tool.schemaBundleId,
+            descriptor: tool.descriptor,
+          }));
+        }),
+      loadWorkspaceSourceRecipeToolByPath: (input) =>
+        Effect.gen(function* () {
+          const recipes = yield* loadWorkspaceSourceRecipesWithDeps(deps, input);
+          const tools = yield* expandRecipeTools({
+            recipes,
+            includeSchemas: input.includeSchemas,
+          });
+          const tool = tools.find((entry) => entry.path === input.path) ?? null;
+          return tool
+            ? {
+                path: tool.path,
+                searchNamespace: tool.searchNamespace,
+                searchText: tool.searchText,
+                source: tool.source,
+                sourceRecord: tool.sourceRecord,
+                operation: tool.operation,
+                metadata: tool.metadata,
+                schemaBundleId: tool.schemaBundleId,
+                descriptor: tool.descriptor,
+              }
+            : null;
+        }),
+      loadWorkspaceSchemaBundle: (input) =>
+        Effect.gen(function* () {
+          const recipes = yield* loadWorkspaceSourceRecipesWithDeps(deps, {
+            workspaceId: input.workspaceId,
+          });
+          const localBundle = recipes
+            .flatMap((recipe) => recipe.schemaBundles)
+            .find((schemaBundle) => schemaBundle.id === input.id);
+          return localBundle
+            ? {
+                id: localBundle.id,
+                kind: localBundle.bundleKind,
+                hash: localBundle.contentHash,
+                refsJson: localBundle.refsJson,
+              }
+            : null;
+        }),
+    });
+  }),
+);

@@ -35,6 +35,10 @@ import {
   type LiveExecutionManager,
 } from "./live-execution";
 import {
+  getRuntimeLocalWorkspaceOption,
+  provideOptionalRuntimeLocalWorkspace,
+} from "./local-runtime-context";
+import {
   asOperationErrors,
   operationErrors,
   type OperationErrorsLike,
@@ -658,16 +662,22 @@ const forkExecutionAttemptWithDependencies = (
   execution: Execution,
   interactionMode: InteractionMode,
 ) =>
-  Effect.sync(() => {
-    Effect.runFork(
-      runExecutionAttemptWithDependencies(
+  Effect.gen(function* () {
+    const runtimeLocalWorkspace = yield* getRuntimeLocalWorkspaceOption();
+
+    yield* Effect.sync(() => {
+      const effect = runExecutionAttemptWithDependencies(
         store,
         executionResolver,
         liveExecutionManager,
         execution,
         interactionMode,
-      ),
-    );
+      );
+
+      Effect.runFork(
+        provideOptionalRuntimeLocalWorkspace(effect, runtimeLocalWorkspace),
+      );
+    });
   });
 
 const submitExecutionInteractionResponseWithDependencies = (

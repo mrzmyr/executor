@@ -1,7 +1,9 @@
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
+import * as ManagedRuntime from "effect/ManagedRuntime";
 import * as Scope from "effect/Scope";
+import { NodeFileSystem } from "@effect/platform-node";
 
 import { type ControlPlaneApiRuntimeContext } from "#api";
 import type { LocalInstallation } from "#schema";
@@ -9,7 +11,6 @@ import type { LocalInstallation } from "#schema";
 import { type ResolveExecutionEnvironment } from "./execution-state";
 import {
   createLiveExecutionManager,
-  LiveExecutionManagerLive,
   LiveExecutionManagerService,
 } from "./live-execution";
 import {
@@ -20,36 +21,28 @@ import {
   resolveLocalWorkspaceContext,
 } from "./local-config";
 import {
-  InstallationStore,
+  LocalStorageLive,
   LocalInstallationStore,
-  LocalInstallationStoreLive,
-  LocalSourceArtifactStore,
-  LocalSourceArtifactStoreLive,
-  SourceArtifactStore,
   LocalWorkspaceConfigStore,
-  LocalWorkspaceConfigStoreLive,
-  LocalWorkspaceStateStore,
-  LocalWorkspaceStateStoreLive,
-  WorkspaceConfigStore,
-  WorkspaceStateStore,
 } from "./local-storage";
 import {
   type RuntimeLocalWorkspaceState,
-  RuntimeLocalWorkspaceService,
+  RuntimeLocalWorkspaceLive,
 } from "./local-runtime-context";
+import { LocalToolRuntimeLoaderLive } from "./local-tools";
 import { synchronizeLocalWorkspaceState } from "./local-workspace-sync";
 import { ControlPlaneStore, type ControlPlaneStoreShape } from "./store";
+import { RuntimeSourceStoreLive } from "./source-store";
+import { RuntimeSourceRecipeStoreLive } from "./source-recipes-runtime";
+import { RuntimeSourceAuthMaterialLive } from "./source-auth-material";
+import { RuntimeSourceMaterializationLive } from "./source-materialization";
 import {
-  createRuntimeSourceAuthService,
   RuntimeSourceAuthServiceLive,
-  RuntimeSourceAuthServiceTag,
 } from "./source-auth-service";
 import type { ResolveSecretMaterial } from "./secret-material-providers";
-import { createDefaultSecretMaterialResolver } from "./secret-material-providers";
+import { SecretMaterialLive } from "./secret-material-providers";
 import {
-  createWorkspaceExecutionEnvironmentResolver,
   RuntimeExecutionResolverLive,
-  RuntimeExecutionResolverService,
 } from "./workspace-execution-environment";
 
 export * from "./execution-state";
@@ -101,34 +94,84 @@ export const createRuntimeControlPlaneLayer = (
   input: RuntimeControlPlaneOptions & {
     store: ControlPlaneStoreShape;
     localWorkspaceState: RuntimeLocalWorkspaceState;
+    liveExecutionManager: ReturnType<typeof createLiveExecutionManager>;
   },
 ) => {
+  const platformLayer = NodeFileSystem.layer;
+  const storageLayer = LocalStorageLive.pipe(
+    Layer.provide(platformLayer),
+  );
+  const localToolRuntimeLayer = LocalToolRuntimeLoaderLive.pipe(
+    Layer.provide(platformLayer),
+  );
+
   const baseLayer = Layer.mergeAll(
+    platformLayer,
     Layer.succeed(ControlPlaneStore, input.store),
-    Layer.succeed(RuntimeLocalWorkspaceService, input.localWorkspaceState),
-    LocalInstallationStoreLive,
-    LocalWorkspaceConfigStoreLive,
-    LocalWorkspaceStateStoreLive,
-    LocalSourceArtifactStoreLive,
-    LiveExecutionManagerLive,
+    RuntimeLocalWorkspaceLive(input.localWorkspaceState),
+    storageLayer,
+    Layer.succeed(LiveExecutionManagerService, input.liveExecutionManager),
+  );
+
+  const secretMaterialLayer = SecretMaterialLive({
+    resolveSecretMaterial: input.resolveSecretMaterial,
+  }).pipe(Layer.provide(baseLayer));
+
+  const sourceStoreLayer = RuntimeSourceStoreLive.pipe(
+    Layer.provide(baseLayer),
+  );
+
+  const sourceRecipeStoreLayer = RuntimeSourceRecipeStoreLive.pipe(
+    Layer.provide(Layer.mergeAll(baseLayer, sourceStoreLayer)),
+  );
+
+  const sourceAuthMaterialLayer = RuntimeSourceAuthMaterialLive.pipe(
+    Layer.provide(Layer.mergeAll(baseLayer, secretMaterialLayer)),
+  );
+
+  const sourceMaterializationLayer = RuntimeSourceMaterializationLive.pipe(
+    Layer.provide(
+      Layer.mergeAll(baseLayer, secretMaterialLayer, sourceAuthMaterialLayer),
+    ),
   );
 
   const sourceAuthLayer = RuntimeSourceAuthServiceLive({
     getLocalServerBaseUrl: input.getLocalServerBaseUrl,
-    localConfig: input.localWorkspaceState.loadedConfig.config,
-    workspaceRoot: input.localWorkspaceState.context.workspaceRoot,
-    localWorkspaceState: input.localWorkspaceState,
-  }).pipe(Layer.provide(baseLayer));
+  }).pipe(
+    Layer.provide(
+      Layer.mergeAll(
+        baseLayer,
+        secretMaterialLayer,
+        sourceStoreLayer,
+        sourceMaterializationLayer,
+      ),
+    ),
+  );
 
   const executionResolverLayer = RuntimeExecutionResolverLive({
     executionResolver: input.executionResolver,
-    resolveSecretMaterial: input.resolveSecretMaterial,
   }).pipe(
-    Layer.provide(Layer.mergeAll(baseLayer, sourceAuthLayer)),
+    Layer.provide(
+      Layer.mergeAll(
+        baseLayer,
+        secretMaterialLayer,
+        sourceAuthMaterialLayer,
+        sourceMaterializationLayer,
+        sourceAuthLayer,
+        sourceRecipeStoreLayer,
+        localToolRuntimeLayer,
+      ),
+    ),
   );
 
   return Layer.mergeAll(
     baseLayer,
+    secretMaterialLayer,
+    sourceStoreLayer,
+    sourceAuthMaterialLayer,
+    sourceMaterializationLayer,
+    sourceRecipeStoreLayer,
+    localToolRuntimeLayer,
     sourceAuthLayer,
     executionResolverLayer,
   ) as RuntimeControlPlaneLayer;
@@ -137,11 +180,18 @@ export const createRuntimeControlPlaneLayer = (
 export type ControlPlaneRuntime = {
   persistence: LocalControlPlanePersistence;
   localInstallation: LocalInstallation;
+  managedRuntime: ManagedRuntime.ManagedRuntime<ControlPlaneApiRuntimeContext, never>;
   runtimeLayer: RuntimeControlPlaneLayer;
   close: () => Promise<void>;
 };
 
 export type CreateControlPlaneRuntimeOptions = RuntimeControlPlaneOptions;
+
+export const provideControlPlaneRuntime = <A, E, R>(
+  effect: Effect.Effect<A, E, R>,
+  runtime: ControlPlaneRuntime,
+): Effect.Effect<A, E | never, Exclude<R, ControlPlaneApiRuntimeContext>> =>
+  effect.pipe(Effect.provide(runtime.managedRuntime));
 
 export const createControlPlaneRuntime = (
   options: CreateControlPlaneRuntimeOptions,
@@ -160,8 +210,6 @@ export const createControlPlaneRuntime = (
 
     const installationStore = LocalInstallationStore;
     const workspaceConfigStore = LocalWorkspaceConfigStore;
-    const workspaceStateStore = LocalWorkspaceStateStore;
-    const sourceArtifactStore = LocalSourceArtifactStore;
 
     const localInstallation = yield* installationStore.getOrProvision({
       context: localWorkspaceContext,
@@ -194,34 +242,6 @@ export const createControlPlaneRuntime = (
       ),
     );
 
-    const resolveSecretMaterial =
-      options.resolveSecretMaterial ??
-      createDefaultSecretMaterialResolver({
-        rows,
-        localConfig: effectiveLocalConfig,
-        workspaceRoot: localWorkspaceContext.workspaceRoot,
-      });
-
-    const liveExecutionManager = createLiveExecutionManager();
-    const sourceAuthService = createRuntimeSourceAuthService({
-      rows,
-      liveExecutionManager,
-      getLocalServerBaseUrl: options.getLocalServerBaseUrl,
-      localConfig: effectiveLocalConfig,
-      workspaceRoot: localWorkspaceContext.workspaceRoot,
-      localWorkspaceState: {
-        context: localWorkspaceContext,
-        installation: {
-          workspaceId: localInstallation.workspaceId,
-          accountId: localInstallation.accountId,
-        },
-        loadedConfig: {
-          ...loadedLocalConfig,
-          config: effectiveLocalConfig,
-        },
-      },
-    });
-
     const runtimeLocalWorkspaceState: RuntimeLocalWorkspaceState = {
       context: localWorkspaceContext,
       installation: {
@@ -233,30 +253,25 @@ export const createControlPlaneRuntime = (
         config: effectiveLocalConfig,
       },
     };
-
-    const executionResolver =
-      options.executionResolver ??
-      createWorkspaceExecutionEnvironmentResolver({
-        rows,
-        sourceAuthService,
-        resolveSecretMaterial,
-        workspaceConfigStore,
-        workspaceStateStore,
-        sourceArtifactStore,
-      });
+    const liveExecutionManager = createLiveExecutionManager();
 
     const concreteRuntimeLayer = createRuntimeControlPlaneLayer({
       ...options,
       store: rows,
       localWorkspaceState: runtimeLocalWorkspaceState,
-      resolveSecretMaterial,
-      executionResolver,
+      liveExecutionManager,
     });
+    const managedRuntime = ManagedRuntime.make(concreteRuntimeLayer);
+    const runtime = yield* managedRuntime.runtimeEffect;
+    const runtimeLayer = Layer.succeedContext(
+      runtime.context,
+    ) as RuntimeControlPlaneLayer;
 
     return {
       persistence,
       localInstallation,
-      runtimeLayer: concreteRuntimeLayer,
-      close: () => Effect.runPromise(Scope.close(scope, Exit.void)).catch(() => {}),
+      managedRuntime,
+      runtimeLayer: runtimeLayer as RuntimeControlPlaneLayer,
+      close: () => managedRuntime.dispose().catch(() => {}),
     };
-  });
+  }).pipe(Effect.provide(NodeFileSystem.layer));

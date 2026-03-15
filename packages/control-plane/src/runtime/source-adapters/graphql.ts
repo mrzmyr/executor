@@ -1,4 +1,5 @@
 import {
+  allowAllToolInteractions,
   applyCookiePlacementsToHeaders,
   applyHttpQueryPlacementsToUrl,
   applyJsonBodyPlacements,
@@ -524,6 +525,7 @@ export const graphqlSourceAdapter: SourceAdapter = {
         tools: {
           [path]: tool,
         },
+        onToolInteraction: allowAllToolInteractions,
         onElicitation,
       }).invoke({
         path,

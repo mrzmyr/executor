@@ -171,7 +171,7 @@ const writeConfiguredLocalMcpSource = (input: {
         materialization,
       }),
     });
-  });
+  }).pipe(Effect.provide(NodeFileSystem.layer));
 
 const makeServer = createIsolatedLocalExecutorServer({
   port: 0,

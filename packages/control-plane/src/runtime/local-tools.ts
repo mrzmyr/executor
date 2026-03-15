@@ -3,7 +3,6 @@ import { existsSync } from "node:fs";
 import { dirname, extname, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { FileSystem } from "@effect/platform";
-import { NodeFileSystem } from "@effect/platform-node";
 import {
   createToolCatalogFromTools,
   makeToolInvokerFromTools,
@@ -17,7 +16,9 @@ import {
   type ToolMetadata,
   type ToolPath,
 } from "@executor/codemode-core";
+import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
 import * as ts from "typescript";
 
 import type { ResolvedLocalWorkspaceContext } from "./local-config";
@@ -95,15 +96,6 @@ const emptyLocalToolRuntime = (): LocalToolRuntime => {
     toolPaths: new Set(),
   };
 };
-
-const provideNodeFileSystem = <A, E, R>(
-  effect: Effect.Effect<A, E, R | FileSystem.FileSystem>,
-): Effect.Effect<A, E, Exclude<R, FileSystem.FileSystem>> =>
-  effect.pipe(Effect.provide(NodeFileSystem.layer)) as Effect.Effect<
-    A,
-    E,
-    Exclude<R, FileSystem.FileSystem>
-  >;
 
 const mapFileSystemError = (path: string, action: string) => (cause: unknown) =>
   new LocalFileSystemError({
@@ -589,66 +581,97 @@ export const loadLocalToolRuntime = (
   | LocalToolDefinitionError
   | LocalToolImportError
   | LocalToolPathConflictError
-  | LocalToolTranspileError
+  | LocalToolTranspileError,
+  FileSystem.FileSystem
 > =>
-  provideNodeFileSystem(
-    Effect.gen(function* () {
-      const sourceDirectory = localToolsDirectory(context);
-      const sourceFiles = yield* collectLocalToolSourceFiles(sourceDirectory);
+  Effect.gen(function* () {
+    const sourceDirectory = localToolsDirectory(context);
+    const sourceFiles = yield* collectLocalToolSourceFiles(sourceDirectory);
 
-      if (sourceFiles.length === 0) {
-        return emptyLocalToolRuntime();
+    if (sourceFiles.length === 0) {
+      return emptyLocalToolRuntime();
+    }
+
+    const artifactPaths = yield* buildLocalToolArtifacts({
+      context,
+      sourceDirectory,
+      sourceFiles,
+    });
+    const candidateFiles = toolCandidateFiles(sourceDirectory, sourceFiles);
+    const tools: ToolMap = {};
+    const seenToolPaths = new Map<string, string>();
+
+    for (const sourcePath of candidateFiles) {
+      const relativePath = relative(sourceDirectory, sourcePath);
+      const toolPath = yield* toToolPath(relativePath);
+      const existing = seenToolPaths.get(toolPath);
+      if (existing) {
+        return yield* Effect.fail(
+          new LocalToolPathConflictError({
+            message: `Local tool path conflict for ${toolPath}`,
+            path: sourcePath,
+            otherPath: existing,
+            toolPath,
+          }),
+        );
       }
 
-      const artifactPaths = yield* buildLocalToolArtifacts({
-        context,
-        sourceDirectory,
-        sourceFiles,
+      const artifactPath = artifactPaths.get(sourcePath);
+      if (!artifactPath) {
+        return yield* Effect.fail(
+          new LocalToolImportError({
+            message: `Missing compiled artifact for local tool ${sourcePath}`,
+            path: sourcePath,
+            details:
+              "Expected a compiled local tool artifact, but none was produced.",
+          }),
+        );
+      }
+
+      tools[toolPath] = yield* importLocalToolModule({
+        sourcePath,
+        artifactPath,
+        toolPath,
       });
-      const candidateFiles = toolCandidateFiles(sourceDirectory, sourceFiles);
-      const tools: ToolMap = {};
-      const seenToolPaths = new Map<string, string>();
+      seenToolPaths.set(toolPath, sourcePath);
+    }
 
-      for (const sourcePath of candidateFiles) {
-        const relativePath = relative(sourceDirectory, sourcePath);
-        const toolPath = yield* toToolPath(relativePath);
-        const existing = seenToolPaths.get(toolPath);
-        if (existing) {
-          return yield* Effect.fail(
-            new LocalToolPathConflictError({
-              message: `Local tool path conflict for ${toolPath}`,
-              path: sourcePath,
-              otherPath: existing,
-              toolPath,
-            }),
-          );
-        }
+    return {
+      tools,
+      catalog: createToolCatalogFromTools({ tools }),
+      toolInvoker: makeToolInvokerFromTools({ tools }),
+      toolPaths: new Set(Object.keys(tools)),
+    } satisfies LocalToolRuntime;
+  });
 
-        const artifactPath = artifactPaths.get(sourcePath);
-        if (!artifactPath) {
-          return yield* Effect.fail(
-            new LocalToolImportError({
-              message: `Missing compiled artifact for local tool ${sourcePath}`,
-              path: sourcePath,
-              details:
-                "Expected a compiled local tool artifact, but none was produced.",
-            }),
-          );
-        }
+export type LocalToolRuntimeLoaderShape = {
+  load: (
+    context: ResolvedLocalWorkspaceContext,
+  ) => Effect.Effect<
+    LocalToolRuntime,
+    | LocalFileSystemError
+    | LocalToolDefinitionError
+    | LocalToolImportError
+    | LocalToolPathConflictError
+    | LocalToolTranspileError,
+    never
+  >;
+};
 
-        tools[toolPath] = yield* importLocalToolModule({
-          sourcePath,
-          artifactPath,
-          toolPath,
-        });
-        seenToolPaths.set(toolPath, sourcePath);
-      }
+export class LocalToolRuntimeLoaderService extends Context.Tag(
+  "#runtime/LocalToolRuntimeLoaderService",
+)<LocalToolRuntimeLoaderService, LocalToolRuntimeLoaderShape>() {}
 
-      return {
-        tools,
-        catalog: createToolCatalogFromTools({ tools }),
-        toolInvoker: makeToolInvokerFromTools({ tools }),
-        toolPaths: new Set(Object.keys(tools)),
-      } satisfies LocalToolRuntime;
-    }),
-  );
+export const LocalToolRuntimeLoaderLive = Layer.effect(
+  LocalToolRuntimeLoaderService,
+  Effect.gen(function* () {
+    const fileSystem = yield* FileSystem.FileSystem;
+
+    return LocalToolRuntimeLoaderService.of({
+      load: (context) =>
+        loadLocalToolRuntime(context).pipe(
+          Effect.provideService(FileSystem.FileSystem, fileSystem),
+        ),
+    });
+  }),
+);
