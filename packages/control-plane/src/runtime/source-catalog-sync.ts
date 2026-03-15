@@ -3,6 +3,7 @@ import type {
   Source,
   SourceStatus,
 } from "#schema";
+import type { McpToolManifest } from "@executor/codemode-mcp";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -27,7 +28,7 @@ import {
   getSourceAdapterForSource,
 } from "./source-adapters";
 import {
-  catalogSyncResultFromMcpManifestEntries,
+  catalogSyncResultFromMcpManifest,
 } from "./source-adapters/mcp";
 import { SecretMaterialResolverService } from "./secret-material-providers";
 import {
@@ -61,7 +62,7 @@ export type RuntimeSourceCatalogSyncShape = {
   }) => Effect.Effect<void, Error, never>;
   persistMcpCatalogSnapshotFromManifest: (input: {
     source: Source;
-    manifestEntries: Parameters<typeof catalogSyncResultFromMcpManifestEntries>[0]["manifestEntries"];
+    manifest: McpToolManifest;
   }) => Effect.Effect<void, Error, never>;
 };
 
@@ -189,7 +190,7 @@ const persistMcpCatalogSnapshotFromManifestWithDeps = (
   deps: RuntimeSourceCatalogSyncDeps,
   input: {
     source: Source;
-    manifestEntries: Parameters<typeof catalogSyncResultFromMcpManifestEntries>[0]["manifestEntries"];
+    manifest: McpToolManifest;
   },
 ): Effect.Effect<void, Error, never> =>
   Effect.gen(function* () {
@@ -197,10 +198,10 @@ const persistMcpCatalogSnapshotFromManifestWithDeps = (
       deps,
       input.source.workspaceId,
     );
-    const syncResult = catalogSyncResultFromMcpManifestEntries({
+    const syncResult = catalogSyncResultFromMcpManifest({
       source: input.source,
       endpoint: input.source.endpoint,
-      manifestEntries: input.manifestEntries,
+      manifest: input.manifest,
     });
 
     yield* deps.sourceArtifactStore.write({
@@ -249,7 +250,7 @@ export const syncSourceCatalog = (input: {
 
 export const persistMcpCatalogSnapshotFromManifest = (input: {
   source: Source;
-  manifestEntries: Parameters<typeof catalogSyncResultFromMcpManifestEntries>[0]["manifestEntries"];
+  manifest: McpToolManifest;
 }): Effect.Effect<void, Error, SourceCatalogSyncServices> =>
   Effect.gen(function* () {
     const runtimeLocalWorkspace = yield* RuntimeLocalWorkspaceService;

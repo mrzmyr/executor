@@ -47,9 +47,9 @@ struct OpenApiInvocationPayload {
 #[serde(rename_all = "camelCase")]
 struct DiscoveryTypingPayload {
     #[serde(skip_serializing_if = "Option::is_none")]
-    input_schema_json: Option<String>,
+    input_schema: Option<Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    output_schema_json: Option<String>,
+    output_schema: Option<Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
     ref_hint_keys: Option<Vec<String>>,
 }
@@ -690,14 +690,12 @@ fn build_tool_typing(
     };
 
     Ok(Some(DiscoveryTypingPayload {
-        input_schema_json: input_schema
+        input_schema: input_schema
             .as_ref()
-            .map(encode_stable_json)
-            .transpose()?,
-        output_schema_json: output_schema
+            .map(to_stable_value),
+        output_schema: output_schema
             .as_ref()
-            .map(encode_stable_json)
-            .transpose()?,
+            .map(to_stable_value),
         ref_hint_keys,
     }))
 }

@@ -641,7 +641,11 @@ const projectResultShapeFromResponses = (
     .filter((entry): entry is { variant: ResponseSet["variants"][number]; response: ResponseSymbol; score: number } => entry !== null)
     .sort((left, right) => right.score - left.score);
 
-  const jsonCandidates = ranked.flatMap(({ response }) =>
+  const preferred = ranked.some(({ score }) => score >= 60)
+    ? ranked.filter(({ score }) => score >= 60)
+    : ranked.filter(({ score }) => score === (ranked[0]?.score ?? 0));
+
+  const jsonCandidates = preferred.flatMap(({ response }) =>
     responseContentCandidates(response).filter((candidate) => isJsonMediaType(candidate.mediaType)),
   );
 
@@ -658,7 +662,7 @@ const projectResultShapeFromResponses = (
   }
 
   const fallbackShapeIds = unique(
-    ranked.flatMap(({ response }) =>
+    preferred.flatMap(({ response }) =>
       responseContentCandidates(response).map((candidate) => candidate.shapeId),
     ),
   );

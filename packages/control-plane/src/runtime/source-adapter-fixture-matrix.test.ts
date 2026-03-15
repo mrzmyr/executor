@@ -1,4 +1,5 @@
 import { readFileSync } from "node:fs";
+import { createServer } from "node:http";
 
 import {
   buildOpenApiToolPresentation,
@@ -38,6 +39,7 @@ import {
   expandCatalogToolByPath,
   type LoadedSourceCatalog,
 } from "./source-catalog-runtime";
+import { invokeIrTool } from "./ir-execution";
 import {
   createGoogleDiscoveryCatalogSnapshot,
   createGraphqlCatalogSnapshot,
@@ -335,6 +337,18 @@ describe("source adapter fixture matrix", () => {
         expect(
           unresolvedDiagnosticsForPrefix(snapshot, "#/openapi/addProjectDomain"),
         ).toEqual([]);
+        expect(
+          Object.values(snapshot.catalog.capabilities).some(
+            (capability) => capability.auth.kind !== "none",
+          ),
+        ).toBe(true);
+        expect(
+          Object.values(snapshot.catalog.responseSets).some((responseSet) =>
+            responseSet.variants.some(
+              (variant) => variant.match.kind === "exact" && variant.match.status >= 400,
+            ),
+          ),
+        ).toBe(true);
       }),
     120_000,
   );
@@ -401,6 +415,288 @@ describe("source adapter fixture matrix", () => {
         expect(
           unresolvedDiagnosticsForPrefix(snapshot, "#/openapi/apiKey.createApiKey"),
         ).toEqual([]);
+    }),
+    120_000,
+  );
+
+  it.effect(
+    "executes imported OpenAPI tools with scoped servers and serialized parameters",
+    () =>
+      Effect.tryPromise({
+        try: async () => {
+          const requests: Array<{
+            method: string;
+            path: string;
+            query: string;
+            headers: Record<string, string | string[] | undefined>;
+            body: string;
+          }> = [];
+
+          const server = createServer((request, response) => {
+            let body = "";
+            request.setEncoding("utf8");
+            request.on("data", (chunk) => {
+              body += chunk;
+            });
+            request.on("end", () => {
+              const url = new URL(request.url ?? "/", "http://127.0.0.1");
+              requests.push({
+                method: request.method ?? "GET",
+                path: url.pathname,
+                query: url.search,
+                headers: request.headers,
+                body,
+              });
+              response.statusCode = 200;
+              response.setHeader("content-type", "application/json");
+              response.end(JSON.stringify({ ok: true }));
+            });
+          });
+
+          await new Promise<void>((resolve, reject) => {
+            server.listen(0, "127.0.0.1", (error?: Error) => {
+              if (error) {
+                reject(error);
+                return;
+              }
+              resolve();
+            });
+          });
+
+          try {
+            const address = server.address();
+            if (!address || typeof address === "string") {
+              throw new Error("Failed to resolve execution fixture server");
+            }
+
+            const baseUrl = `http://127.0.0.1:${address.port}`;
+            const source = makeSource({
+              id: "src_openapi_execution_fixture",
+              name: "Serialized API",
+              kind: "openapi",
+              endpoint: baseUrl,
+              namespace: "serialized",
+              binding: {
+                specUrl: `${baseUrl}/openapi.json`,
+                defaultHeaders: null,
+              },
+            });
+            const specText = JSON.stringify({
+              openapi: "3.1.0",
+              info: {
+                title: "Serialized API",
+                version: "1.0.0",
+              },
+              servers: [{
+                url: "/v1",
+              }],
+              paths: {
+                "/items/{itemId}": {
+                  get: {
+                    operationId: "items.getItem",
+                    servers: [{
+                      url: "/v2",
+                    }],
+                    parameters: [
+                      {
+                        name: "itemId",
+                        in: "path",
+                        required: true,
+                        style: "label",
+                        explode: true,
+                        schema: {
+                          type: "array",
+                          items: {
+                            type: "string",
+                          },
+                        },
+                      },
+                      {
+                        name: "filter",
+                        in: "query",
+                        style: "deepObject",
+                        explode: true,
+                        schema: {
+                          type: "object",
+                          additionalProperties: {
+                            type: "string",
+                          },
+                        },
+                      },
+                      {
+                        name: "search",
+                        in: "query",
+                        allowReserved: true,
+                        schema: {
+                          type: "string",
+                        },
+                      },
+                      {
+                        name: "X-Trace",
+                        in: "header",
+                        schema: {
+                          type: "array",
+                          items: {
+                            type: "string",
+                          },
+                        },
+                      },
+                    ],
+                    responses: {
+                      "200": {
+                        description: "ok",
+                        content: {
+                          "application/json": {
+                            schema: {
+                              type: "object",
+                              properties: {
+                                ok: {
+                                  type: "boolean",
+                                },
+                              },
+                            },
+                          },
+                        },
+                      },
+                    },
+                  },
+                },
+                "/forms": {
+                  post: {
+                    operationId: "forms.submit",
+                    requestBody: {
+                      required: true,
+                      content: {
+                        "application/x-www-form-urlencoded": {
+                          schema: {
+                            type: "object",
+                            properties: {
+                              title: {
+                                type: "string",
+                              },
+                              state: {
+                                type: "string",
+                              },
+                            },
+                            required: ["title"],
+                          },
+                        },
+                      },
+                    },
+                    responses: {
+                      "200": {
+                        description: "ok",
+                        content: {
+                          "application/json": {
+                            schema: {
+                              type: "object",
+                              properties: {
+                                ok: {
+                                  type: "boolean",
+                                },
+                              },
+                            },
+                          },
+                        },
+                      },
+                    },
+                  },
+                },
+              },
+            });
+
+            const { snapshot } = await Effect.runPromise(
+              openApiSnapshotFromFixture({
+                source,
+                specText,
+                documentKey: `${baseUrl}/openapi.json`,
+              }),
+            );
+            const loadedCatalog = makeLoadedCatalog({
+              source,
+              snapshot,
+            });
+            const getItemTool = await Effect.runPromise(
+              expandCatalogToolByPath({
+                catalogs: [loadedCatalog],
+                path: "serialized.items.getItem",
+              }),
+            );
+            const submitFormTool = await Effect.runPromise(
+              expandCatalogToolByPath({
+                catalogs: [loadedCatalog],
+                path: "serialized.forms.submit",
+              }),
+            );
+
+            if (!getItemTool || !submitFormTool) {
+              throw new Error("Expected OpenAPI execution fixture tools to resolve");
+            }
+
+            const auth = {
+              placements: [],
+              headers: {},
+              queryParams: {},
+              cookies: {},
+              bodyValues: {},
+              expiresAt: null,
+              refreshAfter: null,
+            } as const;
+
+            await Effect.runPromise(
+              invokeIrTool({
+                workspaceId: source.workspaceId,
+                accountId: "acct_fixture" as any,
+                tool: getItemTool,
+                auth,
+                args: {
+                  itemId: ["alpha", "beta"],
+                  filter: {
+                    status: "open",
+                  },
+                  search: "refs/heads/main?draft=true",
+                  "X-Trace": ["a", "b"],
+                },
+              }),
+            );
+            await Effect.runPromise(
+              invokeIrTool({
+                workspaceId: source.workspaceId,
+                accountId: "acct_fixture" as any,
+                tool: submitFormTool,
+                auth,
+                args: {
+                  body: {
+                    title: "Bug report",
+                    state: "open",
+                  },
+                },
+              }),
+            );
+
+            expect(requests).toHaveLength(2);
+            expect(requests[0]?.path).toBe("/v2/items/.alpha.beta");
+            expect(requests[0]?.query).toContain("filter%5Bstatus%5D=open");
+            expect(requests[0]?.query).toContain("search=refs/heads/main?draft=true");
+            expect(requests[0]?.headers["x-trace"]).toBe("a,b");
+            expect(requests[1]?.path).toBe("/v1/forms");
+            expect(String(requests[1]?.headers["content-type"])).toContain("application/x-www-form-urlencoded");
+            expect(requests[1]?.body).toContain("title=Bug+report");
+            expect(requests[1]?.body).toContain("state=open");
+          } finally {
+            await new Promise<void>((resolve, reject) => {
+              server.close((error) => {
+                if (error) {
+                  reject(error);
+                  return;
+                }
+                resolve();
+              });
+            });
+          }
+        },
+        catch: (cause) =>
+          cause instanceof Error ? cause : new Error(String(cause)),
       }),
     120_000,
   );

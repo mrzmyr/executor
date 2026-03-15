@@ -43,6 +43,9 @@ export type McpClientLike = {
     name: string;
     arguments?: Record<string, unknown>;
   }) => Promise<unknown>;
+  getServerCapabilities?: () => unknown;
+  getServerVersion?: () => unknown;
+  getInstructions?: () => string | undefined;
 };
 
 export type McpConnection = {
@@ -538,13 +541,27 @@ export const discoverMcpToolsFromConnector = (input: {
           mcpDiscoveryElicitation: input.mcpDiscoveryElicitation,
         });
 
-        return input.mcpDiscoveryElicitation
+        const settledListEffect = input.mcpDiscoveryElicitation
           ? withElicitationClientLock(connection.client, listEffect)
           : listEffect;
+
+        return Effect.map(settledListEffect, (listed) => ({
+          listed,
+          serverInfo: connection.client.getServerVersion?.(),
+          serverCapabilities: connection.client.getServerCapabilities?.(),
+          instructions: connection.client.getInstructions?.(),
+        }));
       },
     });
 
-    const manifest = extractMcpToolManifestFromListToolsResult(listed);
+    const manifest = extractMcpToolManifestFromListToolsResult(
+      listed.listed,
+      {
+        serverInfo: listed.serverInfo,
+        serverCapabilities: listed.serverCapabilities,
+        instructions: listed.instructions,
+      },
+    );
 
     return {
       manifest,

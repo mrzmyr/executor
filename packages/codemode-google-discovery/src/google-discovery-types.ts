@@ -41,6 +41,12 @@ export const GoogleDiscoveryInvocationPayloadSchema = Schema.Struct({
   requestSchemaId: Schema.NullOr(Schema.String),
   responseSchemaId: Schema.NullOr(Schema.String),
   scopes: Schema.Array(Schema.String),
+  scopeDescriptions: Schema.optional(
+    Schema.Record({
+      key: Schema.String,
+      value: Schema.String,
+    }),
+  ),
   supportsMediaUpload: Schema.Boolean,
   supportsMediaDownload: Schema.Boolean,
 });

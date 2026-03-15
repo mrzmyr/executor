@@ -4,6 +4,11 @@ import {
   applyJsonBodyPlacements,
 } from "@executor/codemode-core";
 import {
+  serializeOpenApiParameterValue,
+  serializeOpenApiRequestBody,
+  withSerializedQueryEntries,
+} from "@executor/codemode-openapi";
+import {
   createMcpToolsFromManifest,
   createSdkMcpConnector,
 } from "@executor/codemode-mcp";
@@ -16,7 +21,16 @@ import type {
   ToolInput,
   ToolPath,
 } from "@executor/codemode-core";
-import type { CatalogV1, Capability, Executable, GraphQLExecutable, HttpExecutable, McpExecutable, ParameterSymbol } from "../ir/model";
+import type {
+  CatalogV1,
+  Capability,
+  Executable,
+  GraphQLExecutable,
+  HttpExecutable,
+  McpExecutable,
+  ParameterSymbol,
+  Scope,
+} from "../ir/model";
 import type { LoadedSourceCatalogToolIndexEntry } from "./source-catalog-runtime";
 import type { ResolvedSourceAuthMaterial } from "./source-auth-material";
 
@@ -73,19 +87,6 @@ const decodeFetchBody = async (response: Response): Promise<unknown> => {
   return response.text();
 };
 
-const primitiveString = (value: unknown): string => {
-  if (value === null || value === undefined) {
-    return "";
-  }
-  if (typeof value === "string") {
-    return value;
-  }
-  if (typeof value === "number" || typeof value === "boolean") {
-    return String(value);
-  }
-  return JSON.stringify(value);
-};
-
 const parameterById = (catalog: CatalogV1, parameterId: string): ParameterSymbol | undefined => {
   const symbol = catalog.symbols[parameterId];
   return symbol?.kind === "parameter" ? symbol : undefined;
@@ -130,7 +131,49 @@ const readHttpParameterValue = (input: {
   return asObject(input.args[groupKey])[input.parameter.name];
 };
 
-const resolveHttpBaseUrl = (source: Source, executable: HttpExecutable): URL => {
+const scopeDefaultServers = (
+  catalog: CatalogV1,
+  scopeId: HttpExecutable["scopeId"],
+): Array<{ url: string; variables?: Record<string, string> }> => {
+  let currentId: HttpExecutable["scopeId"] | undefined = scopeId;
+
+  while (currentId) {
+    const scope: Scope | undefined = catalog.scopes[currentId];
+    if (!scope) {
+      break;
+    }
+
+    if (scope.defaults?.servers && scope.defaults.servers.length > 0) {
+      return [...scope.defaults.servers];
+    }
+
+    currentId = scope.parentId;
+  }
+
+  return [];
+};
+
+const resolveScopedServerUrl = (
+  source: Source,
+  server: {
+    url: string;
+    variables?: Record<string, string>;
+  },
+): URL => {
+  const expanded = Object.entries(server.variables ?? {}).reduce(
+    (url, [name, value]) => url.replaceAll(`{${name}}`, value),
+    server.url,
+  );
+
+  return new URL(expanded, source.endpoint);
+};
+
+const resolveHttpBaseUrl = (source: Source, catalog: CatalogV1, executable: HttpExecutable): URL => {
+  const scopedServers = scopeDefaultServers(catalog, executable.scopeId);
+  if (scopedServers.length > 0) {
+    return resolveScopedServerUrl(source, scopedServers[0]!);
+  }
+
   const googleBlob = executable.native?.find(
     (blob) => blob.kind === "google_discovery_provider_data",
   );
@@ -147,6 +190,27 @@ const resolveHttpBaseUrl = (source: Source, executable: HttpExecutable): URL => 
   return new URL(source.endpoint);
 };
 
+const resolveHttpRequestUrl = (baseUrl: URL, resolvedPath: string): URL => {
+  try {
+    return new URL(resolvedPath);
+  } catch {
+    const resolved = new URL(baseUrl.toString());
+    const basePath =
+      resolved.pathname === "/"
+        ? ""
+        : resolved.pathname.endsWith("/")
+          ? resolved.pathname.slice(0, -1)
+          : resolved.pathname;
+    const pathPart = resolvedPath.startsWith("/") ? resolvedPath : `/${resolvedPath}`;
+
+    resolved.pathname = `${basePath}${pathPart}`.replace(/\/{2,}/g, "/");
+    resolved.search = "";
+    resolved.hash = "";
+
+    return resolved;
+  }
+};
+
 const executeHttp = (input: {
   source: Source;
   catalog: CatalogV1;
@@ -159,13 +223,14 @@ const executeHttp = (input: {
       const argsRecord = asObject(input.args);
       let resolvedPath = input.executable.pathTemplate;
       const url = applyHttpQueryPlacementsToUrl({
-        url: resolveHttpBaseUrl(input.source, input.executable),
+        url: resolveHttpBaseUrl(input.source, input.catalog, input.executable),
         queryParams: readSourceQueryParams(input.source),
       });
       const headers: Record<string, string> = {
         ...readSourceHeaders(input.source),
       };
-      const cookies: Record<string, string> = {};
+      const queryEntries: Array<{ name: string; value: string; allowReserved?: boolean }> = [];
+      const cookieParts: string[] = [];
 
       const allParameterIds = [
         ...(input.executable.pathParameterIds ?? []),
@@ -193,32 +258,37 @@ const executeHttp = (input: {
           continue;
         }
 
-        if (parameter.location === "path") {
+        const serialized = serializeOpenApiParameterValue({
+          name: parameter.name,
+          location: parameter.location,
+          style: parameter.style,
+          explode: parameter.explode,
+          allowReserved: parameter.allowReserved,
+          content: parameter.content?.map((content) => ({ mediaType: content.mediaType })),
+        }, value);
+
+        if (serialized.kind === "path") {
           resolvedPath = resolvedPath.replace(
             new RegExp(`{${parameter.name}}`, "g"),
-            encodeURIComponent(primitiveString(value)),
+            serialized.value,
           );
           continue;
         }
 
-        if (parameter.location === "query") {
-          if (Array.isArray(value)) {
-            for (const entry of value) {
-              url.searchParams.append(parameter.name, primitiveString(entry));
-            }
-          } else {
-            url.searchParams.set(parameter.name, primitiveString(value));
-          }
+        if (serialized.kind === "query") {
+          queryEntries.push(...serialized.entries);
           continue;
         }
 
-        if (parameter.location === "header") {
-          headers[parameter.name] = primitiveString(value);
+        if (serialized.kind === "header") {
+          headers[parameter.name] = serialized.value;
           continue;
         }
 
-        if (parameter.location === "cookie") {
-          cookies[parameter.name] = primitiveString(value);
+        if (serialized.kind === "cookie") {
+          cookieParts.push(
+            ...serialized.pairs.map((pair) => `${pair.name}=${encodeURIComponent(pair.value)}`),
+          );
         }
       }
 
@@ -229,35 +299,42 @@ const executeHttp = (input: {
       if (bodySymbol?.kind === "requestBody") {
         const bodyValue = argsRecord.body ?? argsRecord.input;
         if (bodyValue !== undefined) {
-          const contentType = bodySymbol.contents[0]?.mediaType ?? "application/json";
-          headers["content-type"] = contentType;
-          body = JSON.stringify(
-            applyJsonBodyPlacements({
+          const serializedBody = serializeOpenApiRequestBody({
+            requestBody: {
+              contentTypes: bodySymbol.contents.map((content) => content.mediaType),
+              contents: bodySymbol.contents.map((content) => ({ mediaType: content.mediaType })),
+            },
+            body: applyJsonBodyPlacements({
               body: bodyValue,
               bodyValues: input.auth.bodyValues,
               label: `${input.executable.method} ${input.executable.pathTemplate}`,
             }),
-          );
+          });
+          headers["content-type"] = serializedBody.contentType;
+          body = serializedBody.bodyText;
         }
       }
 
-      const requestUrl = new URL(resolvedPath, url);
+      const requestUrl = resolveHttpRequestUrl(url, resolvedPath);
       const urlWithAuth = applyHttpQueryPlacementsToUrl({
         url: requestUrl,
         queryParams: input.auth.queryParams,
       });
+      const urlWithOpenApiQuery = withSerializedQueryEntries(urlWithAuth, queryEntries);
+      if (cookieParts.length > 0) {
+        headers.cookie = cookieParts.join("; ");
+      }
       const headersWithCookies = applyCookiePlacementsToHeaders({
         headers: {
           ...headers,
           ...input.auth.headers,
         },
         cookies: {
-          ...cookies,
           ...input.auth.cookies,
         },
       });
 
-      const response = await fetch(urlWithAuth, {
+      const response = await fetch(urlWithOpenApiQuery, {
         method: input.executable.method,
         headers: headersWithCookies,
         ...(body !== undefined ? { body } : {}),
@@ -443,14 +520,23 @@ const executeMcp = (input: {
       });
       const tools = createMcpToolsFromManifest({
         manifest: {
-          version: 1,
+          version: 2,
           tools: [{
             toolId: input.executable.toolName,
             toolName: input.executable.toolName,
+            displayTitle:
+              input.tool.capability.surface.title
+              ?? input.executable.toolName,
+            title: input.tool.capability.surface.title ?? null,
             description:
               input.tool.capability.surface.summary
               ?? input.tool.capability.surface.title
               ?? `MCP tool: ${input.executable.toolName}`,
+            annotations: null,
+            execution: null,
+            icons: null,
+            meta: null,
+            rawTool: null,
             inputSchema: input.tool.descriptor.inputSchema,
             outputSchema: input.tool.descriptor.outputSchema,
           }],

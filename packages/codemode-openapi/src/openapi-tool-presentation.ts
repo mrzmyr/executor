@@ -3,8 +3,10 @@ import { typeSignatureFromSchema } from "@executor/codemode-core";
 
 import type {
   OpenApiExample,
+  OpenApiMediaContent,
   OpenApiInvocationPayload,
   OpenApiRefHintTable,
+  OpenApiResponseVariant,
   OpenApiToolDocumentation,
   OpenApiToolProviderData,
 } from "./openapi-types";
@@ -51,8 +53,74 @@ const firstExample = (
   examples: ReadonlyArray<OpenApiExample> | undefined,
 ): OpenApiExample | undefined => examples?.[0];
 
+const schemaProperty = (
+  schema: unknown,
+  propertyName: string,
+): unknown | undefined => {
+  const record = asRecord(schema);
+  const properties = asRecord(record.properties);
+  return properties[propertyName];
+};
+
+const groupedSchemaForParameter = (
+  schema: unknown,
+  location: OpenApiInvocationPayload["parameters"][number]["location"],
+  name: string,
+): unknown | undefined => {
+  const direct = schemaProperty(schema, name);
+  if (direct !== undefined) {
+    return direct;
+  }
+
+  const groupKey =
+    location === "header"
+      ? "headers"
+      : location === "cookie"
+        ? "cookies"
+        : location;
+  const groupSchema = schemaProperty(schema, groupKey);
+  return groupSchema === undefined ? undefined : schemaProperty(groupSchema, name);
+};
+
+const preferredContentSchema = (
+  contents: ReadonlyArray<OpenApiMediaContent> | undefined,
+): unknown | undefined => {
+  if (!contents || contents.length === 0) {
+    return undefined;
+  }
+
+  const preferred = [...contents].sort((left, right) => left.mediaType.localeCompare(right.mediaType))
+    .find((content) => content.mediaType === "application/json")
+    ?? [...contents].find((content) => content.mediaType.toLowerCase().includes("+json"))
+    ?? [...contents].find((content) => content.mediaType.toLowerCase().includes("json"))
+    ?? contents[0];
+
+  return preferred?.schema;
+};
+
+const withDescription = (
+  schema: unknown,
+  description: string | undefined,
+): unknown => {
+  if (!description) {
+    return schema;
+  }
+
+  const record = asRecord(schema);
+  if (Object.keys(record).length === 0) {
+    return schema;
+  }
+
+  return {
+    ...record,
+    description,
+  };
+};
+
 const callInputSchemaFromInvocation = (input: {
   invocation: OpenApiInvocationPayload;
+  documentation?: OpenApiToolDocumentation;
+  parameterSourceSchema?: unknown;
   requestBodySchema?: unknown;
 }): Record<string, unknown> | undefined => {
   const invocation = input.invocation;
@@ -60,18 +128,33 @@ const callInputSchemaFromInvocation = (input: {
   const required: string[] = [];
 
   for (const parameter of invocation.parameters) {
-    properties[parameter.name] = {
+    const matchingDocs = input.documentation?.parameters.find((candidate) =>
+      candidate.name === parameter.name && candidate.location === parameter.location
+    );
+    const parameterSchema = groupedSchemaForParameter(
+      input.parameterSourceSchema,
+      parameter.location,
+      parameter.name,
+    ) ?? preferredContentSchema(parameter.content) ?? {
       type: "string",
     };
+
+    properties[parameter.name] = withDescription(
+      parameterSchema,
+      matchingDocs?.description,
+    );
     if (parameter.required) {
       required.push(parameter.name);
     }
   }
 
   if (invocation.requestBody) {
-    properties.body = input.requestBodySchema ?? {
-      type: "object",
-    };
+    properties.body = withDescription(
+      input.requestBodySchema ?? preferredContentSchema(invocation.requestBody.contents) ?? {
+        type: "object",
+      },
+      input.documentation?.requestBody?.description,
+    );
     if (invocation.requestBody.required) {
       required.push("body");
     }
@@ -130,23 +213,22 @@ const resolvePresentationSchemas = (input: {
     input.refHintTable,
   );
   const requestBodySchema =
-    resolvedTyping.inputSchema
+    schemaProperty(resolvedTyping.inputSchema, "body")
+    ?? schemaProperty(resolvedTyping.inputSchema, "input")
     ?? (resolvedRequestBodySchema !== undefined && resolvedRequestBodySchema !== null
       ? resolvedRequestBodySchema
       : undefined);
 
-  const inputSchema =
-    input.definition.invocation.requestBody !== null
-      ? callInputSchemaFromInvocation({
-        invocation: input.definition.invocation,
-        ...(requestBodySchema !== undefined
-          ? { requestBodySchema }
-          : {}),
-      })
-      : resolvedTyping.inputSchema
-        ?? callInputSchemaFromInvocation({
-          invocation: input.definition.invocation,
-        });
+  const inputSchema = callInputSchemaFromInvocation({
+    invocation: input.definition.invocation,
+    documentation: input.definition.documentation,
+    parameterSourceSchema: resolvedTyping.inputSchema,
+    ...(requestBodySchema !== undefined
+      ? { requestBodySchema }
+      : {}),
+  })
+    ?? resolvedTyping.inputSchema
+    ?? undefined;
   const outputSchema =
     resolvedTyping.outputSchema
     ?? resolveSchemaWithRefHints(
@@ -158,6 +240,27 @@ const resolvePresentationSchemas = (input: {
     ...(inputSchema !== undefined && inputSchema !== null ? { inputSchema } : {}),
     ...(outputSchema !== undefined && outputSchema !== null ? { outputSchema } : {}),
   };
+};
+
+const resolveResponseVariantsWithRefHints = (input: {
+  variants: ReadonlyArray<OpenApiResponseVariant> | undefined;
+  refHintTable?: Readonly<OpenApiRefHintTable>;
+}): ReadonlyArray<OpenApiResponseVariant> | undefined => {
+  if (!input.variants || input.variants.length === 0) {
+    return undefined;
+  }
+
+  return input.variants.map((variant) => {
+    const resolvedSchema = resolveSchemaWithRefHints(
+      variant.schema,
+      input.refHintTable,
+    );
+
+    return {
+      ...variant,
+      ...(resolvedSchema !== undefined ? { schema: resolvedSchema } : {}),
+    };
+  });
 };
 
 const buildExampleInput = (
@@ -208,6 +311,10 @@ export const buildOpenApiToolPresentation = (input: {
   refHintTable?: Readonly<OpenApiRefHintTable>;
 }): OpenApiToolPresentation => {
   const { inputSchema, outputSchema } = resolvePresentationSchemas(input);
+  const responses = resolveResponseVariantsWithRefHints({
+    variants: input.definition.responses,
+    refHintTable: input.refHintTable,
+  });
   const exampleInput = buildExampleInput(input.definition.documentation);
   const exampleOutput = buildExampleOutput(input.definition.documentation);
 
@@ -218,6 +325,9 @@ export const buildOpenApiToolPresentation = (input: {
     ...(outputSchema !== undefined ? { outputSchema } : {}),
     ...(exampleInput !== undefined ? { exampleInput } : {}),
     ...(exampleOutput !== undefined ? { exampleOutput } : {}),
-    providerData: openApiProviderDataFromDefinition(input.definition),
+    providerData: {
+      ...openApiProviderDataFromDefinition(input.definition),
+      ...(responses ? { responses } : {}),
+    } satisfies OpenApiToolProviderData,
   };
 };

@@ -1,4 +1,5 @@
 import { join } from "node:path";
+import { gunzipSync } from "node:zlib";
 import { FileSystem } from "@effect/platform";
 
 import {
@@ -12,7 +13,11 @@ import {
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 
-import { CatalogSnapshotV1Schema } from "../ir/model";
+import {
+  CatalogSnapshotV1Schema,
+  type NativeBlob,
+  type SourceDocument,
+} from "../ir/model";
 import type { SourceCatalogSyncResult } from "./source-catalog-support";
 import type { ResolvedLocalWorkspaceContext } from "./local-config";
 import {
@@ -49,6 +54,9 @@ const mapFileSystemError = (path: string, action: string) => (cause: unknown) =>
     details: unknownLocalErrorDetails(cause),
   });
 
+const mutableRecord = <K extends string, V>(value: Readonly<Record<K, V>>): Record<K, V> =>
+  value as Record<K, V>;
+
 const localSourceArtifactPath = (input: {
   context: ResolvedLocalWorkspaceContext;
   sourceId: string;
@@ -58,6 +66,93 @@ const localSourceArtifactPath = (input: {
     "sources",
     `${input.sourceId}.json`,
   );
+
+const legacyLocalSourceArtifactPath = (input: {
+  context: ResolvedLocalWorkspaceContext;
+  sourceId: string;
+}): string =>
+  join(
+    input.context.artifactsDirectory,
+    "sources",
+    `${input.sourceId}.json.gz`,
+  );
+
+const localSourceDocumentDirectory = (input: {
+  context: ResolvedLocalWorkspaceContext;
+  sourceId: string;
+}): string =>
+  join(input.context.artifactsDirectory, "sources", input.sourceId, "documents");
+
+const localSourceDocumentPath = (input: {
+  context: ResolvedLocalWorkspaceContext;
+  sourceId: string;
+  documentId: string;
+}): string =>
+  join(localSourceDocumentDirectory(input), `${input.documentId}.txt`);
+
+const splitArtifactSourceDocuments = (artifact: LocalSourceArtifact): {
+  artifact: LocalSourceArtifact;
+  rawDocuments: ReadonlyArray<{
+    documentId: string;
+    blob: NativeBlob;
+    content: string;
+  }>;
+} => {
+  const nextArtifact = structuredClone(artifact);
+  const rawDocuments: Array<{
+    documentId: string;
+    blob: NativeBlob;
+    content: string;
+  }> = [];
+
+  for (const [documentId, document] of Object.entries(nextArtifact.snapshot.catalog.documents)) {
+    const mutableDocument = document as SourceDocument & { native?: NativeBlob[] };
+    const sourceDocumentBlob = document.native?.find((blob) =>
+      blob.kind === "source_document" && typeof blob.value === "string"
+    );
+    if (!sourceDocumentBlob || typeof sourceDocumentBlob.value !== "string") {
+      continue;
+    }
+
+    rawDocuments.push({
+      documentId,
+      blob: sourceDocumentBlob,
+      content: sourceDocumentBlob.value,
+    });
+
+    const remainingBlobs = (document.native ?? []).filter((blob) => blob !== sourceDocumentBlob);
+    if (remainingBlobs.length > 0) {
+      mutableDocument.native = remainingBlobs;
+    } else {
+      delete mutableDocument.native;
+    }
+  }
+
+  return {
+    artifact: nextArtifact,
+    rawDocuments,
+  };
+};
+
+const hydrateArtifactSourceDocuments = (input: {
+  artifact: LocalSourceArtifact;
+  rawDocuments: Readonly<Record<string, NativeBlob>>;
+}): LocalSourceArtifact => {
+  const nextArtifact = structuredClone(input.artifact);
+  const mutableDocuments = mutableRecord(nextArtifact.snapshot.catalog.documents);
+
+  for (const [documentId, rawDocument] of Object.entries(input.rawDocuments)) {
+    const document = mutableDocuments[documentId as keyof typeof mutableDocuments] as (SourceDocument & { native?: NativeBlob[] }) | undefined;
+    if (!document) {
+      continue;
+    }
+
+    const remainingBlobs = (document.native ?? []).filter((blob) => blob.kind !== "source_document");
+    document.native = [rawDocument, ...remainingBlobs];
+  }
+
+  return nextArtifact;
+};
 
 const snapshotHash = (snapshot: SourceCatalogSyncResult["snapshot"]): string =>
   contentHash(JSON.stringify(snapshot));
@@ -99,25 +194,79 @@ export const readLocalSourceArtifact = (input: {
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
     const path = localSourceArtifactPath(input);
+    const legacyPath = legacyLocalSourceArtifactPath(input);
     const exists = yield* fs.exists(path).pipe(
       Effect.mapError(mapFileSystemError(path, "check source artifact path")),
     );
-    if (!exists) {
+    const legacyExists = exists
+      ? false
+      : yield* fs.exists(legacyPath).pipe(
+          Effect.mapError(mapFileSystemError(legacyPath, "check legacy source artifact path")),
+        );
+    if (!exists && !legacyExists) {
       return null;
     }
 
-    const content = yield* fs.readFileString(path, "utf8").pipe(
-      Effect.mapError(mapFileSystemError(path, "read source artifact")),
-    );
-    return yield* Effect.try({
+    const readPath = exists ? path : legacyPath;
+    const content = exists
+      ? yield* fs.readFileString(readPath, "utf8").pipe(
+          Effect.mapError(mapFileSystemError(readPath, "read source artifact")),
+        )
+      : yield* fs.readFile(readPath).pipe(
+          Effect.mapError(mapFileSystemError(readPath, "read source artifact")),
+          Effect.flatMap((bytes) =>
+            Effect.try({
+              try: () => new TextDecoder().decode(gunzipSync(bytes)),
+              catch: (cause) =>
+                new LocalSourceArtifactDecodeError({
+                  message: `Invalid compressed local source artifact at ${readPath}: ${unknownLocalErrorDetails(cause)}`,
+                  path: readPath,
+                  details: unknownLocalErrorDetails(cause),
+              }),
+            })
+          ),
+        );
+
+    const artifact = yield* Effect.try({
       try: () => decodeLocalSourceArtifact(JSON.parse(content) as unknown),
       catch: (cause) =>
         new LocalSourceArtifactDecodeError({
-          message: `Invalid local source artifact at ${path}: ${unknownLocalErrorDetails(cause)}`,
-          path,
+          message: `Invalid local source artifact at ${readPath}: ${unknownLocalErrorDetails(cause)}`,
+          path: readPath,
           details: unknownLocalErrorDetails(cause),
         }),
     });
+
+    const rawDocuments: Record<string, NativeBlob> = {};
+    for (const documentId of Object.keys(artifact.snapshot.catalog.documents)) {
+      const sourceDocumentPath = localSourceDocumentPath({
+        context: input.context,
+        sourceId: input.sourceId,
+        documentId,
+      });
+      const sourceDocumentExists = yield* fs.exists(sourceDocumentPath).pipe(
+        Effect.mapError(mapFileSystemError(sourceDocumentPath, "check source document path")),
+      );
+      if (!sourceDocumentExists) {
+        continue;
+      }
+
+      const sourceContent = yield* fs.readFileString(sourceDocumentPath, "utf8").pipe(
+        Effect.mapError(mapFileSystemError(sourceDocumentPath, "read source document")),
+      );
+      rawDocuments[documentId] = {
+        sourceKind: artifact.snapshot.import.sourceKind,
+        kind: "source_document",
+        value: sourceContent,
+      } satisfies NativeBlob;
+    }
+
+    return Object.keys(rawDocuments).length > 0
+      ? hydrateArtifactSourceDocuments({
+          artifact,
+          rawDocuments,
+        })
+      : artifact;
   });
 
 export const writeLocalSourceArtifact = (input: {
@@ -129,12 +278,41 @@ export const writeLocalSourceArtifact = (input: {
     const fs = yield* FileSystem.FileSystem;
     const directory = join(input.context.artifactsDirectory, "sources");
     const path = localSourceArtifactPath(input);
+    const legacyPath = legacyLocalSourceArtifactPath(input);
+    const sourceDocumentDirectory = localSourceDocumentDirectory(input);
+    const split = splitArtifactSourceDocuments(input.artifact);
     yield* fs.makeDirectory(directory, { recursive: true }).pipe(
       Effect.mapError(mapFileSystemError(directory, "create source artifact directory")),
     );
-    yield* fs.writeFileString(path, `${JSON.stringify(input.artifact, null, 2)}\n`).pipe(
+    yield* fs.remove(sourceDocumentDirectory, { recursive: true, force: true }).pipe(
+      Effect.mapError(mapFileSystemError(sourceDocumentDirectory, "remove source document directory")),
+    );
+    if (split.rawDocuments.length > 0) {
+      yield* fs.makeDirectory(sourceDocumentDirectory, { recursive: true }).pipe(
+        Effect.mapError(mapFileSystemError(sourceDocumentDirectory, "create source document directory")),
+      );
+      for (const rawDocument of split.rawDocuments) {
+        const sourceDocumentPath = localSourceDocumentPath({
+          context: input.context,
+          sourceId: input.sourceId,
+          documentId: rawDocument.documentId,
+        });
+        yield* fs.writeFileString(sourceDocumentPath, rawDocument.content).pipe(
+          Effect.mapError(mapFileSystemError(sourceDocumentPath, "write source document")),
+        );
+      }
+    }
+    yield* fs.writeFileString(path, `${JSON.stringify(split.artifact)}\n`).pipe(
       Effect.mapError(mapFileSystemError(path, "write source artifact")),
     );
+    const legacyExists = yield* fs.exists(legacyPath).pipe(
+      Effect.mapError(mapFileSystemError(legacyPath, "check legacy source artifact path")),
+    );
+    if (legacyExists) {
+      yield* fs.remove(legacyPath).pipe(
+        Effect.mapError(mapFileSystemError(legacyPath, "remove legacy source artifact")),
+      );
+    }
   });
 
 export const removeLocalSourceArtifact = (input: {
@@ -143,14 +321,19 @@ export const removeLocalSourceArtifact = (input: {
 }): Effect.Effect<void, LocalFileSystemError, FileSystem.FileSystem> =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
-    const path = localSourceArtifactPath(input);
-    const exists = yield* fs.exists(path).pipe(
-      Effect.mapError(mapFileSystemError(path, "check source artifact path")),
-    );
-    if (!exists) {
-      return;
+    for (const path of [localSourceArtifactPath(input), legacyLocalSourceArtifactPath(input)]) {
+      const exists = yield* fs.exists(path).pipe(
+        Effect.mapError(mapFileSystemError(path, "check source artifact path")),
+      );
+      if (!exists) {
+        continue;
+      }
+      yield* fs.remove(path).pipe(
+        Effect.mapError(mapFileSystemError(path, "remove source artifact")),
+      );
     }
-    yield* fs.remove(path).pipe(
-      Effect.mapError(mapFileSystemError(path, "remove source artifact")),
+    const sourceDocumentDirectory = localSourceDocumentDirectory(input);
+    yield* fs.remove(sourceDocumentDirectory, { recursive: true, force: true }).pipe(
+      Effect.mapError(mapFileSystemError(sourceDocumentDirectory, "remove source document directory")),
     );
   });
