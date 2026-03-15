@@ -22,6 +22,12 @@ import {
   compileOpenApiToolDefinitions,
   type OpenApiToolDefinition,
 } from "./openapi-definitions";
+import {
+  serializeOpenApiParameterValue,
+  serializeOpenApiRequestBody,
+  withSerializedQueryEntries,
+  type SerializedOpenApiQueryEntry,
+} from "./openapi-http-serialization";
 import { buildOpenApiToolPresentation } from "./openapi-tool-presentation";
 import { resolveSchemaWithRefHints } from "./openapi-schema-refs";
 import {
@@ -65,22 +71,6 @@ const parameterContainerKeys: Record<
   query: ["query", "queryParams", "params"],
   header: ["headers", "header"],
   cookie: ["cookies", "cookie"],
-};
-
-const argsValueToString = (value: unknown): string => {
-  if (typeof value === "string") {
-    return value;
-  }
-
-  if (
-    typeof value === "number"
-    || typeof value === "boolean"
-    || typeof value === "bigint"
-  ) {
-    return String(value);
-  }
-
-  return String(value);
 };
 
 const readParameterValue = (
@@ -136,9 +126,12 @@ const replacePathTemplate = (
       continue;
     }
 
+    const serialized = serializeOpenApiParameterValue(parameter, parameterValue);
     resolvedPath = resolvedPath.replaceAll(
       `{${parameter.name}}`,
-      encodeURIComponent(String(parameterValue)),
+      serialized.kind === "path"
+        ? serialized.value
+        : encodeURIComponent(String(parameterValue)),
     );
   }
 
@@ -324,7 +317,7 @@ const buildFetchRequest = (input: {
   defaultHeaders: Readonly<Record<string, string>>;
   credentialPlacements: HttpRequestPlacements;
 }): {
-  url: URL;
+  url: string;
   method: string;
   headers: Record<string, string>;
   body?: string;
@@ -340,6 +333,7 @@ const buildFetchRequest = (input: {
     ...input.defaultHeaders,
   };
   const cookieParts: Array<string> = [];
+  const queryEntries: SerializedOpenApiQueryEntry[] = [];
 
   for (const parameter of input.payload.parameters) {
     if (parameter.location === "path") {
@@ -358,14 +352,18 @@ const buildFetchRequest = (input: {
       continue;
     }
 
-    const encoded = argsValueToString(parameterValue);
+    const serialized = serializeOpenApiParameterValue(parameter, parameterValue);
 
-    if (parameter.location === "query") {
-      url.searchParams.set(parameter.name, encoded);
-    } else if (parameter.location === "header") {
-      headers[parameter.name] = encoded;
-    } else if (parameter.location === "cookie") {
-      cookieParts.push(`${parameter.name}=${encodeURIComponent(encoded)}`);
+    if (serialized.kind === "query") {
+      queryEntries.push(...serialized.entries);
+    } else if (serialized.kind === "header") {
+      headers[parameter.name] = serialized.value;
+    } else if (serialized.kind === "cookie") {
+      cookieParts.push(
+        ...serialized.pairs.map((pair) =>
+          `${pair.name}=${encodeURIComponent(pair.value)}`
+        ),
+      );
     }
   }
 
@@ -387,20 +385,17 @@ const buildFetchRequest = (input: {
         });
       }
     } else {
-      body = JSON.stringify(
-        applyJsonBodyPlacements({
+      const serializedBody = serializeOpenApiRequestBody({
+        requestBody: input.payload.requestBody,
+        body: applyJsonBodyPlacements({
           body: hasRequestBody(input.args) ? input.args.body : {},
           bodyValues,
           label: `${input.payload.method.toUpperCase()} ${input.payload.pathTemplate}`,
         }),
-      );
+      });
 
-      const preferredContentType = input.payload.requestBody.contentTypes[0];
-      if (preferredContentType) {
-        headers["content-type"] = preferredContentType;
-      } else if (!("content-type" in headers)) {
-        headers["content-type"] = "application/json";
-      }
+      body = serializedBody.bodyText;
+      headers["content-type"] = serializedBody.contentType;
     }
   }
 
@@ -408,6 +403,7 @@ const buildFetchRequest = (input: {
     url,
     queryParams: input.credentialPlacements.queryParams,
   });
+  const urlWithQueryParams = withSerializedQueryEntries(urlWithAuth, queryEntries);
   const headersWithAuthCookies = applyCookiePlacementsToHeaders({
     headers,
     cookies: input.credentialPlacements.cookies,
@@ -418,7 +414,7 @@ const buildFetchRequest = (input: {
   }
 
   return {
-    url: urlWithAuth,
+    url: urlWithQueryParams,
     method: input.payload.method.toUpperCase(),
     headers: headersWithAuthCookies,
     body,

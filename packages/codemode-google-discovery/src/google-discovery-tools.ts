@@ -37,6 +37,7 @@ export const googleDiscoveryProviderDataFromDefinition = (
     version: string;
     rootUrl: string;
     servicePath: string;
+    oauthScopes?: Readonly<Record<string, string>>;
     definition: GoogleDiscoveryManifestMethod;
   },
 ): typeof GoogleDiscoveryToolProviderDataSchema.Type => ({
@@ -58,6 +59,17 @@ export const googleDiscoveryProviderDataFromDefinition = (
       requestSchemaId: input.definition.requestSchemaId,
       responseSchemaId: input.definition.responseSchemaId,
       scopes: input.definition.scopes,
+      ...(input.oauthScopes
+        ? {
+            scopeDescriptions: Object.fromEntries(
+              input.definition.scopes.flatMap((scope) =>
+                input.oauthScopes?.[scope] !== undefined
+                  ? [[scope, input.oauthScopes[scope]!]]
+                  : [],
+              ),
+            ),
+          }
+        : {}),
       supportsMediaUpload: input.definition.supportsMediaUpload,
       supportsMediaDownload: input.definition.supportsMediaDownload,
     },
@@ -347,6 +359,7 @@ export type CreateGoogleDiscoveryToolFromDefinitionInput = {
   version: string;
   rootUrl: string;
   servicePath: string;
+  oauthScopes?: Readonly<Record<string, string>>;
   path: string;
   sourceKey: string;
   defaultHeaders?: Readonly<Record<string, string>>;
@@ -371,6 +384,7 @@ export const buildGoogleDiscoveryToolPresentation = (input: {
     versionName: string;
     rootUrl: string;
     servicePath: string;
+    oauthScopes?: Readonly<Record<string, string>>;
     schemaRefTable?: Readonly<GoogleDiscoverySchemaRefTable>;
   };
   definition: GoogleDiscoveryToolDefinition;
@@ -409,6 +423,7 @@ export const buildGoogleDiscoveryToolPresentation = (input: {
       version: input.manifest.versionName,
       rootUrl: input.manifest.rootUrl,
       servicePath: input.manifest.servicePath,
+      oauthScopes: input.manifest.oauthScopes,
       definition: input.definition,
     }),
   };
@@ -423,6 +438,7 @@ export const createGoogleDiscoveryToolFromDefinition = (
       versionName: input.version,
       rootUrl: input.rootUrl,
       servicePath: input.servicePath,
+      oauthScopes: input.oauthScopes,
       schemaRefTable: input.schemaRefTable,
     },
     definition: input.definition,

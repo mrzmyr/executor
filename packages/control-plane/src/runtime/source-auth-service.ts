@@ -1119,7 +1119,7 @@ const connectMcpSourceInternal = (input: {
           const indexed = yield* Effect.either(
             input.sourceCatalogSync.persistMcpCatalogSnapshotFromManifest({
               source: connected,
-              manifestEntries: result.manifest.tools,
+              manifest: result.manifest,
             }),
           );
 

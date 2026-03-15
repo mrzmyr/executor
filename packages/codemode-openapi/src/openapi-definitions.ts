@@ -4,6 +4,10 @@ import {
   DiscoveryTypingPayloadSchema,
   OpenApiHttpMethodSchema,
   OpenApiInvocationPayloadSchema,
+  OpenApiResponseVariantSchema,
+  OpenApiSecurityRequirementSchema,
+  OpenApiSecuritySchemeSchema,
+  OpenApiServerSchema,
   OpenApiToolDocumentationSchema,
   OpenApiToolProviderDataSchema,
   type OpenApiExtractedTool,
@@ -143,6 +147,11 @@ export const OpenApiToolDefinitionSchema = Schema.Struct({
   operationHash: Schema.String,
   typing: Schema.optional(DiscoveryTypingPayloadSchema),
   documentation: Schema.optional(OpenApiToolDocumentationSchema),
+  responses: Schema.optional(Schema.Array(OpenApiResponseVariantSchema)),
+  authRequirement: Schema.optional(OpenApiSecurityRequirementSchema),
+  securitySchemes: Schema.optional(Schema.Array(OpenApiSecuritySchemeSchema)),
+  documentServers: Schema.optional(Schema.Array(OpenApiServerSchema)),
+  servers: Schema.optional(Schema.Array(OpenApiServerSchema)),
 });
 
 export type OpenApiToolDefinition = typeof OpenApiToolDefinitionSchema.Type;
@@ -226,6 +235,11 @@ export const compileOpenApiToolDefinitions = (
       operationHash: tool.operationHash,
       typing: tool.typing,
       documentation: tool.documentation,
+      responses: tool.responses,
+      authRequirement: tool.authRequirement,
+      securitySchemes: tool.securitySchemes,
+      documentServers: tool.documentServers,
+      servers: tool.servers,
     } satisfies Omit<OpenApiToolDefinition, "toolId">;
   });
 
@@ -252,4 +266,9 @@ export const openApiProviderDataFromDefinition = (
     operationHash: definition.operationHash,
     invocation: definition.invocation,
     documentation: definition.documentation,
+    responses: definition.responses,
+    authRequirement: definition.authRequirement,
+    securitySchemes: definition.securitySchemes,
+    documentServers: definition.documentServers,
+    servers: definition.servers,
   } satisfies typeof OpenApiToolProviderDataSchema.Type);

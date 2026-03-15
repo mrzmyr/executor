@@ -5,6 +5,11 @@ import {
 import {
   type GoogleDiscoveryToolProviderData,
 } from "@executor/codemode-google-discovery";
+import type {
+  McpServerMetadata,
+  McpToolAnnotations,
+  McpToolExecution,
+} from "@executor/codemode-mcp";
 
 import type { Source } from "#schema";
 
@@ -90,12 +95,21 @@ export type McpCatalogOperationInput = CatalogOperationInput & {
   providerData: {
     toolId: string;
     toolName: string;
+    displayTitle: string;
+    title: string | null;
     description: string | null;
+    annotations: McpToolAnnotations | null;
+    execution: McpToolExecution | null;
+    icons: unknown[] | null;
+    meta: unknown;
+    rawTool: unknown;
+    server: McpServerMetadata | null;
   };
 };
 
 type JsonSchemaImporter = {
-  importSchema: (schema: unknown, key: string) => ReturnType<typeof ShapeSymbolIdSchema.make>;
+  importSchema: (schema: unknown, key: string, rootSchema?: unknown) => ReturnType<typeof ShapeSymbolIdSchema.make>;
+  finalize: () => void;
 };
 
 const stableStringify = (value: unknown): string => {
@@ -209,6 +223,28 @@ const interactionForEffect = (effect: EffectKind): Capability["interaction"] => 
   },
 });
 
+const mcpResumeSupport = (
+  execution: McpCatalogOperationInput["providerData"]["execution"],
+): boolean =>
+  execution?.taskSupport === "optional" || execution?.taskSupport === "required";
+
+const mcpSemanticsForOperation = (input: {
+  effect: EffectKind;
+  annotations: McpCatalogOperationInput["providerData"]["annotations"];
+}): Capability["semantics"] => {
+  const safe = input.effect === "read";
+
+  return {
+    effect: input.effect,
+    safe,
+    idempotent: safe || input.annotations?.idempotentHint === true,
+    destructive:
+      safe
+        ? false
+        : input.annotations?.destructiveHint !== false,
+  };
+};
+
 const importMetadataFor = (input: {
   source: Source;
   adapterKey: string;
@@ -280,6 +316,10 @@ const createJsonSchemaImporter = (input: {
   documentId: ReturnType<typeof DocumentIdSchema.make>;
 }) : JsonSchemaImporter => {
   const cache = new Map<string, ReturnType<typeof ShapeSymbolIdSchema.make>>();
+  const structuralCache = new Map<string, ReturnType<typeof ShapeSymbolIdSchema.make>>();
+  const dedupedShapeIds = new Map<ReturnType<typeof ShapeSymbolIdSchema.make>, ReturnType<typeof ShapeSymbolIdSchema.make>>();
+  const activeShapeIds: ReturnType<typeof ShapeSymbolIdSchema.make>[] = [];
+  const recursiveShapeIds = new Set<ReturnType<typeof ShapeSymbolIdSchema.make>>();
 
   const resolvePointer = (root: unknown, pointer: string): unknown => {
     if (pointer === "#" || pointer.length === 0) {
@@ -308,11 +348,20 @@ const createJsonSchemaImporter = (input: {
     const stableKey = `${input.resourceId}:${key}`;
     const cached = cache.get(stableKey);
     if (cached) {
+      const cycleIndex = activeShapeIds.indexOf(cached);
+      if (cycleIndex !== -1) {
+        for (const activeShapeId of activeShapeIds.slice(cycleIndex)) {
+          recursiveShapeIds.add(activeShapeId);
+        }
+      }
       return cached;
     }
 
     const shapeId = ShapeSymbolIdSchema.make(`shape_${stableHash({ resourceId: input.resourceId, key })}`);
     cache.set(stableKey, shapeId);
+    activeShapeIds.push(shapeId);
+
+    try {
 
     const objectSchema = asObject(schema);
     const title = asString(objectSchema.title) ?? undefined;
@@ -324,7 +373,38 @@ const createJsonSchemaImporter = (input: {
     const register = (node: ShapeNode, extras: {
       native?: NativeBlob[];
       diagnosticIds?: ReturnType<typeof DiagnosticIdSchema.make>[];
-    } = {}) => {
+    } = {}): ReturnType<typeof ShapeSymbolIdSchema.make> => {
+      const signature = stableStringify(node);
+      const recursive = recursiveShapeIds.has(shapeId);
+      const existingShapeId = recursive ? undefined : structuralCache.get(signature);
+
+      if (existingShapeId) {
+        const existingShape = input.catalog.symbols[existingShapeId];
+        if (existingShape?.kind === "shape") {
+          if (existingShape.title === undefined && title) {
+            mutableRecord(input.catalog.symbols)[existingShapeId] = {
+              ...existingShape,
+              title,
+            } satisfies ShapeSymbol;
+          }
+          if (existingShape.docs === undefined && docs) {
+            mutableRecord(input.catalog.symbols)[existingShapeId] = {
+              ...(mutableRecord(input.catalog.symbols)[existingShapeId] as ShapeSymbol),
+              docs,
+            } satisfies ShapeSymbol;
+          }
+          if (existingShape.deprecated === undefined && deprecated !== undefined) {
+            mutableRecord(input.catalog.symbols)[existingShapeId] = {
+              ...(mutableRecord(input.catalog.symbols)[existingShapeId] as ShapeSymbol),
+              deprecated,
+            } satisfies ShapeSymbol;
+          }
+        }
+        dedupedShapeIds.set(shapeId, existingShapeId);
+        cache.set(stableKey, existingShapeId);
+        return existingShapeId;
+      }
+
       mutableRecord(input.catalog.symbols)[shapeId] = {
         id: shapeId,
         kind: "shape",
@@ -340,14 +420,19 @@ const createJsonSchemaImporter = (input: {
           : {}),
         ...(extras.native && extras.native.length > 0 ? { native: extras.native } : {}),
       } satisfies ShapeSymbol;
+
+      if (!recursive) {
+        structuralCache.set(signature, shapeId);
+      }
+
+      return shapeId;
     };
 
     if (typeof schema === "boolean") {
-      register({
+      return register({
         type: "unknown",
         reason: schema ? "schema_true" : "schema_false",
       });
-      return shapeId;
     }
 
     const ref = asString(objectSchema.$ref);
@@ -374,71 +459,64 @@ const createJsonSchemaImporter = (input: {
             diagnosticIds: [diagnosticId],
           },
         );
-        return shapeId;
+        return cache.get(stableKey)!;
       }
 
       const target = importSchema(resolved, ref, rootSchema ?? schema);
-      register({
+      return register({
         type: "ref",
         target,
       });
-      return shapeId;
     }
 
     const enumValues = asArray(objectSchema.enum);
     if (enumValues.length === 1) {
-      register({
+      return register({
         type: "const",
         value: enumValues[0],
       });
-      return shapeId;
     }
 
     if (enumValues.length > 1) {
-      register({
+      return register({
         type: "enum",
         values: enumValues,
       });
-      return shapeId;
     }
 
     if ("const" in objectSchema) {
-      register({
+      return register({
         type: "const",
         value: objectSchema.const,
       });
-      return shapeId;
     }
 
     const anyOf = asArray(objectSchema.anyOf);
     if (anyOf.length > 0) {
-      register({
+      return register({
         type: "anyOf",
         items: anyOf.map((entry, index) => importSchema(entry, `${key}/anyOf/${index}`, rootSchema ?? schema)),
       });
-      return shapeId;
     }
 
     const allOf = asArray(objectSchema.allOf);
     if (allOf.length > 0) {
-      register({
+      return register({
         type: "allOf",
         items: allOf.map((entry, index) => importSchema(entry, `${key}/allOf/${index}`, rootSchema ?? schema)),
       });
-      return shapeId;
     }
 
     const oneOf = asArray(objectSchema.oneOf);
     if (oneOf.length > 0) {
-      register({
+      return register({
         type: "oneOf",
         items: oneOf.map((entry, index) => importSchema(entry, `${key}/oneOf/${index}`, rootSchema ?? schema)),
       });
-      return shapeId;
     }
 
     if ("if" in objectSchema || "then" in objectSchema || "else" in objectSchema) {
-      register({
+      return register({
         type: "conditional",
         ifShapeId: importSchema(objectSchema.if ?? {}, `${key}/if`, rootSchema ?? schema),
         thenShapeId: importSchema(objectSchema.then ?? {}, `${key}/then`, rootSchema ?? schema),
@@ -448,15 +526,13 @@ const createJsonSchemaImporter = (input: {
             }
           : {}),
       });
-      return shapeId;
     }
 
     if ("not" in objectSchema) {
-      register({
+      return register({
         type: "not",
         itemShapeId: importSchema(objectSchema.not, `${key}/not`, rootSchema ?? schema),
       });
-      return shapeId;
     }
 
     const declaredType = objectSchema.type;
@@ -564,8 +640,7 @@ const createJsonSchemaImporter = (input: {
         return registerNullable(innerId);
       }
 
-      register(objectNode);
-      return shapeId;
+      return register(objectNode);
     }
 
     if (effectiveType === "array" || "items" in objectSchema || "prefixItems" in objectSchema) {
@@ -598,8 +673,7 @@ const createJsonSchemaImporter = (input: {
           return registerNullable(innerId);
         }
 
-        register(tupleNode);
-        return shapeId;
+        return register(tupleNode);
       }
 
       const items = objectSchema.items ?? {};
@@ -623,8 +697,7 @@ const createJsonSchemaImporter = (input: {
         return registerNullable(innerId);
       }
 
-      register(arrayNode);
-      return shapeId;
+      return register(arrayNode);
     }
 
     if (
@@ -667,11 +740,10 @@ const createJsonSchemaImporter = (input: {
         return registerNullable(innerId);
       }
 
-      register(scalarNode);
-      return shapeId;
+      return register(scalarNode);
     }
 
-    register({
+    return register({
       type: "unknown",
       reason: `unsupported_schema:${key}`,
     }, {
@@ -683,11 +755,47 @@ const createJsonSchemaImporter = (input: {
         summary: "Unsupported JSON schema preserved natively",
       })],
     });
-    return shapeId;
+    } finally {
+      const poppedShapeId = activeShapeIds.pop();
+      if (poppedShapeId !== shapeId) {
+        throw new Error(`JSON schema importer stack mismatch for ${shapeId}`);
+      }
+    }
   };
 
   return {
-    importSchema: (schema, key) => importSchema(schema, key, schema),
+    importSchema: (schema, key, rootSchema) => importSchema(schema, key, rootSchema ?? schema),
+    finalize: () => {
+      const rewriteDedupedShapeIds = (value: unknown): void => {
+        if (typeof value === "string") {
+          return;
+        }
+        if (!value || typeof value !== "object") {
+          return;
+        }
+        if (Array.isArray(value)) {
+          for (let index = 0; index < value.length; index += 1) {
+            const entry = value[index];
+            if (typeof entry === "string" && dedupedShapeIds.has(entry as ReturnType<typeof ShapeSymbolIdSchema.make>)) {
+              value[index] = dedupedShapeIds.get(entry as ReturnType<typeof ShapeSymbolIdSchema.make>)!;
+            } else {
+              rewriteDedupedShapeIds(entry);
+            }
+          }
+          return;
+        }
+
+        for (const [entryKey, entryValue] of Object.entries(value)) {
+          if (typeof entryValue === "string" && dedupedShapeIds.has(entryValue as ReturnType<typeof ShapeSymbolIdSchema.make>)) {
+            (value as Record<string, unknown>)[entryKey] = dedupedShapeIds.get(entryValue as ReturnType<typeof ShapeSymbolIdSchema.make>)!;
+          } else {
+            rewriteDedupedShapeIds(entryValue);
+          }
+        }
+      };
+
+      rewriteDedupedShapeIds(input.catalog);
+    },
   };
 };
 
@@ -758,13 +866,30 @@ const requestBodySchemaFromInput = (schema: unknown): unknown =>
 
 const preferredResponseContentTypes = (
   mediaTypes: readonly string[] | undefined,
-): string[] =>
-  mediaTypes && mediaTypes.length > 0 ? [...mediaTypes] : ["application/json"];
+): string[] => {
+  const candidates = mediaTypes && mediaTypes.length > 0
+    ? [...mediaTypes]
+    : ["application/json"];
+
+  const preferred = [
+    ...candidates.filter((mediaType) => mediaType === "application/json"),
+    ...candidates.filter((mediaType) => mediaType !== "application/json" && mediaType.toLowerCase().includes("+json")),
+    ...candidates.filter((mediaType) =>
+      mediaType !== "application/json"
+      && !mediaType.toLowerCase().includes("+json")
+      && mediaType.toLowerCase().includes("json"),
+    ),
+    ...candidates,
+  ];
+
+  return [...new Set(preferred)];
+};
 
 const createServiceScope = (input: {
   catalog: CatalogV1;
   source: Source;
   documentId: ReturnType<typeof DocumentIdSchema.make>;
+  defaults?: Scope["defaults"];
 }) => {
   const scopeId = serviceScopeIdForSource(input.source);
   mutableRecord(input.catalog.scopes)[scopeId] = {
@@ -775,9 +900,55 @@ const createServiceScope = (input: {
     docs: docsFrom({
       summary: input.source.name,
     }),
+    ...(input.defaults ? { defaults: input.defaults } : {}),
     synthetic: false,
     provenance: provenanceFor(input.documentId, "#/service"),
   } satisfies Scope;
+  return scopeId;
+};
+
+const openApiServerSpecs = (
+  servers: OpenApiToolProviderData["servers"] | OpenApiToolProviderData["documentServers"] | undefined,
+): NonNullable<NonNullable<Scope["defaults"]>["servers"]> | undefined => {
+  if (!servers || servers.length === 0) {
+    return undefined;
+  }
+
+  return servers.map((server) => ({
+    url: server.url,
+    ...(server.description ? { description: server.description } : {}),
+    ...(server.variables ? { variables: server.variables } : {}),
+  }));
+};
+
+const createOperationScope = (input: {
+  catalog: CatalogV1;
+  source: Source;
+  documentId: ReturnType<typeof DocumentIdSchema.make>;
+  parentScopeId: ReturnType<typeof ScopeIdSchema.make>;
+  operation: OpenApiCatalogOperationInput;
+  defaults: Scope["defaults"];
+}) => {
+  const scopeId = ScopeIdSchema.make(`scope_${stableHash({
+    sourceId: input.source.id,
+    toolId: input.operation.providerData.toolId,
+    kind: "operation",
+  })}`);
+
+  mutableRecord(input.catalog.scopes)[scopeId] = {
+    id: scopeId,
+    kind: "operation",
+    parentId: input.parentScopeId,
+    name: input.operation.title ?? input.operation.providerData.toolId,
+    docs: docsFrom({
+      summary: input.operation.title ?? input.operation.providerData.toolId,
+      description: input.operation.description ?? undefined,
+    }),
+    defaults: input.defaults,
+    synthetic: false,
+    provenance: provenanceFor(input.documentId, `#/openapi/${input.operation.providerData.toolId}/scope`),
+  } satisfies Scope;
+
   return scopeId;
 };
 
@@ -807,6 +978,320 @@ const responseSetFromSingleResponse = (input: {
   return responseSetId;
 };
 
+const responseSetFromVariants = (input: {
+  catalog: CatalogV1;
+  variants: ResponseSet["variants"];
+  provenance: ProvenanceRef[];
+}) => {
+  const responseSetId = ResponseSetIdSchema.make(`response_set_${stableHash({
+    variants: input.variants.map((variant) => ({
+      match: variant.match,
+      responseId: variant.responseId,
+      traits: variant.traits,
+    })),
+  })}`);
+  mutableRecord(input.catalog.responseSets)[responseSetId] = {
+    id: responseSetId,
+    variants: input.variants,
+    synthetic: false,
+    provenance: input.provenance,
+  } satisfies ResponseSet;
+  return responseSetId;
+};
+
+const statusMatchFromHttpStatusCode = (
+  statusCode: string,
+): ResponseSet["variants"][number]["match"] => {
+  const normalized = statusCode.trim().toUpperCase();
+
+  if (/^\d{3}$/.test(normalized)) {
+    return {
+      kind: "exact",
+      status: Number(normalized),
+    };
+  }
+
+  if (/^[1-5]XX$/.test(normalized)) {
+    return {
+      kind: "range",
+      value: normalized as "1XX" | "2XX" | "3XX" | "4XX" | "5XX",
+    };
+  }
+
+  return {
+    kind: "default",
+  };
+};
+
+const ensureOpenApiSecuritySchemeSymbol = (input: {
+  catalog: CatalogV1;
+  source: Source;
+  documentId: ReturnType<typeof DocumentIdSchema.make>;
+  schemeName: string;
+  scheme?: NonNullable<OpenApiToolProviderData["securitySchemes"]>[number];
+}) => {
+  const schemeId = SecuritySchemeSymbolIdSchema.make(`security_${stableHash({
+    sourceId: input.source.id,
+    provider: "openapi",
+    schemeName: input.schemeName,
+  })}`);
+
+  if (input.catalog.symbols[schemeId]) {
+    return schemeId;
+  }
+
+  const scheme = input.scheme;
+  const httpScheme = scheme?.scheme?.toLowerCase();
+  const schemeType =
+    scheme?.schemeType === "apiKey"
+      ? "apiKey"
+      : scheme?.schemeType === "oauth2"
+        ? "oauth2"
+        : scheme?.schemeType === "http" && httpScheme === "basic"
+          ? "basic"
+          : scheme?.schemeType === "http" && httpScheme === "bearer"
+            ? "bearer"
+            : scheme?.schemeType === "openIdConnect"
+              ? "custom"
+              : scheme?.schemeType === "http"
+                ? "http"
+                : "custom";
+
+  const oauthFlows = Object.fromEntries(
+    Object.entries(scheme?.flows ?? {}).map(([flowName, flow]) => [flowName, flow]),
+  );
+  const oauthScopes = Object.fromEntries(
+    Object.entries(scheme?.flows ?? {}).flatMap(([, flow]) =>
+      Object.entries(flow.scopes ?? {}),
+    ),
+  );
+  const description = scheme?.description
+    ?? (scheme?.openIdConnectUrl
+      ? `OpenID Connect: ${scheme.openIdConnectUrl}`
+      : null);
+
+  mutableRecord(input.catalog.symbols)[schemeId] = {
+    id: schemeId,
+    kind: "securityScheme",
+    schemeType,
+    ...(docsFrom({
+      summary: input.schemeName,
+      description,
+    })
+      ? {
+          docs: docsFrom({
+            summary: input.schemeName,
+            description,
+          })!,
+        }
+      : {}),
+    ...((scheme?.placementIn || scheme?.placementName)
+      ? {
+          placement: {
+            ...(scheme?.placementIn ? { in: scheme.placementIn } : {}),
+            ...(scheme?.placementName ? { name: scheme.placementName } : {}),
+          },
+        }
+      : {}),
+    ...(schemeType === "apiKey" && scheme?.placementIn && scheme?.placementName
+      ? {
+          apiKey: {
+            in: scheme.placementIn,
+            name: scheme.placementName,
+          },
+        }
+      : {}),
+    ...((schemeType === "basic" || schemeType === "bearer" || schemeType === "http") && scheme?.scheme
+      ? {
+          http: {
+            scheme: scheme.scheme,
+            ...(scheme.bearerFormat ? { bearerFormat: scheme.bearerFormat } : {}),
+          },
+        }
+      : {}),
+    ...(schemeType === "oauth2"
+      ? {
+          oauth: {
+            ...(Object.keys(oauthFlows).length > 0 ? { flows: oauthFlows } : {}),
+            ...(Object.keys(oauthScopes).length > 0 ? { scopes: oauthScopes } : {}),
+          },
+        }
+      : {}),
+    ...(schemeType === "custom"
+      ? {
+          custom: {},
+        }
+      : {}),
+    synthetic: false,
+    provenance: provenanceFor(
+      input.documentId,
+      `#/openapi/securitySchemes/${input.schemeName}`,
+    ),
+  } satisfies SecuritySchemeSymbol;
+
+  return schemeId;
+};
+
+const openApiAuthRequirementToIr = (input: {
+  catalog: CatalogV1;
+  source: Source;
+  documentId: ReturnType<typeof DocumentIdSchema.make>;
+  authRequirement: OpenApiToolProviderData["authRequirement"] | undefined;
+  schemesByName: ReadonlyMap<string, NonNullable<OpenApiToolProviderData["securitySchemes"]>[number]>;
+}): AuthRequirement => {
+  const requirement = input.authRequirement;
+  if (!requirement) {
+    return {
+      kind: "none",
+    };
+  }
+
+  switch (requirement.kind) {
+    case "none":
+      return {
+        kind: "none",
+      };
+    case "scheme": {
+      const schemeId = ensureOpenApiSecuritySchemeSymbol({
+        catalog: input.catalog,
+        source: input.source,
+        documentId: input.documentId,
+        schemeName: requirement.schemeName,
+        scheme: input.schemesByName.get(requirement.schemeName),
+      });
+
+      return {
+        kind: "scheme",
+        schemeId,
+        ...(requirement.scopes && requirement.scopes.length > 0
+          ? { scopes: [...requirement.scopes] }
+          : {}),
+      };
+    }
+    case "allOf":
+    case "anyOf":
+      return {
+        kind: requirement.kind,
+        items: requirement.items.map((item) =>
+          openApiAuthRequirementToIr({
+            catalog: input.catalog,
+            source: input.source,
+            documentId: input.documentId,
+            authRequirement: item,
+            schemesByName: input.schemesByName,
+          })),
+      };
+  }
+};
+
+const contentSpecsFromOpenApiContents = (input: {
+  catalog: CatalogV1;
+  source: Source;
+  documentId: ReturnType<typeof DocumentIdSchema.make>;
+  importer: JsonSchemaImporter;
+  rootSchema?: unknown;
+  contents:
+    | ReadonlyArray<NonNullable<NonNullable<OpenApiToolProviderData["responses"]>[number]["contents"]>[number]>
+    | ReadonlyArray<NonNullable<NonNullable<OpenApiToolProviderData["invocation"]["requestBody"]>["contents"]>[number]>
+    | ReadonlyArray<NonNullable<NonNullable<OpenApiToolProviderData["invocation"]["parameters"][number]["content"]>[number]>>;
+  pointerBase: string;
+}) =>
+  input.contents.map((content, contentIndex) => {
+    const exampleIds = (content.examples ?? []).map((example, exampleIndex) =>
+      exampleSymbolFromValue({
+        catalog: input.catalog,
+        source: input.source,
+        documentId: input.documentId,
+        pointer: `${input.pointerBase}/content/${contentIndex}/example/${exampleIndex}`,
+        name: example.label,
+        summary: example.label,
+        value: JSON.parse(example.valueJson) as unknown,
+      })
+    );
+
+    return {
+      mediaType: content.mediaType,
+      ...(content.schema !== undefined
+        ? {
+            shapeId: input.importer.importSchema(
+              content.schema,
+              `${input.pointerBase}/content/${contentIndex}`,
+              input.rootSchema,
+            ),
+          }
+        : {}),
+      ...(exampleIds.length > 0 ? { exampleIds } : {}),
+    } satisfies ContentSpec;
+  });
+
+const createOpenApiHeaderSymbol = (input: {
+  catalog: CatalogV1;
+  source: Source;
+  documentId: ReturnType<typeof DocumentIdSchema.make>;
+  importer: JsonSchemaImporter;
+  rootSchema?: unknown;
+  pointer: string;
+  idSeed: Record<string, unknown>;
+  header: NonNullable<NonNullable<OpenApiToolProviderData["responses"]>[number]["headers"]>[number];
+}) => {
+  const headerId = HeaderSymbolIdSchema.make(`header_${stableHash(input.idSeed)}`);
+  const exampleIds = (input.header.examples ?? []).map((example, index) =>
+    exampleSymbolFromValue({
+      catalog: input.catalog,
+      source: input.source,
+      documentId: input.documentId,
+      pointer: `${input.pointer}/example/${index}`,
+      name: example.label,
+      summary: example.label,
+      value: JSON.parse(example.valueJson) as unknown,
+    })
+  );
+  const contents = input.header.content
+    ? contentSpecsFromOpenApiContents({
+        catalog: input.catalog,
+        source: input.source,
+        documentId: input.documentId,
+        importer: input.importer,
+        rootSchema: input.rootSchema,
+        contents: input.header.content,
+        pointerBase: input.pointer,
+      })
+    : undefined;
+
+  mutableRecord(input.catalog.symbols)[headerId] = {
+    id: headerId,
+    kind: "header",
+    name: input.header.name,
+    ...(docsFrom({
+      description: input.header.description,
+    })
+      ? {
+          docs: docsFrom({
+            description: input.header.description,
+          })!,
+        }
+      : {}),
+    ...(typeof input.header.deprecated === "boolean" ? { deprecated: input.header.deprecated } : {}),
+    ...(input.header.schema !== undefined
+      ? {
+          schemaShapeId: input.importer.importSchema(
+            input.header.schema,
+            input.pointer,
+            input.rootSchema,
+          ),
+        }
+      : {}),
+    ...(contents && contents.length > 0 ? { content: contents } : {}),
+    ...(exampleIds.length > 0 ? { exampleIds } : {}),
+    ...(input.header.style ? { style: input.header.style } : {}),
+    ...(typeof input.header.explode === "boolean" ? { explode: input.header.explode } : {}),
+    synthetic: false,
+    provenance: provenanceFor(input.documentId, input.pointer),
+  };
+
+  return headerId;
+};
+
 const createHttpCapabilityFromOpenApi = (input: {
   catalog: CatalogV1;
   source: Source;
@@ -814,6 +1299,7 @@ const createHttpCapabilityFromOpenApi = (input: {
   serviceScopeId: ReturnType<typeof ScopeIdSchema.make>;
   operation: OpenApiCatalogOperationInput;
   importer: JsonSchemaImporter;
+  rootSchema?: unknown;
 }) => {
   const toolPath = toolPathSegments(input.source, input.operation.providerData.toolId);
   const capabilityId = CapabilityIdSchema.make(`cap_${stableHash({
@@ -828,6 +1314,9 @@ const createHttpCapabilityFromOpenApi = (input: {
   const inputSchema = input.operation.inputSchema ?? {};
   const outputSchema = input.operation.outputSchema ?? {};
   const exampleIds: Array<ReturnType<typeof ExampleSymbolIdSchema.make>> = [];
+  const schemesByName = new Map(
+    (input.operation.providerData.securitySchemes ?? []).map((scheme) => [scheme.schemeName, scheme] as const),
+  );
 
   const parameterIds = input.operation.providerData.invocation.parameters.map((parameter) => {
     const parameterId = ParameterSymbolIdSchema.make(`param_${stableHash({
@@ -852,6 +1341,17 @@ const createHttpCapabilityFromOpenApi = (input: {
       });
     });
     exampleIds.push(...parameterExampleIds);
+    const parameterContent = parameter.content
+      ? contentSpecsFromOpenApiContents({
+          catalog: input.catalog,
+          source: input.source,
+          documentId: input.documentId,
+          importer: input.importer,
+          rootSchema: input.rootSchema,
+          contents: parameter.content,
+          pointerBase: `#/openapi/${input.operation.providerData.toolId}/parameter/${parameter.location}/${parameter.name}`,
+        })
+      : undefined;
     mutableRecord(input.catalog.symbols)[parameterId] = {
       id: parameterId,
       kind: "parameter",
@@ -865,17 +1365,22 @@ const createHttpCapabilityFromOpenApi = (input: {
             docs: docsFrom({
               description: matchingDocs?.description ?? null,
             })!,
-          }
-        : {}),
-      ...(parameterSchema !== undefined
+        }
+      : {}),
+      ...(parameterSchema !== undefined && (!parameterContent || parameterContent.length === 0)
         ? {
             schemaShapeId: input.importer.importSchema(
               parameterSchema,
               `#/openapi/${input.operation.providerData.toolId}/parameter/${parameter.location}/${parameter.name}`,
+              input.rootSchema,
             ),
           }
         : {}),
+      ...(parameterContent && parameterContent.length > 0 ? { content: parameterContent } : {}),
       ...(parameterExampleIds.length > 0 ? { exampleIds: parameterExampleIds } : {}),
+      ...(parameter.style ? { style: parameter.style } : {}),
+      ...(typeof parameter.explode === "boolean" ? { explode: parameter.explode } : {}),
+      ...(typeof parameter.allowReserved === "boolean" ? { allowReserved: parameter.allowReserved } : {}),
       synthetic: false,
       provenance: provenanceFor(
         input.documentId,
@@ -891,33 +1396,50 @@ const createHttpCapabilityFromOpenApi = (input: {
 
   if (requestBodyId) {
     const requestBodySchema = requestBodySchemaFromInput(inputSchema);
-    const requestBodyExampleIds = (input.operation.providerData.documentation?.requestBody?.examples ?? []).map(
-      (example, index) =>
-        exampleSymbolFromValue({
+    const requestBodyContents = input.operation.providerData.invocation.requestBody?.contents
+      ? contentSpecsFromOpenApiContents({
           catalog: input.catalog,
           source: input.source,
           documentId: input.documentId,
-          pointer: `#/openapi/${input.operation.providerData.toolId}/requestBody/example/${index}`,
-          name: example.label,
-          summary: example.label,
-          value: JSON.parse(example.valueJson) as unknown,
-        }),
-    );
+          importer: input.importer,
+          rootSchema: input.rootSchema,
+          contents: input.operation.providerData.invocation.requestBody.contents,
+          pointerBase: `#/openapi/${input.operation.providerData.toolId}/requestBody`,
+        })
+      : undefined;
+    const requestBodyExampleIds =
+      requestBodyContents?.flatMap((content) => content.exampleIds ?? [])
+      ?? (input.operation.providerData.documentation?.requestBody?.examples ?? []).map(
+        (example, index) =>
+          exampleSymbolFromValue({
+            catalog: input.catalog,
+            source: input.source,
+            documentId: input.documentId,
+            pointer: `#/openapi/${input.operation.providerData.toolId}/requestBody/example/${index}`,
+            name: example.label,
+            summary: example.label,
+            value: JSON.parse(example.valueJson) as unknown,
+          }),
+      );
     exampleIds.push(...requestBodyExampleIds);
-    const contents: ContentSpec[] = preferredResponseContentTypes(
-      input.operation.providerData.invocation.requestBody?.contentTypes,
-    ).map((mediaType) => ({
-      mediaType,
-      ...(requestBodySchema !== undefined
-        ? {
-            shapeId: input.importer.importSchema(
-              requestBodySchema,
-              `#/openapi/${input.operation.providerData.toolId}/requestBody`,
-            ),
-          }
-        : {}),
-      ...(requestBodyExampleIds.length > 0 ? { exampleIds: requestBodyExampleIds } : {}),
-    }));
+    const contents: ContentSpec[] =
+      requestBodyContents && requestBodyContents.length > 0
+        ? requestBodyContents
+        : preferredResponseContentTypes(
+            input.operation.providerData.invocation.requestBody?.contentTypes,
+          ).map((mediaType) => ({
+            mediaType,
+            ...(requestBodySchema !== undefined
+              ? {
+                  shapeId: input.importer.importSchema(
+                    requestBodySchema,
+                    `#/openapi/${input.operation.providerData.toolId}/requestBody`,
+                    input.rootSchema,
+                  ),
+                }
+              : {}),
+            ...(requestBodyExampleIds.length > 0 ? { exampleIds: requestBodyExampleIds } : {}),
+          }));
 
     mutableRecord(input.catalog.symbols)[requestBodyId] = {
       id: requestBodyId,
@@ -938,62 +1460,188 @@ const createHttpCapabilityFromOpenApi = (input: {
     };
   }
 
-  const responseId = ResponseSymbolIdSchema.make(`response_${stableHash({ capabilityId })}`);
-  const responseExampleIds = (input.operation.providerData.documentation?.response?.examples ?? []).map((example, index) =>
-    exampleSymbolFromValue({
-      catalog: input.catalog,
-      source: input.source,
-      documentId: input.documentId,
-      pointer: `#/openapi/${input.operation.providerData.toolId}/response/example/${index}`,
-      name: example.label,
-      summary: example.label,
-      value: JSON.parse(example.valueJson) as unknown,
-    })
-  );
-  exampleIds.push(...responseExampleIds);
-  mutableRecord(input.catalog.symbols)[responseId] = {
-    id: responseId,
-    kind: "response",
-    ...(docsFrom({
-      description:
-        input.operation.providerData.documentation?.response?.description
-        ?? input.operation.description,
-    })
-      ? {
-          docs: docsFrom({
-            description:
-            input.operation.providerData.documentation?.response?.description
-            ?? input.operation.description,
-          })!,
-        }
-      : {}),
-    contents: [{
-      mediaType: preferredResponseContentTypes(input.operation.providerData.documentation?.response?.contentTypes)[0] ?? "application/json",
-      ...(input.operation.outputSchema !== undefined
-        ? {
-            shapeId: input.importer.importSchema(
-              outputSchema,
-              `#/openapi/${input.operation.providerData.toolId}/response`,
-            ),
-          }
-        : {}),
-      ...(responseExampleIds.length > 0 ? { exampleIds: responseExampleIds } : {}),
-    }],
-    synthetic: false,
-    provenance: provenanceFor(input.documentId, `#/openapi/${input.operation.providerData.toolId}/response`),
-  } satisfies ResponseSymbol;
+  const openApiResponseVariants = input.operation.providerData.responses ?? [];
+  const responseSetId =
+    openApiResponseVariants.length > 0
+      ? responseSetFromVariants({
+          catalog: input.catalog,
+          variants: openApiResponseVariants.map((response, responseIndex) => {
+            const responseId = ResponseSymbolIdSchema.make(`response_${stableHash({
+              capabilityId,
+              statusCode: response.statusCode,
+              responseIndex,
+            })}`);
+            const responseExampleIds = (response.examples ?? []).map((example, index) =>
+              exampleSymbolFromValue({
+                catalog: input.catalog,
+                source: input.source,
+                documentId: input.documentId,
+                pointer: `#/openapi/${input.operation.providerData.toolId}/responses/${response.statusCode}/example/${index}`,
+                name: example.label,
+                summary: example.label,
+                value: JSON.parse(example.valueJson) as unknown,
+              })
+            );
+            exampleIds.push(...responseExampleIds);
 
-  const responseSetId = responseSetFromSingleResponse({
-    catalog: input.catalog,
-    responseId,
-    provenance: provenanceFor(input.documentId, `#/openapi/${input.operation.providerData.toolId}/responseSet`),
-  });
+            const contents =
+              response.contents && response.contents.length > 0
+                ? contentSpecsFromOpenApiContents({
+                    catalog: input.catalog,
+                    source: input.source,
+                    documentId: input.documentId,
+                    importer: input.importer,
+                    rootSchema: input.rootSchema,
+                    contents: response.contents,
+                    pointerBase: `#/openapi/${input.operation.providerData.toolId}/responses/${response.statusCode}`,
+                  })
+                : (() => {
+                    const responseShapeId =
+                      response.schema !== undefined
+                        ? input.importer.importSchema(
+                            response.schema,
+                            `#/openapi/${input.operation.providerData.toolId}/responses/${response.statusCode}`,
+                            input.rootSchema,
+                          )
+                        : undefined;
+                    const preferredContentTypes = preferredResponseContentTypes(response.contentTypes);
+
+                    return preferredContentTypes.length > 0
+                      ? preferredContentTypes.map((mediaType, contentIndex) => ({
+                          mediaType,
+                          ...(responseShapeId !== undefined && contentIndex === 0
+                            ? { shapeId: responseShapeId }
+                            : {}),
+                          ...(responseExampleIds.length > 0 && contentIndex === 0
+                            ? { exampleIds: responseExampleIds }
+                            : {}),
+                        }))
+                      : undefined;
+                  })();
+            const headerIds = (response.headers ?? []).map((header, headerIndex) =>
+              createOpenApiHeaderSymbol({
+                catalog: input.catalog,
+                source: input.source,
+                documentId: input.documentId,
+                importer: input.importer,
+                rootSchema: input.rootSchema,
+                pointer: `#/openapi/${input.operation.providerData.toolId}/responses/${response.statusCode}/headers/${header.name}`,
+                idSeed: {
+                  capabilityId,
+                  responseId,
+                  headerIndex,
+                  headerName: header.name,
+                },
+                header,
+              })
+            );
+
+            mutableRecord(input.catalog.symbols)[responseId] = {
+              id: responseId,
+              kind: "response",
+              ...(docsFrom({
+                description:
+                  response.description
+                  ?? (responseIndex === 0 ? input.operation.description : null),
+              })
+                ? {
+                    docs: docsFrom({
+                      description:
+                        response.description
+                        ?? (responseIndex === 0 ? input.operation.description : null),
+                    })!,
+                  }
+                : {}),
+              ...(headerIds.length > 0 ? { headerIds } : {}),
+              ...(contents && contents.length > 0 ? { contents } : {}),
+              synthetic: false,
+              provenance: provenanceFor(
+                input.documentId,
+                `#/openapi/${input.operation.providerData.toolId}/responses/${response.statusCode}`,
+              ),
+            } satisfies ResponseSymbol;
+
+            return {
+              match: statusMatchFromHttpStatusCode(response.statusCode),
+              responseId,
+            } satisfies ResponseSet["variants"][number];
+          }),
+          provenance: provenanceFor(input.documentId, `#/openapi/${input.operation.providerData.toolId}/responseSet`),
+        })
+      : (() => {
+          const responseId = ResponseSymbolIdSchema.make(`response_${stableHash({ capabilityId })}`);
+          const responseExampleIds = (input.operation.providerData.documentation?.response?.examples ?? []).map((example, index) =>
+            exampleSymbolFromValue({
+              catalog: input.catalog,
+              source: input.source,
+              documentId: input.documentId,
+              pointer: `#/openapi/${input.operation.providerData.toolId}/response/example/${index}`,
+              name: example.label,
+              summary: example.label,
+              value: JSON.parse(example.valueJson) as unknown,
+            })
+          );
+          exampleIds.push(...responseExampleIds);
+          mutableRecord(input.catalog.symbols)[responseId] = {
+            id: responseId,
+            kind: "response",
+            ...(docsFrom({
+              description:
+                input.operation.providerData.documentation?.response?.description
+                ?? input.operation.description,
+            })
+              ? {
+                  docs: docsFrom({
+                    description:
+                      input.operation.providerData.documentation?.response?.description
+                      ?? input.operation.description,
+                  })!,
+                }
+              : {}),
+            contents: [{
+              mediaType: preferredResponseContentTypes(input.operation.providerData.documentation?.response?.contentTypes)[0] ?? "application/json",
+              ...(input.operation.outputSchema !== undefined
+                ? {
+                    shapeId: input.importer.importSchema(
+                      outputSchema,
+                      `#/openapi/${input.operation.providerData.toolId}/response`,
+                    ),
+                  }
+                : {}),
+              ...(responseExampleIds.length > 0 ? { exampleIds: responseExampleIds } : {}),
+            }],
+            synthetic: false,
+            provenance: provenanceFor(input.documentId, `#/openapi/${input.operation.providerData.toolId}/response`),
+          } satisfies ResponseSymbol;
+
+          return responseSetFromSingleResponse({
+            catalog: input.catalog,
+            responseId,
+            provenance: provenanceFor(input.documentId, `#/openapi/${input.operation.providerData.toolId}/responseSet`),
+          });
+        })();
 
   const executable: HttpExecutable = {
     id: executableId,
     protocol: "http",
     capabilityId,
-    scopeId: input.serviceScopeId,
+    scopeId: (() => {
+      const operationServers = openApiServerSpecs(input.operation.providerData.servers);
+      if (!operationServers || operationServers.length === 0) {
+        return input.serviceScopeId;
+      }
+
+      return createOperationScope({
+        catalog: input.catalog,
+        source: input.source,
+        documentId: input.documentId,
+        parentScopeId: input.serviceScopeId,
+        operation: input.operation,
+        defaults: {
+          servers: operationServers,
+        },
+      });
+    })(),
     method: input.operation.providerData.invocation.method.toUpperCase(),
     pathTemplate: input.operation.providerData.invocation.pathTemplate,
     pathParameterIds: parameterIds.filter((parameterId) => {
@@ -1016,16 +1664,17 @@ const createHttpCapabilityFromOpenApi = (input: {
     responseSetId,
     synthetic: false,
     provenance: provenanceFor(input.documentId, `#/openapi/${input.operation.providerData.toolId}/executable`),
-    native: [nativeBlob({
-      source: input.source,
-      kind: "openapi_provider_data",
-      pointer: `#/openapi/${input.operation.providerData.toolId}/providerData`,
-      value: input.operation.providerData,
-    })],
   };
   mutableRecord(input.catalog.executables)[executableId] = executable;
 
   const effect = input.operation.effect;
+  const auth = openApiAuthRequirementToIr({
+    catalog: input.catalog,
+    source: input.source,
+    documentId: input.documentId,
+    authRequirement: input.operation.providerData.authRequirement,
+    schemesByName,
+  });
   mutableRecord(input.catalog.capabilities)[capabilityId] = {
     id: capabilityId,
     serviceScopeId: input.serviceScopeId,
@@ -1041,18 +1690,12 @@ const createHttpCapabilityFromOpenApi = (input: {
       idempotent: effect === "read" || effect === "delete",
       destructive: effect === "delete",
     },
-    auth: { kind: "none" },
+    auth,
     interaction: interactionForEffect(effect),
     executableIds: [executableId],
     ...(exampleIds.length > 0 ? { exampleIds } : {}),
     synthetic: false,
     provenance: provenanceFor(input.documentId, `#/openapi/${input.operation.providerData.toolId}/capability`),
-    native: [nativeBlob({
-      source: input.source,
-      kind: "openapi_documentation",
-      pointer: `#/openapi/${input.operation.providerData.toolId}/documentation`,
-      value: input.operation.providerData.documentation ?? null,
-    })],
   } satisfies Capability;
 };
 
@@ -1085,6 +1728,12 @@ const createHttpCapabilityFromGoogleDiscovery = (input: {
     : undefined;
 
   if (authSchemeId && !input.catalog.symbols[authSchemeId]) {
+    const scopeDescriptions = Object.fromEntries(
+      input.operation.providerData.invocation.scopes.map((scope) => [
+        scope,
+        input.operation.providerData.invocation.scopeDescriptions?.[scope] ?? scope,
+      ]),
+    );
     mutableRecord(input.catalog.symbols)[authSchemeId] = {
       id: authSchemeId,
       kind: "securityScheme",
@@ -1095,7 +1744,7 @@ const createHttpCapabilityFromGoogleDiscovery = (input: {
       }),
       oauth: {
         flows: {},
-        scopes: Object.fromEntries(input.operation.providerData.invocation.scopes.map((scope) => [scope, scope])),
+        scopes: scopeDescriptions,
       },
       synthetic: false,
       provenance: provenanceFor(input.documentId, "#/googleDiscovery/security"),
@@ -1232,7 +1881,12 @@ const createHttpCapabilityFromGoogleDiscovery = (input: {
       source: input.source,
       kind: "google_discovery_provider_data",
       pointer: `#/googleDiscovery/${input.operation.providerData.toolId}/providerData`,
-      value: input.operation.providerData,
+      value: {
+        invocation: {
+          rootUrl: input.operation.providerData.invocation.rootUrl,
+          servicePath: input.operation.providerData.invocation.servicePath,
+        },
+      },
     })],
   } satisfies HttpExecutable;
 
@@ -1266,12 +1920,6 @@ const createHttpCapabilityFromGoogleDiscovery = (input: {
     executableIds: [executableId],
     synthetic: false,
     provenance: provenanceFor(input.documentId, `#/googleDiscovery/${input.operation.providerData.toolId}/capability`),
-    native: [nativeBlob({
-      source: input.source,
-      kind: "google_discovery_provider_data",
-      pointer: `#/googleDiscovery/${input.operation.providerData.toolId}/providerData`,
-      value: input.operation.providerData,
-    })],
   } satisfies Capability;
 };
 
@@ -1361,12 +2009,6 @@ const createGraphqlCapability = (input: {
     responseSetId,
     synthetic: false,
     provenance: provenanceFor(input.documentId, `#/graphql/${input.operation.providerData.toolId}/executable`),
-    native: [nativeBlob({
-      source: input.source,
-      kind: "graphql_provider_data",
-      pointer: `#/graphql/${input.operation.providerData.toolId}/providerData`,
-      value: input.operation.providerData,
-    })],
   } satisfies GraphQLExecutable;
 
   const effect = input.operation.effect;
@@ -1391,12 +2033,6 @@ const createGraphqlCapability = (input: {
     executableIds: [executableId],
     synthetic: false,
     provenance: provenanceFor(input.documentId, `#/graphql/${input.operation.providerData.toolId}/capability`),
-    native: [nativeBlob({
-      source: input.source,
-      kind: "graphql_provider_data",
-      pointer: `#/graphql/${input.operation.providerData.toolId}/providerData`,
-      value: input.operation.providerData,
-    })],
   } satisfies Capability;
 };
 
@@ -1473,30 +2109,28 @@ const createMcpCapability = (input: {
     responseSetId,
     synthetic: false,
     provenance: provenanceFor(input.documentId, `#/mcp/${input.operation.providerData.toolId}/executable`),
-    native: [nativeBlob({
-      source: input.source,
-      kind: "mcp_provider_data",
-      pointer: `#/mcp/${input.operation.providerData.toolId}/providerData`,
-      value: input.operation.providerData,
-    })],
   } satisfies McpExecutable;
 
+  const interaction = interactionForEffect(input.operation.effect);
   mutableRecord(input.catalog.capabilities)[capabilityId] = {
     id: capabilityId,
     serviceScopeId: input.serviceScopeId,
     surface: {
       toolPath,
-      title: input.operation.providerData.toolName,
+      title: input.operation.providerData.displayTitle,
       ...(input.operation.providerData.description ? { summary: input.operation.providerData.description } : {}),
     },
-    semantics: {
+    semantics: mcpSemanticsForOperation({
       effect: input.operation.effect,
-      safe: input.operation.effect === "read",
-      idempotent: input.operation.effect === "read",
-      destructive: false,
-    },
+      annotations: input.operation.providerData.annotations,
+    }),
     auth: { kind: "none" },
-    interaction: interactionForEffect(input.operation.effect),
+    interaction: {
+      ...interaction,
+      resume: {
+        supported: mcpResumeSupport(input.operation.providerData.execution),
+      },
+    },
     executableIds: [executableId],
     synthetic: false,
     provenance: provenanceFor(input.documentId, `#/mcp/${input.operation.providerData.toolId}/capability`),
@@ -1507,6 +2141,7 @@ const buildCatalogSnapshot = (input: {
   source: Source;
   adapterKey: string;
   documents: readonly CatalogSourceDocumentInput[];
+  serviceScopeDefaults?: Scope["defaults"];
   registerOperations: (context: {
     catalog: CatalogV1;
     documentId: ReturnType<typeof DocumentIdSchema.make>;
@@ -1573,6 +2208,7 @@ const buildCatalogSnapshot = (input: {
     catalog,
     source: input.source,
     documentId: primaryDocumentId,
+    defaults: input.serviceScopeDefaults,
   });
   const importer = createJsonSchemaImporter({
     catalog,
@@ -1586,6 +2222,7 @@ const buildCatalogSnapshot = (input: {
     serviceScopeId,
     importer,
   });
+  importer.finalize();
 
   const snapshot = createCatalogSnapshotV1({
     import: importMetadataFor(input),
@@ -1599,11 +2236,33 @@ export const createOpenApiCatalogSnapshot = (input: {
   source: Source;
   documents: readonly CatalogSourceDocumentInput[];
   operations: readonly OpenApiCatalogOperationInput[];
-}): CatalogSnapshotV1 =>
-  buildCatalogSnapshot({
+}): CatalogSnapshotV1 => {
+  const rootSchema = (() => {
+    const primaryDocumentText = input.documents[0]?.contentText;
+    if (!primaryDocumentText) {
+      return undefined;
+    }
+
+    try {
+      return JSON.parse(primaryDocumentText) as unknown;
+    } catch {
+      return undefined;
+    }
+  })();
+
+  return buildCatalogSnapshot({
     source: input.source,
     adapterKey: "openapi",
     documents: input.documents,
+    serviceScopeDefaults: (() => {
+      const documentServers = openApiServerSpecs(
+        input.operations.find((operation) =>
+          (operation.providerData.documentServers ?? []).length > 0
+        )?.providerData.documentServers,
+      );
+
+      return documentServers ? { servers: documentServers } : undefined;
+    })(),
     registerOperations: ({ catalog, documentId, serviceScopeId, importer }) => {
       for (const operation of input.operations) {
         createHttpCapabilityFromOpenApi({
@@ -1613,10 +2272,12 @@ export const createOpenApiCatalogSnapshot = (input: {
           serviceScopeId,
           operation,
           importer,
+          rootSchema,
         });
       }
     },
   });
+};
 
 export const createGoogleDiscoveryCatalogSnapshot = (input: {
   source: Source;

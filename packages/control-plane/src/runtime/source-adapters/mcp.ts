@@ -4,6 +4,7 @@ import {
 import {
   createSdkMcpConnector,
   discoverMcpToolsFromConnector,
+  type McpServerMetadata,
   type McpToolManifest,
   type McpToolManifestEntry,
 } from "@executor/codemode-mcp";
@@ -122,31 +123,41 @@ const mcpBindingConfigFromSource = (
     } satisfies McpBindingConfig;
   });
 
-const mcpCatalogOperationFromManifestEntry = (entry: McpToolManifestEntry): McpCatalogOperationInput => ({
-  toolId: entry.toolId,
-  title: entry.toolName,
-  description: entry.description ?? null,
-  effect: "action",
-  inputSchema: entry.inputSchema,
-  outputSchema: entry.outputSchema,
+const effectFromMcpManifestEntry = (entry: McpToolManifestEntry): McpCatalogOperationInput["effect"] =>
+  entry.annotations?.readOnlyHint === true ? "read" : "write";
+
+const mcpCatalogOperationFromManifestEntry = (input: {
+  entry: McpToolManifestEntry;
+  server: McpServerMetadata | null | undefined;
+}): McpCatalogOperationInput => ({
+  toolId: input.entry.toolId,
+  title: input.entry.displayTitle ?? input.entry.title ?? input.entry.toolName,
+  description: input.entry.description ?? null,
+  effect: effectFromMcpManifestEntry(input.entry),
+  inputSchema: input.entry.inputSchema,
+  outputSchema: input.entry.outputSchema,
   providerData: {
-    toolId: entry.toolId,
-    toolName: entry.toolName,
-    description: entry.description ?? null,
+    toolId: input.entry.toolId,
+    toolName: input.entry.toolName,
+    displayTitle: input.entry.displayTitle ?? input.entry.title ?? input.entry.toolName,
+    title: input.entry.title ?? null,
+    description: input.entry.description ?? null,
+    annotations: input.entry.annotations ?? null,
+    execution: input.entry.execution ?? null,
+    icons: input.entry.icons ?? null,
+    meta: input.entry.meta ?? null,
+    rawTool: input.entry.rawTool ?? null,
+    server: input.server ?? null,
   },
 });
 
-export const catalogSyncResultFromMcpManifestEntries = (input: {
+export const catalogSyncResultFromMcpManifest = (input: {
   source: Source;
   endpoint: string;
-  manifestEntries: readonly McpToolManifestEntry[];
+  manifest: McpToolManifest;
 }): SourceCatalogSyncResult => {
   const now = Date.now();
-  const manifest: McpToolManifest = {
-    version: 1,
-    tools: input.manifestEntries,
-  };
-  const manifestJson = JSON.stringify(manifest);
+  const manifestJson = JSON.stringify(input.manifest);
   const manifestHash = contentHash(manifestJson);
 
   return {
@@ -158,7 +169,12 @@ export const catalogSyncResultFromMcpManifestEntries = (input: {
         contentText: manifestJson,
         fetchedAt: now,
       }],
-      operations: input.manifestEntries.map(mcpCatalogOperationFromManifestEntry),
+      operations: input.manifest.tools.map((entry) =>
+        mcpCatalogOperationFromManifestEntry({
+          entry,
+          server: input.manifest.server,
+        })
+      ),
     }),
     sourceHash: manifestHash,
   };
@@ -268,10 +284,10 @@ export const mcpSourceAdapter: SourceAdapter = {
         ),
       );
 
-      return catalogSyncResultFromMcpManifestEntries({
+      return catalogSyncResultFromMcpManifest({
         source,
         endpoint: source.endpoint,
-        manifestEntries: discovered.manifest.tools,
+        manifest: discovered.manifest,
       });
     }),
 };

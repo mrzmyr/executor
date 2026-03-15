@@ -17,3 +17,11 @@ export {
   type McpToolManifest,
   type McpToolManifestEntry,
 } from "./mcp-tools";
+export type {
+  McpListToolsMetadata,
+  McpServerCapabilities,
+  McpServerInfo,
+  McpServerMetadata,
+  McpToolAnnotations,
+  McpToolExecution,
+} from "./mcp-manifest";

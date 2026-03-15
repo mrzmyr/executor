@@ -164,13 +164,139 @@ describe("codemode-mcp", () => {
         ],
       });
 
-      expect(manifest.version).toBe(1);
+      expect(manifest.version).toBe(2);
       expect(manifest.tools.map((tool) => tool.toolId)).toEqual([
         "read_file",
         "read_file_2",
         "list_users",
       ]);
       expect(manifest.tools[0]?.toolName).toBe("Read File");
+    }),
+  );
+
+  it.effect("preserves MCP annotations and server introspection metadata", () =>
+    Effect.gen(function* () {
+      const manifest = extractMcpToolManifestFromListToolsResult(
+        {
+          tools: [
+            {
+              name: "Read File",
+              title: "Read File",
+              description: "Read a file from memory",
+              inputSchema: {
+                type: "object",
+                properties: {
+                  path: {
+                    type: "string",
+                  },
+                },
+                required: ["path"],
+              },
+              outputSchema: {
+                type: "object",
+                properties: {
+                  content: {
+                    type: "string",
+                  },
+                },
+                required: ["content"],
+              },
+              annotations: {
+                title: "Read File (Annotated)",
+                readOnlyHint: true,
+                destructiveHint: false,
+                idempotentHint: true,
+                openWorldHint: false,
+              },
+              execution: {
+                taskSupport: "optional",
+              },
+              icons: [{
+                src: "https://example.test/icon.png",
+                mimeType: "image/png",
+              }],
+              _meta: {
+                category: "filesystem",
+              },
+            },
+          ],
+          nextCursor: "cursor_2",
+          _meta: {
+            page: 1,
+          },
+        },
+        {
+          serverInfo: {
+            name: "mcp-test-server",
+            version: "1.2.3",
+            title: "Executor MCP",
+            description: "Test server",
+            websiteUrl: "https://example.test/mcp",
+          },
+          serverCapabilities: {
+            tools: {
+              listChanged: true,
+            },
+            tasks: {
+              list: {},
+              requests: {
+                tools: {
+                  call: {},
+                },
+              },
+            },
+          },
+          instructions: "Use the tools carefully.",
+        },
+      );
+
+      expect(manifest.version).toBe(2);
+      expect(manifest.tools[0]).toMatchObject({
+        toolId: "read_file",
+        toolName: "Read File",
+        title: "Read File",
+        displayTitle: "Read File",
+        annotations: {
+          title: "Read File (Annotated)",
+          readOnlyHint: true,
+          destructiveHint: false,
+          idempotentHint: true,
+          openWorldHint: false,
+        },
+        execution: {
+          taskSupport: "optional",
+        },
+        meta: {
+          category: "filesystem",
+        },
+      });
+      expect(manifest.tools[0]?.rawTool).toMatchObject({
+        name: "Read File",
+      });
+      expect(manifest.server).toMatchObject({
+        info: {
+          name: "mcp-test-server",
+          version: "1.2.3",
+          title: "Executor MCP",
+        },
+        capabilities: {
+          tools: {
+            listChanged: true,
+          },
+          tasks: {
+            list: true,
+            cancel: false,
+            toolCall: true,
+          },
+        },
+        instructions: "Use the tools carefully.",
+      });
+      expect(manifest.listTools).toMatchObject({
+        nextCursor: "cursor_2",
+        meta: {
+          page: 1,
+        },
+      });
     }),
   );
 
@@ -189,12 +315,21 @@ describe("codemode-mcp", () => {
               tools: [
                 {
                   name: "Echo",
+                  title: "Echo",
                   description: "Echo payload",
                   inputSchema: {
                     type: "object",
                     properties: {
                       value: { type: "string" },
                     },
+                  },
+                  annotations: {
+                    readOnlyHint: true,
+                    destructiveHint: false,
+                    idempotentHint: true,
+                  },
+                  _meta: {
+                    category: "demo",
                   },
                 },
               ],
@@ -210,6 +345,16 @@ describe("codemode-mcp", () => {
                 isError: false,
               };
             },
+            getServerVersion: () => ({
+              name: "mcp-demo-server",
+              version: "1.0.0",
+              title: "Demo Server",
+            }),
+            getServerCapabilities: () => ({
+              tools: {
+                listChanged: true,
+              },
+            }),
           },
           close: async () => {
             closeCalls += 1;
@@ -226,6 +371,8 @@ describe("codemode-mcp", () => {
       expect(connectCalls).toBe(1);
       expect(closeCalls).toBe(1);
       expect(discovered.manifest.tools).toHaveLength(1);
+      expect(discovered.manifest.server?.info?.name).toBe("mcp-demo-server");
+      expect(discovered.manifest.tools[0]?.annotations?.readOnlyHint).toBe(true);
       expect(Object.keys(discovered.tools)).toEqual(["source.mcp.echo"]);
 
       const toolDefinition = resolveToolDefinition(discovered.tools["source.mcp.echo"]!);
