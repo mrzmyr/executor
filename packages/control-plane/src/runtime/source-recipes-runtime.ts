@@ -1,7 +1,7 @@
 import {
+  type ToolCatalogEntry,
   type ToolDescriptor,
 } from "@executor/codemode-core";
-import type { SqlControlPlaneRows } from "#persistence";
 import type {
   AccountId,
   Source,
@@ -13,19 +13,20 @@ import type {
   WorkspaceId,
 } from "#schema";
 import * as Effect from "effect/Effect";
-
-import {
-  readLocalSourceArtifact,
-} from "./local-source-artifacts";
 import { LocalSourceArtifactMissingError } from "./local-errors";
 import {
   requireRuntimeLocalWorkspace,
 } from "./local-runtime-context";
+import {
+  type WorkspaceStorageServices,
+  SourceArtifactStore,
+} from "./local-storage";
 import { namespaceFromSourceName } from "./source-names";
 import {
   getSourceAdapterForOperation,
   getSourceAdapterForSource,
 } from "./source-adapters";
+import type { ControlPlaneStoreShape } from "./store";
 import type { SourceAdapterPersistedOperationMetadata } from "./source-adapters/types";
 import { firstSchemaBundle } from "./source-adapters/shared";
 import { loadSourceById, loadSourcesInWorkspace } from "./source-store";
@@ -67,6 +68,16 @@ export type LoadedSourceRecipeToolIndexEntry = {
   schemaBundleId: string | null;
   descriptor: ToolDescriptor;
 };
+
+export const recipeToolCatalogEntry = (input: {
+  tool: LoadedSourceRecipeToolIndexEntry;
+  score: (queryTokens: readonly string[]) => number;
+}): ToolCatalogEntry => ({
+  descriptor: input.tool.descriptor,
+  namespace: input.tool.searchNamespace,
+  searchText: input.tool.searchText,
+  score: input.score,
+});
 
 const parseManifestForRecipe = (input: {
   source: Source;
@@ -157,18 +168,19 @@ const primarySchemaBundleForRevision = (input: {
 };
 
 export const loadWorkspaceSourceRecipes = (input: {
-  rows: SqlControlPlaneRows;
+  rows: ControlPlaneStoreShape;
   workspaceId: WorkspaceId;
   actorAccountId?: AccountId | null;
-}): Effect.Effect<readonly LoadedSourceRecipe[], Error, never> =>
+}): Effect.Effect<readonly LoadedSourceRecipe[], Error, WorkspaceStorageServices> =>
   Effect.gen(function* () {
     const runtimeLocalWorkspace = yield* requireRuntimeLocalWorkspace(input.workspaceId);
+    const sourceArtifactStore = yield* SourceArtifactStore;
     const sources = yield* loadSourcesInWorkspace(input.rows, input.workspaceId, {
       actorAccountId: input.actorAccountId,
     });
     const localRecipes = yield* Effect.forEach(sources, (source) =>
       Effect.gen(function* () {
-        const artifact = yield* readLocalSourceArtifact({
+        const artifact = yield* sourceArtifactStore.read({
           context: runtimeLocalWorkspace.context,
           sourceId: source.id,
         });
@@ -215,19 +227,20 @@ export const loadWorkspaceSourceRecipes = (input: {
   });
 
 export const loadSourceWithRecipe = (input: {
-  rows: SqlControlPlaneRows;
+  rows: ControlPlaneStoreShape;
   workspaceId: WorkspaceId;
   sourceId: Source["id"];
   actorAccountId?: AccountId | null;
-}): Effect.Effect<LoadedSourceRecipe, Error | LocalSourceArtifactMissingError, never> =>
+}): Effect.Effect<LoadedSourceRecipe, Error | LocalSourceArtifactMissingError, WorkspaceStorageServices> =>
   Effect.gen(function* () {
     const runtimeLocalWorkspace = yield* requireRuntimeLocalWorkspace(input.workspaceId);
+    const sourceArtifactStore = yield* SourceArtifactStore;
     const source = yield* loadSourceById(input.rows, {
       workspaceId: input.workspaceId,
       sourceId: input.sourceId,
       actorAccountId: input.actorAccountId,
     });
-    const artifact = yield* readLocalSourceArtifact({
+    const artifact = yield* sourceArtifactStore.read({
       context: runtimeLocalWorkspace.context,
       sourceId: source.id,
     });
@@ -335,11 +348,11 @@ export const expandRecipeTools = (input: {
   );
 
 export const loadWorkspaceSourceRecipeToolIndex = (input: {
-  rows: SqlControlPlaneRows;
+  rows: ControlPlaneStoreShape;
   workspaceId: WorkspaceId;
   actorAccountId?: AccountId | null;
   includeSchemas: boolean;
-}): Effect.Effect<readonly LoadedSourceRecipeToolIndexEntry[], Error, never> =>
+}): Effect.Effect<readonly LoadedSourceRecipeToolIndexEntry[], Error, WorkspaceStorageServices> =>
   Effect.gen(function* () {
     const recipes = yield* loadWorkspaceSourceRecipes({
       rows: input.rows,
@@ -364,12 +377,12 @@ export const loadWorkspaceSourceRecipeToolIndex = (input: {
   });
 
 export const loadWorkspaceSourceRecipeToolByPath = (input: {
-  rows: SqlControlPlaneRows;
+  rows: ControlPlaneStoreShape;
   workspaceId: WorkspaceId;
   path: string;
   actorAccountId?: AccountId | null;
   includeSchemas: boolean;
-}): Effect.Effect<LoadedSourceRecipeToolIndexEntry | null, Error, never> =>
+}): Effect.Effect<LoadedSourceRecipeToolIndexEntry | null, Error, WorkspaceStorageServices> =>
   Effect.gen(function* () {
     const recipes = yield* loadWorkspaceSourceRecipes({
       rows: input.rows,

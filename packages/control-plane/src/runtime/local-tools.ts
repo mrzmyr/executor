@@ -540,7 +540,7 @@ const importLocalToolModule = (input: {
   toolPath: ToolPath;
 }): Effect.Effect<ToolInput, LocalToolImportError | LocalToolDefinitionError> =>
   Effect.tryPromise({
-    try: () => import(pathToFileURL(resolve(input.artifactPath)).href),
+    try: () => import(/* @vite-ignore */ pathToFileURL(resolve(input.artifactPath)).href),
     catch: (cause) =>
       new LocalToolImportError({
         message: `Failed to import local tool ${input.sourcePath}`,

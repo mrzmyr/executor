@@ -1,4 +1,3 @@
-import type { SqlControlPlaneRows } from "#persistence";
 import type {
   AccountId,
   CredentialSlot,
@@ -8,6 +7,7 @@ import type {
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 
+import type { ControlPlaneStoreShape } from "./store";
 import {
   authArtifactFromSourceAuth,
   resolveAuthArtifactMaterial,
@@ -42,7 +42,7 @@ export const resolveSourceAuthMaterial = (input: {
   source: Source;
   slot?: CredentialSlot;
   actorAccountId?: AccountId | null;
-  rows?: SqlControlPlaneRows;
+  rows?: ControlPlaneStoreShape;
   resolveSecretMaterial: ResolveSecretMaterial;
   context?: SecretMaterialResolveContext;
 }): Effect.Effect<ResolvedSourceAuthMaterial, Error, never> =>

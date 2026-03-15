@@ -44,7 +44,6 @@ import {
   seedGithubOpenApiSourceInWorkspace,
 } from "./dev";
 import {
-  resolveRuntimeMigrationsDir,
   resolveRuntimeWebAssetsDir,
   resolveSelfCommand,
 } from "./runtime-paths";
@@ -274,9 +273,7 @@ const buildRunWorkflowText = (
 
 const loadRunWorkflowText = (): Effect.Effect<string, Error, never> =>
   Effect.acquireUseRelease(
-    createControlPlaneRuntime({
-      localDataDir: DEFAULT_LOCAL_DATA_DIR,
-    }).pipe(Effect.mapError(toError)),
+    createControlPlaneRuntime({}).pipe(Effect.mapError(toError)),
     (runtime) =>
       Effect.gen(function* () {
         const environment = yield* Effect.gen(function* () {
@@ -414,13 +411,11 @@ const isServerReachable = (baseUrl: string) =>
 
 const getDefaultServerOptions = (port: number = DEFAULT_SERVER_PORT) => {
   const assetsDir = resolveRuntimeWebAssetsDir();
-  const migrationsFolder = resolveRuntimeMigrationsDir();
 
   return {
     host: DEFAULT_SERVER_HOST,
     port,
     localDataDir: DEFAULT_LOCAL_DATA_DIR,
-    migrationsFolder: migrationsFolder ?? undefined,
     pidFile: DEFAULT_SERVER_PID_FILE,
     ui: assetsDir ? { assetsDir } : undefined,
   };
@@ -533,7 +528,6 @@ type LocalServerStatus = {
   logFile: string;
   localDataDir: string;
   webAssetsDir: string | null;
-  migrationsDir: string | null;
   installation: {
     accountId: string;
     workspaceId: string;
@@ -571,7 +565,6 @@ const getServerStatus = (baseUrl: string): Effect.Effect<LocalServerStatus, Erro
       logFile,
       localDataDir: DEFAULT_LOCAL_DATA_DIR,
       webAssetsDir: resolveRuntimeWebAssetsDir(),
-      migrationsDir: resolveRuntimeMigrationsDir(),
       installation,
       denoVersion,
     } satisfies LocalServerStatus;
@@ -587,7 +580,6 @@ const renderStatus = (status: LocalServerStatus): string =>
     `logFile: ${status.logFile}`,
     `localDataDir: ${status.localDataDir}`,
     `webAssetsDir: ${status.webAssetsDir ?? "missing"}`,
-    `migrationsDir: ${status.migrationsDir ?? "missing"}`,
     `workspaceId: ${status.installation?.workspaceId ?? "unavailable"}`,
     `denoSandbox: ${renderDenoSandboxDetail(status.denoVersion)}`,
   ].join("\n");
@@ -615,10 +607,6 @@ const getDoctorReport = (baseUrl: string) =>
         webAssets: {
           ok: status.webAssetsDir !== null,
           detail: status.webAssetsDir ?? "missing bundled web assets",
-        },
-        migrations: {
-          ok: status.migrationsDir !== null,
-          detail: status.migrationsDir ?? "missing migrations directory",
         },
         installation: {
           ok: status.installation !== null,

@@ -1,4 +1,3 @@
-import type { SqlControlPlaneRows } from "#persistence";
 import type {
   AuthArtifact,
   AuthLease,
@@ -14,6 +13,7 @@ import {
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 
+import type { ControlPlaneStoreShape } from "./store";
 import { resolveAuthArtifactMaterial, type ResolvedSourceAuthMaterial } from "./auth-artifacts";
 import {
   createDefaultSecretMaterialDeleter,
@@ -33,7 +33,7 @@ const secretRefKey = (ref: SecretRef): string =>
   `${ref.providerId}:${ref.handle}`;
 
 const cleanupAuthLeaseSecretRefs = (
-  rows: SqlControlPlaneRows,
+  rows: ControlPlaneStoreShape,
   input: {
     previous: Pick<AuthLease, "placementsTemplateJson"> | null;
     next: Pick<AuthLease, "placementsTemplateJson"> | null;
@@ -76,7 +76,7 @@ const leaseIsFresh = (lease: AuthLease | null, now: number): boolean => {
 };
 
 const refreshRefreshableOauth2AuthorizedUserArtifact = (input: {
-  rows: SqlControlPlaneRows;
+  rows: ControlPlaneStoreShape;
   artifact: AuthArtifact;
   lease: AuthLease | null;
   resolveSecretMaterial: ResolveSecretMaterial;
@@ -168,7 +168,7 @@ const refreshRefreshableOauth2AuthorizedUserArtifact = (input: {
     return nextLease;
   });
 
-export const removeAuthLeaseAndSecrets = (rows: SqlControlPlaneRows, input: {
+export const removeAuthLeaseAndSecrets = (rows: ControlPlaneStoreShape, input: {
   authArtifactId: AuthArtifact["id"];
 }): Effect.Effect<void, Error, never> =>
   Effect.gen(function* () {
@@ -185,7 +185,7 @@ export const removeAuthLeaseAndSecrets = (rows: SqlControlPlaneRows, input: {
   });
 
 export const upsertOauth2AuthorizedUserLeaseFromTokenResponse = (input: {
-  rows: SqlControlPlaneRows;
+  rows: ControlPlaneStoreShape;
   artifact: AuthArtifact;
   tokenResponse: OAuth2TokenResponse;
 }): Effect.Effect<void, Error, never> =>
@@ -256,7 +256,7 @@ export const upsertOauth2AuthorizedUserLeaseFromTokenResponse = (input: {
   });
 
 export const resolveAuthArtifactMaterialWithLeases = (input: {
-  rows: SqlControlPlaneRows;
+  rows: ControlPlaneStoreShape;
   artifact: AuthArtifact | null;
   resolveSecretMaterial: ResolveSecretMaterial;
   context?: SecretMaterialResolveContext;

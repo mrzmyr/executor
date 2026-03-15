@@ -1,7 +1,5 @@
-import { createSelectSchema } from "drizzle-orm/effect-schema";
 import { Schema } from "effect";
 
-import { workspaceSourceOauthClientsTable } from "../../persistence/schema";
 import { TimestampMsSchema } from "../common";
 import {
   SourceIdSchema,
@@ -30,16 +28,18 @@ export const SourceOauthClientInputSchema = Schema.Struct({
   redirectMode: Schema.optional(WorkspaceSourceOauthClientRedirectModeSchema),
 });
 
-export const WorkspaceSourceOauthClientSchema = createSelectSchema(
-  workspaceSourceOauthClientsTable,
-  {
-    id: WorkspaceSourceOauthClientIdSchema,
-    workspaceId: WorkspaceIdSchema,
-    sourceId: SourceIdSchema,
-    createdAt: TimestampMsSchema,
-    updatedAt: TimestampMsSchema,
-  } as const,
-);
+export const WorkspaceSourceOauthClientSchema = Schema.Struct({
+  id: WorkspaceSourceOauthClientIdSchema,
+  workspaceId: WorkspaceIdSchema,
+  sourceId: SourceIdSchema,
+  providerKey: Schema.String,
+  clientId: Schema.String,
+  clientSecretProviderId: Schema.NullOr(Schema.String),
+  clientSecretHandle: Schema.NullOr(Schema.String),
+  clientMetadataJson: Schema.NullOr(Schema.String),
+  createdAt: TimestampMsSchema,
+  updatedAt: TimestampMsSchema,
+});
 
 export type WorkspaceSourceOauthClient = typeof WorkspaceSourceOauthClientSchema.Type;
 export type WorkspaceSourceOauthClientRedirectMode =

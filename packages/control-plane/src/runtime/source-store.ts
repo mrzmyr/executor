@@ -9,7 +9,6 @@ import type {
   WorkspaceId,
 } from "#schema";
 import { SourceIdSchema } from "#schema";
-import { type SqlControlPlaneRows } from "#persistence";
 import * as Effect from "effect/Effect";
 
 import {
@@ -21,15 +20,9 @@ import {
   sourceAuthFromAuthArtifact,
 } from "./auth-artifacts";
 import {
-  loadLocalExecutorConfig,
   type LoadedLocalExecutorConfig,
   type ResolvedLocalWorkspaceContext,
-  writeProjectLocalExecutorConfig,
 } from "./local-config";
-import {
-  readLocalSourceArtifact,
-  removeLocalSourceArtifact,
-} from "./local-source-artifacts";
 import {
   LocalConfiguredSourceNotFoundError,
   LocalExecutorConfigDecodeError,
@@ -42,9 +35,18 @@ import {
 import {
   requireRuntimeLocalWorkspace,
 } from "./local-runtime-context";
+import type {
+  SourceArtifactStoreShape,
+  WorkspaceStorageServices,
+  WorkspaceConfigStoreShape,
+  WorkspaceStateStoreShape,
+} from "./local-storage";
 import {
-  loadLocalWorkspaceState,
-  writeLocalWorkspaceState,
+  SourceArtifactStore,
+  WorkspaceConfigStore,
+  WorkspaceStateStore,
+} from "./local-storage";
+import {
   type LocalWorkspaceState,
 } from "./local-workspace-state";
 import {
@@ -54,13 +56,14 @@ import {
 import { createDefaultSecretMaterialDeleter } from "./secret-material-providers";
 import { authArtifactSecretMaterialRefs } from "./auth-artifacts";
 import { removeAuthLeaseAndSecrets } from "./auth-leases";
+import type { ControlPlaneStoreShape } from "./store";
 import { getSourceAdapter } from "./source-adapters";
 import { slugify } from "./slug";
 
 const secretRefKey = (ref: { providerId: string; handle: string }): string =>
   `${ref.providerId}:${ref.handle}`;
 
-const cleanupAuthArtifactSecretRefs = (rows: SqlControlPlaneRows, input: {
+const cleanupAuthArtifactSecretRefs = (rows: ControlPlaneStoreShape, input: {
   previous: AuthArtifact | null;
   next: AuthArtifact | null;
 }) =>
@@ -246,6 +249,9 @@ const resolveRuntimeLocalWorkspace = (workspaceId: WorkspaceId): Effect.Effect<{
     workspaceId: WorkspaceId;
     accountId: AccountId;
   };
+  workspaceConfigStore: WorkspaceConfigStoreShape;
+  workspaceStateStore: WorkspaceStateStoreShape;
+  sourceArtifactStore: SourceArtifactStoreShape;
   loadedConfig: LoadedLocalExecutorConfig;
   workspaceState: LocalWorkspaceState;
 },
@@ -253,16 +259,27 @@ const resolveRuntimeLocalWorkspace = (workspaceId: WorkspaceId): Effect.Effect<{
   | RuntimeLocalWorkspaceMismatchError
   | LocalFileSystemError
   | LocalExecutorConfigDecodeError
-  | LocalWorkspaceStateDecodeError,
-never> =>
+  | LocalWorkspaceStateDecodeError
+  | Error,
+WorkspaceStorageServices> =>
   Effect.gen(function* () {
     const runtimeLocalWorkspace = yield* requireRuntimeLocalWorkspace(workspaceId);
-    const loadedConfig = yield* loadLocalExecutorConfig(runtimeLocalWorkspace.context);
-    const workspaceState = yield* loadLocalWorkspaceState(runtimeLocalWorkspace.context);
+    const workspaceConfigStore = yield* WorkspaceConfigStore;
+    const workspaceStateStore = yield* WorkspaceStateStore;
+    const sourceArtifactStore = yield* SourceArtifactStore;
+    const loadedConfig = yield* workspaceConfigStore.load(
+      runtimeLocalWorkspace.context,
+    );
+    const workspaceState = yield* workspaceStateStore.load(
+      runtimeLocalWorkspace.context,
+    );
 
     return {
       context: runtimeLocalWorkspace.context,
       installation: runtimeLocalWorkspace.installation,
+      workspaceConfigStore,
+      workspaceStateStore,
+      sourceArtifactStore,
       loadedConfig,
       workspaceState,
     };
@@ -270,6 +287,7 @@ never> =>
 
 const buildLocalSourceRecord = (input: {
   context: ResolvedLocalWorkspaceContext;
+  sourceArtifactStore: SourceArtifactStoreShape;
   workspaceId: WorkspaceId;
   loadedConfig: LoadedLocalExecutorConfig;
   workspaceState: LocalWorkspaceState;
@@ -317,7 +335,7 @@ const buildLocalSourceRecord = (input: {
       updatedAt: existingState?.updatedAt ?? Date.now(),
     });
 
-    const artifact = yield* readLocalSourceArtifact({
+    const artifact = yield* input.sourceArtifactStore.read({
       context: input.context,
       sourceId: input.sourceId,
     }).pipe(
@@ -379,7 +397,7 @@ const buildLocalSourceRecord = (input: {
   });
 
 export const loadSourcesInWorkspace = (
-  rows: SqlControlPlaneRows,
+  rows: ControlPlaneStoreShape,
   workspaceId: WorkspaceId,
   options: {
     actorAccountId?: AccountId | null;
@@ -393,7 +411,7 @@ export const loadSourcesInWorkspace = (
   | LocalWorkspaceStateDecodeError
   | LocalConfiguredSourceNotFoundError
   | Error,
-  never
+  WorkspaceStorageServices
 > =>
   Effect.gen(function* () {
     const localWorkspace = yield* resolveRuntimeLocalWorkspace(workspaceId);
@@ -404,6 +422,7 @@ export const loadSourcesInWorkspace = (
         Effect.map(
           buildLocalSourceRecord({
             context: localWorkspace.context,
+            sourceArtifactStore: localWorkspace.sourceArtifactStore,
             workspaceId,
             loadedConfig: localWorkspace.loadedConfig,
             workspaceState: localWorkspace.workspaceState,
@@ -416,7 +435,7 @@ export const loadSourcesInWorkspace = (
     );
   });
 
-export const loadSourceById = (rows: SqlControlPlaneRows, input: {
+export const loadSourceById = (rows: ControlPlaneStoreShape, input: {
   workspaceId: WorkspaceId;
   sourceId: Source["id"];
   actorAccountId?: AccountId | null;
@@ -429,7 +448,7 @@ export const loadSourceById = (rows: SqlControlPlaneRows, input: {
   | LocalWorkspaceStateDecodeError
   | LocalConfiguredSourceNotFoundError
   | Error,
-  never
+  WorkspaceStorageServices
 > =>
   Effect.gen(function* () {
     const localWorkspace = yield* resolveRuntimeLocalWorkspace(input.workspaceId);
@@ -445,6 +464,7 @@ export const loadSourceById = (rows: SqlControlPlaneRows, input: {
 
     const localSource = yield* buildLocalSourceRecord({
       context: localWorkspace.context,
+      sourceArtifactStore: localWorkspace.sourceArtifactStore,
       workspaceId: input.workspaceId,
       loadedConfig: localWorkspace.loadedConfig,
       workspaceState: localWorkspace.workspaceState,
@@ -514,7 +534,7 @@ const configSourceFromLocalSource = (input: {
   }
 };
 
-const removeAuthArtifactsForSource = (rows: SqlControlPlaneRows, input: {
+const removeAuthArtifactsForSource = (rows: ControlPlaneStoreShape, input: {
   workspaceId: WorkspaceId;
   sourceId: Source["id"];
 }) =>
@@ -551,10 +571,10 @@ const removeAuthArtifactsForSource = (rows: SqlControlPlaneRows, input: {
     return existingAuthArtifacts.length;
   });
 
-export const removeSourceById = (rows: SqlControlPlaneRows, input: {
+export const removeSourceById = (rows: ControlPlaneStoreShape, input: {
   workspaceId: WorkspaceId;
   sourceId: Source["id"];
-}) =>
+}): Effect.Effect<boolean, Error, WorkspaceStorageServices> =>
   Effect.gen(function* () {
     const localWorkspace = yield* resolveRuntimeLocalWorkspace(input.workspaceId);
     if (!localWorkspace.loadedConfig.config?.sources?.[input.sourceId]) {
@@ -566,7 +586,7 @@ export const removeSourceById = (rows: SqlControlPlaneRows, input: {
       ...(projectConfig.sources ?? {}),
     };
     delete sources[input.sourceId];
-    yield* writeProjectLocalExecutorConfig({
+    yield* localWorkspace.workspaceConfigStore.writeProject({
       context: localWorkspace.context,
       config: {
         ...projectConfig,
@@ -582,11 +602,11 @@ export const removeSourceById = (rows: SqlControlPlaneRows, input: {
       ...localWorkspace.workspaceState,
       sources: remainingSources,
     };
-    yield* writeLocalWorkspaceState({
+    yield* localWorkspace.workspaceStateStore.write({
       context: localWorkspace.context,
       state: workspaceState,
     });
-    yield* removeLocalSourceArtifact({
+    yield* localWorkspace.sourceArtifactStore.remove({
       context: localWorkspace.context,
       sourceId: input.sourceId,
     });
@@ -605,12 +625,12 @@ export const removeSourceById = (rows: SqlControlPlaneRows, input: {
   });
 
 export const persistSource = (
-  rows: SqlControlPlaneRows,
+  rows: ControlPlaneStoreShape,
   source: Source,
   options: {
     actorAccountId?: AccountId | null;
   } = {},
-) =>
+): Effect.Effect<Source, Error, WorkspaceStorageServices> =>
   Effect.gen(function* () {
     const localWorkspace = yield* resolveRuntimeLocalWorkspace(source.workspaceId);
     const nextSource = {
@@ -648,7 +668,7 @@ export const persistSource = (
       existingConfigAuth: existingConfigSource?.connection.auth,
       config: localWorkspace.loadedConfig.config,
     });
-    yield* writeProjectLocalExecutorConfig({
+    yield* localWorkspace.workspaceConfigStore.writeProject({
       context: localWorkspace.context,
       config: {
         ...projectConfig,
@@ -737,7 +757,7 @@ export const persistSource = (
         },
       },
     };
-    yield* writeLocalWorkspaceState({
+    yield* localWorkspace.workspaceStateStore.write({
       context: localWorkspace.context,
       state: workspaceState,
     });

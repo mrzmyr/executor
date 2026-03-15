@@ -2,7 +2,6 @@ import type {
   ElicitationResponse,
   OnElicitation,
 } from "@executor/codemode-core";
-import { type SqlControlPlaneRows } from "#persistence";
 import {
   ExecutionInteractionIdSchema,
   type Execution,
@@ -12,6 +11,8 @@ import * as Context from "effect/Context";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+
+import type { ControlPlaneStoreShape } from "./store";
 
 type VisibleExecutionState =
   | "waiting_for_interaction"
@@ -35,7 +36,7 @@ type LiveExecutionManagerShape = {
     executionId: Execution["id"],
   ) => Effect.Effect<Deferred.Deferred<VisibleExecutionState>>;
   createOnElicitation: (input: {
-    rows: SqlControlPlaneRows;
+    rows: ControlPlaneStoreShape;
     executionId: Execution["id"];
   }) => OnElicitation;
   resolveInteraction: (input: {

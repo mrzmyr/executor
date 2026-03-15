@@ -4,10 +4,6 @@ import {
   type McpDiscoveryElicitationContext,
 } from "@executor/codemode-mcp";
 import {
-  SqlControlPlaneRowsService,
-  type SqlControlPlaneRows,
-} from "#persistence";
-import {
   AccountId,
   type CredentialSlot,
   ExecutionIdSchema,
@@ -86,6 +82,8 @@ import {
   loadSourcesInWorkspace,
   persistSource,
 } from "./source-store";
+import type { WorkspaceStorageServices } from "./local-storage";
+import { ControlPlaneStore, type ControlPlaneStoreShape } from "./store";
 
 const trimOrNull = (value: string | null | undefined): string | null => {
   if (value === null || value === undefined) {
@@ -303,7 +301,7 @@ const mergeOauth2PkceSourceAuthSessionData = (input: {
 
 
 const completeLiveInteraction = (input: {
-  rows: SqlControlPlaneRows;
+  rows: ControlPlaneStoreShape;
   liveExecutionManager: LiveExecutionManager;
   session: SourceAuthSession;
   response: {
@@ -360,7 +358,7 @@ const serializeJson = (value: unknown): string | null => {
   return JSON.stringify(value);
 };
 
-const updateSourceStatus = (rows: SqlControlPlaneRows, source: Source, input: {
+const updateSourceStatus = (rows: ControlPlaneStoreShape, source: Source, input: {
   actorAccountId?: AccountId | null;
   status: Source["status"];
   lastError?: string | null;
@@ -743,7 +741,7 @@ const sourceOauthClientSecretRef = (client: {
     : null;
 
 const upsertSourceOauthClient = (input: {
-  rows: SqlControlPlaneRows;
+  rows: ControlPlaneStoreShape;
   source: Source;
   oauthClient: SourceOauthClientInput;
   storeSecretMaterial: StoreSecretMaterial;
@@ -825,7 +823,7 @@ const upsertSourceOauthClient = (input: {
   });
 
 const resolveExistingSourceOauthClient = (input: {
-  rows: SqlControlPlaneRows;
+  rows: ControlPlaneStoreShape;
   source: Source;
 }): Effect.Effect<ResolvedSourceOauthClient | null, Error, never> =>
   Effect.gen(function* () {
@@ -858,7 +856,7 @@ const resolveExistingSourceOauthClient = (input: {
   });
 
 const startOauth2PkceSourceCredentialSetup = (input: {
-  rows: SqlControlPlaneRows;
+  rows: ControlPlaneStoreShape;
   source: Source;
   actorAccountId?: AccountId | null;
   executionId?: SourceAuthSession["executionId"];
@@ -866,7 +864,11 @@ const startOauth2PkceSourceCredentialSetup = (input: {
   baseUrl: string;
   redirectModeOverride?: WorkspaceSourceOauthClientRedirectMode;
   storeSecretMaterial: StoreSecretMaterial;
-}): Effect.Effect<Extract<ExecutorSourceAddResult, { kind: "oauth_required" }> | null, Error, never> =>
+}): Effect.Effect<
+  Extract<ExecutorSourceAddResult, { kind: "oauth_required" }> | null,
+  Error,
+  WorkspaceStorageServices
+> =>
   Effect.gen(function* () {
     const adapter = getSourceAdapterForSource(input.source);
     const setupConfig = adapter.getOauth2SetupConfig
@@ -971,7 +973,7 @@ const startOauth2PkceSourceCredentialSetup = (input: {
   });
 
 const connectMcpSourceInternal = (input: {
-  rows: SqlControlPlaneRows;
+  rows: ControlPlaneStoreShape;
   getLocalServerBaseUrl?: () => string | undefined;
   baseUrl?: string | null;
   workspaceId: WorkspaceId;
@@ -988,7 +990,7 @@ const connectMcpSourceInternal = (input: {
   headers?: StringMap | null;
   mcpDiscoveryElicitation?: McpDiscoveryElicitationContext;
   resolveSecretMaterial: ResolveSecretMaterial;
-}): Effect.Effect<McpSourceConnectResult, Error, never> =>
+}): Effect.Effect<McpSourceConnectResult, Error, WorkspaceStorageServices> =>
   Effect.gen(function* () {
     const normalizedEndpoint = normalizeEndpoint(input.endpoint);
     const existing = yield* (
@@ -1200,13 +1202,13 @@ const connectMcpSourceInternal = (input: {
   });
 
 const addExecutorHttpSource = (input: {
-  rows: SqlControlPlaneRows;
+  rows: ControlPlaneStoreShape;
   sourceInput: Extract<ExecutorAddSourceInput, { kind: "openapi" | "graphql" }>;
   storeSecretMaterial: StoreSecretMaterial;
   resolveSecretMaterial: ResolveSecretMaterial;
   getLocalServerBaseUrl?: () => string | undefined;
   baseUrl?: string | null;
-}): Effect.Effect<ExecutorSourceAddResult, Error, never> =>
+}): Effect.Effect<ExecutorSourceAddResult, Error, WorkspaceStorageServices> =>
   Effect.gen(function* () {
     const normalizedEndpoint = normalizeEndpoint(input.sourceInput.endpoint);
     const normalizedSpecUrl = input.sourceInput.kind === "openapi"
@@ -1403,13 +1405,13 @@ const addExecutorHttpSource = (input: {
   });
 
 const addExecutorGoogleDiscoverySource = (input: {
-  rows: SqlControlPlaneRows;
+  rows: ControlPlaneStoreShape;
   sourceInput: Extract<ExecutorAddSourceInput, { kind: "google_discovery" }>;
   storeSecretMaterial: StoreSecretMaterial;
   resolveSecretMaterial: ResolveSecretMaterial;
   getLocalServerBaseUrl?: () => string | undefined;
   baseUrl?: string | null;
-}): Effect.Effect<ExecutorSourceAddResult, Error, never> =>
+}): Effect.Effect<ExecutorSourceAddResult, Error, WorkspaceStorageServices> =>
   Effect.gen(function* () {
     const normalizedService = input.sourceInput.service.trim();
     const normalizedVersion = input.sourceInput.version.trim();
@@ -1627,7 +1629,7 @@ type RuntimeSourceAuthServiceShape = {
     workspaceId: WorkspaceId;
     sourceId: Source["id"];
     actorAccountId?: AccountId | null;
-  }) => Effect.Effect<Source, Error, never>;
+  }) => Effect.Effect<Source, Error, WorkspaceStorageServices>;
   getLocalServerBaseUrl: () => string | null;
   storeSecretMaterial: (input: {
     purpose: SecretMaterialPurpose;
@@ -1639,10 +1641,10 @@ type RuntimeSourceAuthServiceShape = {
       mcpDiscoveryElicitation?: McpDiscoveryElicitationContext;
       baseUrl?: string | null;
     },
-  ) => Effect.Effect<ExecutorSourceAddResult, Error, never>;
+  ) => Effect.Effect<ExecutorSourceAddResult, Error, WorkspaceStorageServices>;
   connectMcpSource: (
     input: ConnectMcpSourceInput,
-  ) => Effect.Effect<McpSourceConnectResult, Error, never>;
+  ) => Effect.Effect<McpSourceConnectResult, Error, WorkspaceStorageServices>;
   startSourceOAuthSession: (
     input: StartSourceOAuthSessionInput,
   ) => Effect.Effect<StartSourceOAuthSessionResult, Error, never>;
@@ -1651,7 +1653,7 @@ type RuntimeSourceAuthServiceShape = {
     code?: string | null;
     error?: string | null;
     errorDescription?: string | null;
-  }) => Effect.Effect<CompleteSourceOAuthSessionResult, Error, never>;
+  }) => Effect.Effect<CompleteSourceOAuthSessionResult, Error, WorkspaceStorageServices>;
   completeSourceCredentialSetup: (input: {
     workspaceId: WorkspaceId;
     sourceId: Source["id"];
@@ -1660,11 +1662,11 @@ type RuntimeSourceAuthServiceShape = {
     code?: string | null;
     error?: string | null;
     errorDescription?: string | null;
-  }) => Effect.Effect<Source, Error, never>;
+  }) => Effect.Effect<Source, Error, WorkspaceStorageServices>;
 };
 
 export const createRuntimeSourceAuthService = (input: {
-  rows: SqlControlPlaneRows;
+  rows: ControlPlaneStoreShape;
   liveExecutionManager: LiveExecutionManager;
   getLocalServerBaseUrl?: () => string | undefined;
   localConfig?: LocalExecutorConfig | null;
@@ -1681,11 +1683,11 @@ export const createRuntimeSourceAuthService = (input: {
   });
   const mirrorLocalSourceResult = (
     result: ExecutorSourceAddResult,
-  ): Effect.Effect<ExecutorSourceAddResult, Error, never> =>
+  ): Effect.Effect<ExecutorSourceAddResult, Error, WorkspaceStorageServices> =>
     Effect.succeed(result);
   const mirrorLocalMcpSourceResult = (
     result: McpSourceConnectResult,
-  ): Effect.Effect<McpSourceConnectResult, Error, never> =>
+  ): Effect.Effect<McpSourceConnectResult, Error, WorkspaceStorageServices> =>
     Effect.succeed(result);
   const provideLocalWorkspace = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
     input.localWorkspaceState
@@ -2250,7 +2252,7 @@ export const RuntimeSourceAuthServiceLive = (input: {
   Layer.effect(
     RuntimeSourceAuthServiceTag,
     Effect.gen(function* () {
-      const rows = yield* SqlControlPlaneRowsService;
+      const rows = yield* ControlPlaneStore;
       const liveExecutionManager = yield* LiveExecutionManagerService;
 
       return createRuntimeSourceAuthService({

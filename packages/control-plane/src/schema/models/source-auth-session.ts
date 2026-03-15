@@ -1,7 +1,5 @@
-import { createSelectSchema } from "drizzle-orm/effect-schema";
 import { Schema } from "effect";
 
-import { sourceAuthSessionsTable } from "../../persistence/schema";
 import { TimestampMsSchema } from "../common";
 import {
   AccountIdSchema,
@@ -99,7 +97,7 @@ export const OAuth2PkceSourceAuthSessionDataJsonSchema = Schema.parseJson(
   OAuth2PkceSourceAuthSessionDataSchema,
 );
 
-const sourceAuthSessionSchemaOverrides = {
+export const SourceAuthSessionSchema = Schema.Struct({
   id: SourceAuthSessionIdSchema,
   workspaceId: WorkspaceIdSchema,
   sourceId: SourceIdSchema,
@@ -109,15 +107,13 @@ const sourceAuthSessionSchemaOverrides = {
   interactionId: Schema.NullOr(ExecutionInteractionIdSchema),
   providerKind: SourceAuthSessionProviderKindSchema,
   status: SourceAuthSessionStatusSchema,
+  state: Schema.String,
+  sessionDataJson: Schema.String,
+  errorText: Schema.NullOr(Schema.String),
   completedAt: Schema.NullOr(TimestampMsSchema),
   createdAt: TimestampMsSchema,
   updatedAt: TimestampMsSchema,
-} as const;
-
-export const SourceAuthSessionSchema = createSelectSchema(
-  sourceAuthSessionsTable,
-  sourceAuthSessionSchemaOverrides,
-);
+});
 
 export type SourceAuthSessionProviderKind = typeof SourceAuthSessionProviderKindSchema.Type;
 export type SourceAuthSessionStatus = typeof SourceAuthSessionStatusSchema.Type;

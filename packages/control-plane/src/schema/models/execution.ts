@@ -1,15 +1,5 @@
-import {
-  createInsertSchema,
-  createSelectSchema,
-  createUpdateSchema,
-} from "drizzle-orm/effect-schema";
 import { Schema } from "effect";
 
-import {
-  executionInteractionsTable,
-  executionStepsTable,
-  executionsTable,
-} from "../../persistence/schema";
 import { TimestampMsSchema } from "../common";
 import {
   AccountIdSchema,
@@ -28,11 +18,12 @@ export const ExecutionStatusSchema = Schema.Literal(
   "cancelled",
 );
 
-const executionSchemaOverrides = {
+export const ExecutionSchema = Schema.Struct({
   id: ExecutionIdSchema,
   workspaceId: WorkspaceIdSchema,
   createdByAccountId: AccountIdSchema,
   status: ExecutionStatusSchema,
+  code: Schema.String,
   resultJson: Schema.NullOr(Schema.String),
   errorText: Schema.NullOr(Schema.String),
   logsJson: Schema.NullOr(Schema.String),
@@ -40,21 +31,21 @@ const executionSchemaOverrides = {
   completedAt: Schema.NullOr(TimestampMsSchema),
   createdAt: TimestampMsSchema,
   updatedAt: TimestampMsSchema,
-} as const;
+});
 
-export const ExecutionSchema = createSelectSchema(
-  executionsTable,
-  executionSchemaOverrides,
-);
+export const ExecutionInsertSchema = ExecutionSchema;
 
-export const ExecutionInsertSchema = createInsertSchema(
-  executionsTable,
-  executionSchemaOverrides,
-);
-
-export const ExecutionUpdateSchema = createUpdateSchema(
-  executionsTable,
-  executionSchemaOverrides,
+export const ExecutionUpdateSchema = Schema.partial(
+  Schema.Struct({
+    status: ExecutionStatusSchema,
+    code: Schema.String,
+    resultJson: Schema.NullOr(Schema.String),
+    errorText: Schema.NullOr(Schema.String),
+    logsJson: Schema.NullOr(Schema.String),
+    startedAt: Schema.NullOr(TimestampMsSchema),
+    completedAt: Schema.NullOr(TimestampMsSchema),
+    updatedAt: TimestampMsSchema,
+  }),
 );
 
 export const ExecutionInteractionStatusSchema = Schema.Literal(
@@ -63,30 +54,31 @@ export const ExecutionInteractionStatusSchema = Schema.Literal(
   "cancelled",
 );
 
-const executionInteractionSchemaOverrides = {
+export const ExecutionInteractionSchema = Schema.Struct({
   id: ExecutionInteractionIdSchema,
   executionId: ExecutionIdSchema,
   status: ExecutionInteractionStatusSchema,
+  kind: Schema.String,
   purpose: Schema.String,
+  payloadJson: Schema.String,
   responseJson: Schema.NullOr(Schema.String),
   responsePrivateJson: Schema.NullOr(Schema.String),
   createdAt: TimestampMsSchema,
   updatedAt: TimestampMsSchema,
-} as const;
+});
 
-export const ExecutionInteractionSchema = createSelectSchema(
-  executionInteractionsTable,
-  executionInteractionSchemaOverrides,
-);
+export const ExecutionInteractionInsertSchema = ExecutionInteractionSchema;
 
-export const ExecutionInteractionInsertSchema = createInsertSchema(
-  executionInteractionsTable,
-  executionInteractionSchemaOverrides,
-);
-
-export const ExecutionInteractionUpdateSchema = createUpdateSchema(
-  executionInteractionsTable,
-  executionInteractionSchemaOverrides,
+export const ExecutionInteractionUpdateSchema = Schema.partial(
+  Schema.Struct({
+    status: ExecutionInteractionStatusSchema,
+    kind: Schema.String,
+    purpose: Schema.String,
+    payloadJson: Schema.String,
+    responseJson: Schema.NullOr(Schema.String),
+    responsePrivateJson: Schema.NullOr(Schema.String),
+    updatedAt: TimestampMsSchema,
+  }),
 );
 
 export const ExecutionEnvelopeSchema = Schema.Struct({
@@ -103,32 +95,31 @@ export const ExecutionStepStatusSchema = Schema.Literal(
   "failed",
 );
 
-const executionStepSchemaOverrides = {
+export const ExecutionStepSchema = Schema.Struct({
   id: ExecutionStepIdSchema,
   executionId: ExecutionIdSchema,
   sequence: Schema.Number,
   kind: ExecutionStepKindSchema,
   status: ExecutionStepStatusSchema,
-  interactionId: Schema.NullOr(ExecutionInteractionIdSchema),
+  path: Schema.String,
+  argsJson: Schema.String,
   resultJson: Schema.NullOr(Schema.String),
   errorText: Schema.NullOr(Schema.String),
+  interactionId: Schema.NullOr(ExecutionInteractionIdSchema),
   createdAt: TimestampMsSchema,
   updatedAt: TimestampMsSchema,
-} as const;
+});
 
-export const ExecutionStepSchema = createSelectSchema(
-  executionStepsTable,
-  executionStepSchemaOverrides,
-);
+export const ExecutionStepInsertSchema = ExecutionStepSchema;
 
-export const ExecutionStepInsertSchema = createInsertSchema(
-  executionStepsTable,
-  executionStepSchemaOverrides,
-);
-
-export const ExecutionStepUpdateSchema = createUpdateSchema(
-  executionStepsTable,
-  executionStepSchemaOverrides,
+export const ExecutionStepUpdateSchema = Schema.partial(
+  Schema.Struct({
+    status: ExecutionStepStatusSchema,
+    resultJson: Schema.NullOr(Schema.String),
+    errorText: Schema.NullOr(Schema.String),
+    interactionId: Schema.NullOr(ExecutionInteractionIdSchema),
+    updatedAt: TimestampMsSchema,
+  }),
 );
 
 export type ExecutionStatus = typeof ExecutionStatusSchema.Type;

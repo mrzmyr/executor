@@ -64,7 +64,7 @@ describe("source-auth-material", () => {
             headerName: "X-Api-Key",
             prefix: "Token ",
             token: {
-              providerId: "postgres",
+              providerId: "local",
               handle: "sec_bearer",
             },
           },
@@ -75,7 +75,7 @@ describe("source-auth-material", () => {
         },
       }));
 
-      expect(calls).toEqual(["postgres:sec_bearer"]);
+      expect(calls).toEqual(["local:sec_bearer"]);
       expect(auth).toEqual({
         placements: [
           {
@@ -110,11 +110,11 @@ describe("source-auth-material", () => {
             headerName: "Authorization",
             prefix: "Bearer ",
             accessToken: {
-              providerId: "postgres",
+              providerId: "local",
               handle: "sec_access",
             },
             refreshToken: {
-              providerId: "postgres",
+              providerId: "local",
               handle: "sec_refresh",
             },
           },
@@ -125,7 +125,7 @@ describe("source-auth-material", () => {
         },
       }));
 
-      expect(calls).toEqual(["postgres:sec_access"]);
+      expect(calls).toEqual(["local:sec_access"]);
       expect(auth).toEqual({
         placements: [
           {

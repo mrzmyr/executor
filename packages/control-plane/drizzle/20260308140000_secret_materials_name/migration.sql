@@ -1,1 +1,0 @@
-ALTER TABLE "secret_materials" ADD COLUMN "name" text;

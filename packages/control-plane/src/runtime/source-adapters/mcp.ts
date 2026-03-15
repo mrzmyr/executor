@@ -9,7 +9,6 @@ import {
   type McpToolManifest,
   type McpToolManifestEntry,
 } from "@executor/codemode-mcp";
-import type { SqlControlPlaneRows } from "#persistence";
 import type {
   Source,
   SourceRecipeRevisionId,
@@ -25,7 +24,6 @@ import * as Schema from "effect/Schema";
 import {
   contentHash,
   normalizeSearchText,
-  persistRecipeMaterialization,
   type SourceRecipeMaterialization,
 } from "../source-recipe-support";
 import { namespaceFromSourceName } from "../source-names";
@@ -169,23 +167,6 @@ const toMcpRecipeOperationRecord = (input: {
   createdAt: input.now,
   updatedAt: input.now,
 });
-
-export const persistMcpRecipeRevisionFromManifestEntries = (input: {
-  rows: SqlControlPlaneRows;
-  source: Source;
-  manifestEntries: readonly McpToolManifestEntry[];
-}): Effect.Effect<void, Error, never> =>
-  Effect.gen(function* () {
-    yield* persistRecipeMaterialization({
-      rows: input.rows,
-      source: input.source,
-      materialization: materializationFromMcpManifestEntries({
-        recipeRevisionId: "src_recipe_rev_materialization" as SourceRecipeRevisionId,
-        endpoint: input.source.endpoint,
-        manifestEntries: input.manifestEntries,
-      }),
-    });
-  });
 
 export const materializationFromMcpManifestEntries = (input: {
   recipeRevisionId: SourceRecipeRevisionId;

@@ -44,7 +44,6 @@ export {
   EXECUTOR_DATA_DIR_ENV,
   EXECUTOR_HOME_ENV,
   EXECUTOR_LOCAL_DATA_DIR_ENV,
-  EXECUTOR_MIGRATIONS_DIR_ENV,
   EXECUTOR_SERVER_PID_FILE_ENV,
   EXECUTOR_SERVER_LOG_FILE_ENV,
   EXECUTOR_WEB_ASSETS_DIR_ENV,
@@ -69,7 +68,6 @@ export type StartLocalExecutorServerOptions = {
   readonly host?: string;
   readonly localDataDir?: string;
   readonly workspaceRoot?: string;
-  readonly migrationsFolder?: string;
   readonly pidFile?: string;
   readonly executionResolver?: ResolveExecutionEnvironment;
   readonly resolveSecretMaterial?: ResolveSecretMaterial;
@@ -99,8 +97,6 @@ const createRuntime = (
   options: StartLocalExecutorServerOptions,
 ) =>
   createControlPlaneRuntime({
-    localDataDir,
-    migrationsFolder: options.migrationsFolder,
     workspaceRoot: options.workspaceRoot,
     executionResolver: options.executionResolver,
     resolveSecretMaterial: options.resolveSecretMaterial,

@@ -1,7 +1,5 @@
-import { createSelectSchema } from "drizzle-orm/effect-schema";
 import { Schema } from "effect";
 
-import { authArtifactsTable } from "../../persistence/schema";
 import { TimestampMsSchema } from "../common";
 import {
   AccountIdSchema,
@@ -167,7 +165,7 @@ const decodeRefreshableOAuth2AuthorizedUserAuthArtifactConfigOption = Schema.dec
 
 const decodeAuthGrantSetOption = Schema.decodeUnknownOption(AuthGrantSetJsonSchema);
 
-const authArtifactSchemaOverrides = {
+export const AuthArtifactSchema = Schema.Struct({
   id: AuthArtifactIdSchema,
   workspaceId: WorkspaceIdSchema,
   sourceId: SourceIdSchema,
@@ -178,12 +176,7 @@ const authArtifactSchemaOverrides = {
   grantSetJson: Schema.NullOr(Schema.String),
   createdAt: TimestampMsSchema,
   updatedAt: TimestampMsSchema,
-} as const;
-
-export const AuthArtifactSchema = createSelectSchema(
-  authArtifactsTable,
-  authArtifactSchemaOverrides,
-);
+});
 
 export type SecretRef = typeof SecretRefSchema.Type;
 export type AuthArtifactSlot = typeof AuthArtifactSlotSchema.Type;
@@ -228,28 +221,19 @@ export const decodeBuiltInAuthArtifactConfig = (
     case StaticBearerAuthArtifactKind: {
       const decoded = decodeStaticBearerAuthArtifactConfigOption(artifact.configJson);
       return decoded._tag === "Some"
-        ? {
-            artifactKind: StaticBearerAuthArtifactKind,
-            config: decoded.value,
-          }
+        ? { artifactKind: StaticBearerAuthArtifactKind, config: decoded.value }
         : null;
     }
     case StaticOAuth2AuthArtifactKind: {
       const decoded = decodeStaticOAuth2AuthArtifactConfigOption(artifact.configJson);
       return decoded._tag === "Some"
-        ? {
-            artifactKind: StaticOAuth2AuthArtifactKind,
-            config: decoded.value,
-          }
+        ? { artifactKind: StaticOAuth2AuthArtifactKind, config: decoded.value }
         : null;
     }
     case StaticPlacementsAuthArtifactKind: {
       const decoded = decodeStaticPlacementsAuthArtifactConfigOption(artifact.configJson);
       return decoded._tag === "Some"
-        ? {
-            artifactKind: StaticPlacementsAuthArtifactKind,
-            config: decoded.value,
-          }
+        ? { artifactKind: StaticPlacementsAuthArtifactKind, config: decoded.value }
         : null;
     }
     case RefreshableOAuth2AuthorizedUserAuthArtifactKind: {
@@ -268,7 +252,13 @@ export const decodeBuiltInAuthArtifactConfig = (
   }
 };
 
-export const decodeAuthGrantSet = (grantSetJson: string | null): AuthGrantSet | null => {
+export const decodeAuthArtifactGrantSet = (
+  artifact: Pick<AuthArtifact, "grantSetJson"> | string | null,
+): AuthGrantSet | null => {
+  const grantSetJson = artifact !== null && typeof artifact === "object"
+    ? artifact.grantSetJson
+    : artifact;
+
   if (grantSetJson === null) {
     return null;
   }
@@ -276,6 +266,8 @@ export const decodeAuthGrantSet = (grantSetJson: string | null): AuthGrantSet | 
   const decoded = decodeAuthGrantSetOption(grantSetJson);
   return decoded._tag === "Some" ? decoded.value : null;
 };
+
+export const decodeAuthGrantSet = decodeAuthArtifactGrantSet;
 
 export const authArtifactSecretRefs = (
   artifact: Pick<AuthArtifact, "artifactKind" | "configJson">,
@@ -289,18 +281,20 @@ export const authArtifactSecretRefs = (
     case StaticBearerAuthArtifactKind:
       return [decoded.config.token];
     case StaticOAuth2AuthArtifactKind:
-      return [
-        decoded.config.accessToken,
-        ...(decoded.config.refreshToken === null ? [] : [decoded.config.refreshToken]),
-      ];
+      return decoded.config.refreshToken
+        ? [decoded.config.accessToken, decoded.config.refreshToken]
+        : [decoded.config.accessToken];
     case StaticPlacementsAuthArtifactKind:
       return decoded.config.placements.flatMap((placement) =>
-        placement.parts.flatMap((part) => part.kind === "secret_ref" ? [part.ref] : []),
+        placement.parts.flatMap((part) =>
+          part.kind === "secret_ref" ? [part.ref] : [],
+        )
       );
     case RefreshableOAuth2AuthorizedUserAuthArtifactKind:
-      return [
-        ...(decoded.config.clientSecret === null ? [] : [decoded.config.clientSecret]),
-        decoded.config.refreshToken,
-      ];
+      return decoded.config.clientSecret
+        ? [decoded.config.refreshToken, decoded.config.clientSecret]
+        : [decoded.config.refreshToken];
   }
 };
+
+export const authArtifactSecretMaterialRefs = authArtifactSecretRefs;

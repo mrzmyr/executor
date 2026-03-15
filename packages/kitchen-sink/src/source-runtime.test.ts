@@ -685,7 +685,7 @@ describe("source runtime", () => {
       const sourceStore = createInMemorySourceStore();
       const toolStore = createInMemoryToolStore();
       const secretRegistry = createSecretRegistry([
-        createStaticSecretProvider("postgres", {
+        createStaticSecretProvider("local", {
           "github-db-token": "ghp_from_db",
         }),
       ]);
@@ -698,7 +698,7 @@ describe("source runtime", () => {
         specUrl: "https://api.github.com/openapi.json",
         namespace: "github",
         auth: bearerSourceAuth({
-          providerId: "postgres",
+          providerId: "local",
           handle: "github-db-token",
         }),
       });

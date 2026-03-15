@@ -9,7 +9,7 @@ describe("live-execution", () => {
       content: {
         authKind: "bearer",
         tokenRef: {
-          providerId: "postgres",
+          providerId: "local",
           handle: "sec_123",
         },
       },

@@ -280,18 +280,16 @@ The server also maintains local PID and log files in its runtime directory.
 
 ## Persistence and data
 
-`executor` persists the local control plane to SQL.
-
-By default it uses embedded PGlite for a local install, which keeps the product self-contained. If you provide a Postgres URL, the persistence layer can target real Postgres instead.
+`executor` persists the local control plane to local files.
 
 Persisted concepts include:
 
-- the local installation record
-- organizations and workspaces provisioned for that install
+- local installation identity
 - connected sources
 - indexed tool artifacts and related metadata
 - credentials and secret material bindings
 - source auth sessions
+- execution and interaction state
 - executions and execution interactions
 - policies
 
@@ -323,6 +321,14 @@ If you are exploring the repo, these are the directories that matter most:
 - `packages/runtime-ses`: optional SES sandbox runtime for TypeScript execution
 - `packages/executor-mcp`: MCP bridge for `execute` and `resume`
 - `packages/codemode-*`: core tool abstractions plus MCP and OpenAPI adapters
+
+## Releasing
+
+- `bun run --cwd apps/executor release:publish` is the only supported publish command.
+- Stable releases use a normal semver like `1.2.3` and publish to npm under `latest`.
+- Beta releases use a prerelease semver like `1.3.0-beta.1` and publish to npm under `beta`.
+- Push a matching git tag such as `v1.2.3` or `v1.3.0-beta.1` to trigger `.github/workflows/publish-executor-package.yml`.
+- To build and pack the publish artifact locally without publishing, run `bun run --cwd apps/executor release:publish:dry-run`.
 
 ## Project status
 

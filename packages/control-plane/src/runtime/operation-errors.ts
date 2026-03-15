@@ -3,24 +3,7 @@ import {
   ControlPlaneNotFoundError,
   ControlPlaneStorageError,
 } from "../api/errors";
-import { ControlPlanePersistenceError } from "#persistence";
 import * as Effect from "effect/Effect";
-
-const unknownPersistenceError = (
-  operation: string,
-  cause: unknown,
-  details: string,
-): ControlPlanePersistenceError =>
-  new ControlPlanePersistenceError({
-    operation,
-    message: cause instanceof Error ? cause.message : String(cause),
-    details,
-    code: null,
-    constraint: null,
-    table: null,
-    kind: "unknown",
-    cause,
-  });
 
 export type OperationErrors<TOperation extends string = string> = {
   readonly operation: TOperation;
@@ -36,18 +19,14 @@ export type OperationErrors<TOperation extends string = string> = {
     details: string,
   ) => ControlPlaneNotFoundError;
   readonly storage: (
-    error: ControlPlanePersistenceError,
+    error: Error,
   ) => ControlPlaneStorageError;
-  readonly unknownPersistence: (
-    cause: unknown,
-    details: string,
-  ) => ControlPlanePersistenceError;
   readonly unknownStorage: (
     cause: unknown,
     details: string,
   ) => ControlPlaneStorageError;
-  readonly mapStorage: <A>(
-    effect: Effect.Effect<A, ControlPlanePersistenceError>,
+  readonly mapStorage: <A, E extends Error>(
+    effect: Effect.Effect<A, E>,
   ) => Effect.Effect<A, ControlPlaneStorageError>;
 };
 
@@ -76,15 +55,17 @@ export const operationErrors = <TOperation extends string>(
       new ControlPlaneStorageError({
         operation,
         message: error.message,
-        details: error.details ?? "Persistence operation failed",
+        details: error.message,
       }),
-    unknownPersistence: (cause, details) =>
-      unknownPersistenceError(operation, cause, details),
     unknownStorage: (cause, details) =>
-      self.storage(self.unknownPersistence(cause, details)),
+      self.storage(
+        cause instanceof Error
+          ? new Error(`${cause.message}: ${details}`)
+          : new Error(details),
+      ),
     mapStorage: (effect) =>
       effect.pipe(
-        Effect.mapError(self.storage),
+        Effect.mapError((error) => self.storage(error)),
       ),
   };
 

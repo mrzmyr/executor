@@ -319,7 +319,7 @@ describe("control-plane-runtime", () => {
         decodedCredentialSelection.authKind === "bearer"
           ? decodedCredentialSelection.tokenRef.providerId
           : null,
-      ).toBe("postgres");
+      ).toBe("local");
 
       const tokenSecretMaterialId = SecretMaterialIdSchema.make(
         decodedCredentialSelection.authKind === "bearer"
