@@ -9,6 +9,7 @@ import type {
   SourceInspectionToolSummary,
   WorkspaceId,
 } from "#schema";
+import { typeSignatureFromSchema } from "@executor/codemode-core";
 import {
   ControlPlaneNotFoundError,
   ControlPlaneStorageError,
@@ -18,6 +19,7 @@ import * as Effect from "effect/Effect";
 import { operationErrors } from "./operation-errors";
 import { formatWithPrettier } from "./prettier-format";
 import {
+  expandCatalogToolByPath,
   expandCatalogTools,
   loadSourceWithCatalog,
   type LoadedSourceCatalogTool,
@@ -46,16 +48,28 @@ const formatOptionalTypeScript = (value: string | undefined) =>
     ? Effect.succeed<string | undefined>(undefined)
     : Effect.promise(() => formatWithPrettier(value, "typescript"));
 
+const fullTypeSignature = (schema: unknown): string | undefined => {
+  try {
+    return typeSignatureFromSchema(schema, "unknown", Infinity);
+  } catch {
+    return undefined;
+  }
+};
+
 const formatInspectionToolDetail = (detail: SourceInspectionToolDetail) =>
   Effect.gen(function* () {
     const summary = yield* Effect.all({
-      inputType: formatOptionalTypeScript(detail.summary.inputType),
-      outputType: formatOptionalTypeScript(detail.summary.outputType),
+      previewInputType: formatOptionalTypeScript(detail.summary.previewInputType),
+      previewOutputType: formatOptionalTypeScript(detail.summary.previewOutputType),
+      fullInputType: formatOptionalTypeScript(detail.summary.fullInputType),
+      fullOutputType: formatOptionalTypeScript(detail.summary.fullOutputType),
     }).pipe(
-      Effect.map(({ inputType, outputType }) => ({
+      Effect.map(({ previewInputType, previewOutputType, fullInputType, fullOutputType }) => ({
         ...detail.summary,
-        ...(inputType ? { inputType } : {}),
-        ...(outputType ? { outputType } : {}),
+        ...(previewInputType ? { previewInputType } : {}),
+        ...(previewOutputType ? { previewOutputType } : {}),
+        ...(fullInputType ? { fullInputType } : {}),
+        ...(fullOutputType ? { fullOutputType } : {}),
       })),
     );
     const detailFields = yield* Effect.all({
@@ -139,39 +153,57 @@ const persistedToolSummaryFromTool = (tool: LoadedSourceCatalogTool): SourceInsp
     tags: [...details.tags],
     method: details.method,
     pathTemplate: details.pathTemplate,
-    ...(tool.descriptor.inputType ? { inputType: tool.descriptor.inputType } : {}),
-    ...(tool.descriptor.outputType ? { outputType: tool.descriptor.outputType } : {}),
+    ...(tool.descriptor.previewInputType
+      ? { previewInputType: tool.descriptor.previewInputType }
+      : {}),
+    ...(tool.descriptor.previewOutputType
+      ? { previewOutputType: tool.descriptor.previewOutputType }
+      : {}),
   };
 };
 
-const inspectionToolDetailFromTool = (tool: LoadedSourceCatalogTool): SourceInspectionToolDetail => ({
-  summary: persistedToolSummaryFromTool(tool),
-  definitionJson: JSON.stringify({
-    capability: tool.capability,
-    executable: tool.executable,
-  }),
-  documentationJson: JSON.stringify({
-    capabilityDocs: {
-      summary: tool.capability.surface.summary,
-      description: tool.capability.surface.description,
+const inspectionToolDetailFromTool = (tool: LoadedSourceCatalogTool): SourceInspectionToolDetail => {
+  const fullInputType = tool.descriptor.inputSchema
+    ? fullTypeSignature(tool.descriptor.inputSchema)
+    : undefined;
+  const fullOutputType = tool.descriptor.outputSchema
+    ? fullTypeSignature(tool.descriptor.outputSchema)
+    : undefined;
+
+  return ({
+    summary: {
+      ...persistedToolSummaryFromTool(tool),
+      ...(fullInputType ? { fullInputType } : {}),
+      ...(fullOutputType ? { fullOutputType } : {}),
     },
-  }),
-  nativeJson: tool.executable.native?.[0]?.value
-    ? JSON.stringify(tool.executable.native[0]!.value)
-    : null,
-  callSchemaJson: tool.descriptor.inputSchema
-    ? JSON.stringify(tool.descriptor.inputSchema)
-    : null,
-  resultSchemaJson: tool.descriptor.outputSchema
-    ? JSON.stringify(tool.descriptor.outputSchema)
-    : null,
-  exampleCallJson: null,
-  exampleResultJson: null,
-});
+    definitionJson: JSON.stringify({
+      capability: tool.capability,
+      executable: tool.executable,
+    }),
+    documentationJson: JSON.stringify({
+      capabilityDocs: {
+        summary: tool.capability.surface.summary,
+        description: tool.capability.surface.description,
+      },
+    }),
+    nativeJson: tool.executable.native?.[0]?.value
+      ? JSON.stringify(tool.executable.native[0]!.value)
+      : null,
+    callSchemaJson: tool.descriptor.inputSchema
+      ? JSON.stringify(tool.descriptor.inputSchema)
+      : null,
+    resultSchemaJson: tool.descriptor.outputSchema
+      ? JSON.stringify(tool.descriptor.outputSchema)
+      : null,
+    exampleCallJson: null,
+    exampleResultJson: null,
+  });
+};
 
 const resolveSourceInspection = (input: {
   workspaceId: WorkspaceId;
   sourceId: SourceId;
+  includeSchemas: boolean;
 }) =>
   Effect.gen(function* () {
     const catalogEntry = yield* loadSourceWithCatalog({
@@ -180,7 +212,7 @@ const resolveSourceInspection = (input: {
     });
     const tools = yield* expandCatalogTools({
       catalogs: [catalogEntry],
-      includeSchemas: true,
+      includeSchemas: input.includeSchemas,
     });
 
     return {
@@ -188,6 +220,30 @@ const resolveSourceInspection = (input: {
       namespace: catalogEntry.source.namespace ?? "",
       pipelineKind: "ir" as const,
       tools,
+    };
+  });
+
+const resolveSourceInspectionTool = (input: {
+  workspaceId: WorkspaceId;
+  sourceId: SourceId;
+  toolPath: string;
+}) =>
+  Effect.gen(function* () {
+    const catalogEntry = yield* loadSourceWithCatalog({
+      workspaceId: input.workspaceId,
+      sourceId: input.sourceId,
+    });
+    const tool = yield* expandCatalogToolByPath({
+      catalogs: [catalogEntry],
+      path: input.toolPath,
+      includeSchemas: true,
+    });
+
+    return {
+      source: catalogEntry.source,
+      namespace: catalogEntry.source.namespace ?? "",
+      pipelineKind: "ir" as const,
+      tool,
     };
   });
 
@@ -239,8 +295,8 @@ const scoreTool = (input: {
     path: input.tool.path,
     score,
     ...(summary.description ? { description: summary.description } : {}),
-    ...(summary.inputType ? { inputType: summary.inputType } : {}),
-    ...(summary.outputType ? { outputType: summary.outputType } : {}),
+    ...(summary.previewInputType ? { previewInputType: summary.previewInputType } : {}),
+    ...(summary.previewOutputType ? { previewOutputType: summary.previewOutputType } : {}),
     reasons,
   };
 };
@@ -269,7 +325,10 @@ export const getSourceInspection = (input: {
   sourceId: SourceId;
 }) =>
   Effect.gen(function* () {
-    const inspection = yield* resolveSourceInspection(input);
+    const inspection = yield* resolveSourceInspection({
+      ...input,
+      includeSchemas: false,
+    });
 
     return {
       source: inspection.source,
@@ -293,11 +352,12 @@ export const getSourceInspectionToolDetail = (input: {
   toolPath: string;
 }) =>
   Effect.gen(function* () {
-    const inspection = yield* resolveSourceInspection({
+    const inspection = yield* resolveSourceInspectionTool({
       workspaceId: input.workspaceId,
       sourceId: input.sourceId,
+      toolPath: input.toolPath,
     });
-    const tool = inspection.tools.find((candidate) => candidate.path === input.toolPath);
+    const tool = inspection.tool;
 
     if (!tool) {
       return yield* Effect.fail(
@@ -327,6 +387,7 @@ export const discoverSourceInspectionTools = (input: {
     const inspection = yield* resolveSourceInspection({
       workspaceId: input.workspaceId,
       sourceId: input.sourceId,
+      includeSchemas: false,
     });
     const queryTokens = tokenize(input.payload.query);
     const results = inspection.tools

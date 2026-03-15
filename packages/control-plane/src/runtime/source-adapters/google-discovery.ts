@@ -4,10 +4,10 @@ import {
   HttpClientRequest,
 } from "@effect/platform";
 import {
+  buildGoogleDiscoveryToolPresentation,
   compileGoogleDiscoveryToolDefinitions,
   extractGoogleDiscoveryManifest,
   type GoogleDiscoveryToolProviderData,
-  googleDiscoveryProviderDataFromDefinition,
 } from "@executor/codemode-google-discovery";
 import type { Source } from "#schema";
 import { StringMapSchema } from "#schema";
@@ -178,26 +178,27 @@ const fetchGoogleDiscoveryDocumentWithHeaders = (input: {
 const googleDiscoveryCatalogOperationFromDefinition = (input: {
   manifest: Parameters<typeof compileGoogleDiscoveryToolDefinitions>[0];
   definition: ReturnType<typeof compileGoogleDiscoveryToolDefinitions>[number];
-}): GoogleDiscoveryCatalogOperationInput => ({
-  toolId: input.definition.toolId,
-  title: input.definition.name,
-  description: input.definition.description,
-  effect:
-    input.definition.method === "get" || input.definition.method === "head"
-      ? "read"
-      : input.definition.method === "delete"
-        ? "delete"
-        : "write",
-  inputSchema: input.definition.inputSchema,
-  outputSchema: input.definition.outputSchema,
-  providerData: googleDiscoveryProviderDataFromDefinition({
-    service: input.manifest.service,
-    version: input.manifest.versionName,
-    rootUrl: input.manifest.rootUrl,
-    servicePath: input.manifest.servicePath,
+}): GoogleDiscoveryCatalogOperationInput => {
+  const presentation = buildGoogleDiscoveryToolPresentation({
+    manifest: input.manifest,
     definition: input.definition,
-  }) as GoogleDiscoveryToolProviderData,
-});
+  });
+
+  return {
+    toolId: input.definition.toolId,
+    title: input.definition.name,
+    description: input.definition.description,
+    effect:
+      input.definition.method === "get" || input.definition.method === "head"
+        ? "read"
+        : input.definition.method === "delete"
+          ? "delete"
+          : "write",
+    inputSchema: presentation.inputSchema,
+    outputSchema: presentation.outputSchema,
+    providerData: presentation.providerData as GoogleDiscoveryToolProviderData,
+  };
+};
 
 const googleDiscoveryOauth2SetupConfig = (source: Source) =>
   Effect.gen(function* () {

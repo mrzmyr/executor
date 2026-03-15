@@ -9,6 +9,7 @@ import {
   applyHttpQueryPlacementsToUrl,
   applyJsonBodyPlacements,
   standardSchemaFromJsonSchema,
+  typeSignatureFromSchema,
   toTool,
   type HttpRequestPlacements,
   type ToolMetadata,
@@ -356,23 +357,26 @@ export type CreateGoogleDiscoveryToolFromDefinitionInput = {
   httpClientLayer?: Layer.Layer<HttpClient.HttpClient, never, never>;
 };
 
-export const createGoogleDiscoveryToolFromDefinition = (
-  input: CreateGoogleDiscoveryToolFromDefinitionInput,
-) => {
-  const providerData = googleDiscoveryProviderDataFromDefinition({
-    service: input.service,
-    version: input.version,
-    rootUrl: input.rootUrl,
-    servicePath: input.servicePath,
-    definition: input.definition,
-  });
-  const credentialPlacements = normalizeCredentialPlacements({
-    credentialHeaders: input.credentialHeaders,
-    credentialPlacements: input.credentialPlacements,
-  });
-  const httpClientLayer = input.httpClientLayer ?? FetchHttpClient.layer;
+export type GoogleDiscoveryToolPresentation = {
+  previewInputType: string;
+  previewOutputType: string;
+  inputSchema?: unknown;
+  outputSchema?: unknown;
+  providerData: typeof GoogleDiscoveryToolProviderDataSchema.Type;
+};
+
+export const buildGoogleDiscoveryToolPresentation = (input: {
+  manifest: {
+    service: string;
+    versionName: string;
+    rootUrl: string;
+    servicePath: string;
+    schemaRefTable?: Readonly<GoogleDiscoverySchemaRefTable>;
+  };
+  definition: GoogleDiscoveryToolDefinition;
+}): GoogleDiscoveryToolPresentation => {
   const refTable = Object.fromEntries(
-    Object.entries(input.schemaRefTable ?? {}).map(([ref, value]) => {
+    Object.entries(input.manifest.schemaRefTable ?? {}).map(([ref, value]) => {
       try {
         return [ref, JSON.parse(value) as unknown];
       } catch {
@@ -380,20 +384,65 @@ export const createGoogleDiscoveryToolFromDefinition = (
       }
     }),
   );
-  const inputSchema = materializeSchemaWithRefDefinitions({
-    schema: input.definition.inputSchema,
-    refTable,
+  const inputSchema =
+    input.definition.inputSchema === undefined
+      ? undefined
+      : materializeSchemaWithRefDefinitions({
+          schema: input.definition.inputSchema,
+          refTable,
+        });
+  const outputSchema =
+    input.definition.outputSchema === undefined
+      ? undefined
+      : materializeSchemaWithRefDefinitions({
+          schema: input.definition.outputSchema,
+          refTable,
+        });
+
+  return {
+    previewInputType: typeSignatureFromSchema(inputSchema, "unknown", Infinity),
+    previewOutputType: typeSignatureFromSchema(outputSchema, "unknown", Infinity),
+    ...(inputSchema !== undefined ? { inputSchema } : {}),
+    ...(outputSchema !== undefined ? { outputSchema } : {}),
+    providerData: googleDiscoveryProviderDataFromDefinition({
+      service: input.manifest.service,
+      version: input.manifest.versionName,
+      rootUrl: input.manifest.rootUrl,
+      servicePath: input.manifest.servicePath,
+      definition: input.definition,
+    }),
+  };
+};
+
+export const createGoogleDiscoveryToolFromDefinition = (
+  input: CreateGoogleDiscoveryToolFromDefinitionInput,
+) => {
+  const presentation = buildGoogleDiscoveryToolPresentation({
+    manifest: {
+      service: input.service,
+      versionName: input.version,
+      rootUrl: input.rootUrl,
+      servicePath: input.servicePath,
+      schemaRefTable: input.schemaRefTable,
+    },
+    definition: input.definition,
   });
+  const providerData = presentation.providerData;
+  const credentialPlacements = normalizeCredentialPlacements({
+    credentialHeaders: input.credentialHeaders,
+    credentialPlacements: input.credentialPlacements,
+  });
+  const httpClientLayer = input.httpClientLayer ?? FetchHttpClient.layer;
 
   const metadata: ToolMetadata = {
     interaction: input.definition.method === "get" || input.definition.method === "head"
       ? "auto"
       : "required",
-    ...(input.definition.inputSchema !== undefined
-      ? { inputSchema: input.definition.inputSchema }
+    ...(presentation.inputSchema !== undefined
+      ? { inputSchema: presentation.inputSchema }
       : {}),
-    ...(input.definition.outputSchema !== undefined
-      ? { outputSchema: input.definition.outputSchema }
+    ...(presentation.outputSchema !== undefined
+      ? { outputSchema: presentation.outputSchema }
       : {}),
     sourceKey: input.sourceKey,
     providerKind: "google_discovery",
@@ -403,7 +452,7 @@ export const createGoogleDiscoveryToolFromDefinition = (
   return toTool({
     tool: {
       description: input.definition.description ?? undefined,
-      inputSchema: standardSchemaFromJsonSchema(inputSchema),
+      inputSchema: standardSchemaFromJsonSchema(presentation.inputSchema ?? {}),
       execute: (args: unknown) =>
         Effect.runPromise(
           Effect.gen(function* () {

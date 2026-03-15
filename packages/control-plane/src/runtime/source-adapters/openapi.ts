@@ -10,6 +10,7 @@ import {
 import {
   buildOpenApiToolPresentation,
   compileOpenApiToolDefinitions,
+  type OpenApiRefHintTable,
   type OpenApiToolProviderData,
   extractOpenApiManifest,
 } from "@executor/codemode-openapi";
@@ -168,17 +169,21 @@ const fetchOpenApiDocumentWithHeaders = (input: {
   }).pipe(Effect.provide(FetchHttpClient.layer));
 
 const openApiCatalogOperationFromDefinition = (
-  definition: ReturnType<typeof compileOpenApiToolDefinitions>[number],
+  input: {
+    definition: ReturnType<typeof compileOpenApiToolDefinitions>[number];
+    refHintTable?: Readonly<OpenApiRefHintTable>;
+  },
 ): OpenApiCatalogOperationInput => {
   const presentation = buildOpenApiToolPresentation({
-    definition,
+    definition: input.definition,
+    refHintTable: input.refHintTable,
   });
-  const method = definition.method.toUpperCase();
+  const method = input.definition.method.toUpperCase();
 
   return {
-    toolId: definition.toolId,
-    title: definition.name,
-    description: definition.description,
+    toolId: input.definition.toolId,
+    title: input.definition.name,
+    description: input.definition.description,
     effect:
       method === "GET" || method === "HEAD"
         ? "read"
@@ -303,7 +308,11 @@ export const openApiSourceAdapter: SourceAdapter = {
             contentText: openApiDocument,
             fetchedAt: now,
           }],
-          operations: definitions.map(openApiCatalogOperationFromDefinition),
+          operations: definitions.map((definition) =>
+            openApiCatalogOperationFromDefinition({
+              definition,
+              refHintTable: manifest.refHintTable,
+            })),
         }),
         sourceHash: manifest.sourceHash,
       };

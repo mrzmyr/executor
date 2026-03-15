@@ -46,6 +46,8 @@ type GraphqlToolKind = "request" | "field";
 
 type GraphqlOperationType = "query" | "mutation";
 
+const GRAPHQL_PRESENTATION_TYPE_MAX_LENGTH = 320;
+
 type GraphqlManifestToolBase = {
   toolId: string;
   rawToolId: string | null;
@@ -100,8 +102,8 @@ export type GraphqlToolDefinition = {
 };
 
 export type GraphqlToolPresentation = {
-  inputType: string;
-  outputType: string;
+  previewInputType: string;
+  previewOutputType: string;
   inputSchema?: unknown;
   outputSchema?: unknown;
   exampleInput?: unknown;
@@ -875,7 +877,45 @@ const outputEnvelopeSchemaForField = (
       ),
       errors: {
         type: "array",
-        items: {},
+        items: {
+          type: "object",
+          properties: {
+            message: {
+              type: "string",
+              description: "GraphQL error message.",
+            },
+            path: {
+              type: "array",
+              description: "Path to the field that produced the error.",
+              items: {
+                anyOf: [
+                  { type: "string" },
+                  { type: "number" },
+                ],
+              },
+            },
+            locations: {
+              type: "array",
+              description: "Source locations for the error in the GraphQL document.",
+              items: {
+                type: "object",
+                properties: {
+                  line: { type: "number" },
+                  column: { type: "number" },
+                },
+                required: ["line", "column"],
+                additionalProperties: false,
+              },
+            },
+            extensions: {
+              type: "object",
+              description: "Additional provider-specific GraphQL error metadata.",
+              additionalProperties: true,
+            },
+          },
+          required: ["message"],
+          additionalProperties: true,
+        },
       },
     },
     required: ["data", "errors"],
@@ -1145,19 +1185,31 @@ export const buildGraphqlToolPresentation = (input: {
   const entry = input.manifest.tools.find(
     (tool) => tool.toolId === input.definition.toolId,
   );
-  const inputSchema = entry?.inputSchema;
-  const outputSchema = entry?.outputSchema;
+  const inputSchema =
+    entry?.inputSchema === undefined
+      ? undefined
+      : materializeSchemaWithRefDefinitions({
+          schema: entry.inputSchema,
+          refTable: input.manifest.schemaRefTable,
+        });
+  const outputSchema =
+    entry?.outputSchema === undefined
+      ? undefined
+      : materializeSchemaWithRefDefinitions({
+          schema: entry.outputSchema,
+          refTable: input.manifest.schemaRefTable,
+        });
 
   return {
-    inputType: typeSignatureFromSchema(
+    previewInputType: typeSignatureFromSchema(
       inputSchema,
       "unknown",
-      Infinity,
+      GRAPHQL_PRESENTATION_TYPE_MAX_LENGTH,
     ),
-    outputType: typeSignatureFromSchema(
+    previewOutputType: typeSignatureFromSchema(
       outputSchema,
       "unknown",
-      Infinity,
+      GRAPHQL_PRESENTATION_TYPE_MAX_LENGTH,
     ),
     ...(inputSchema !== undefined ? { inputSchema } : {}),
     ...(outputSchema !== undefined ? { outputSchema } : {}),
@@ -1295,15 +1347,15 @@ export const createGraphqlToolFromPersistedOperation = (input: {
         : providerData.operationType === "query"
           ? "auto"
           : "required",
-    inputType: typeSignatureFromSchema(
+    previewInputType: typeSignatureFromSchema(
       input.inputSchema,
       "unknown",
-      Infinity,
+      GRAPHQL_PRESENTATION_TYPE_MAX_LENGTH,
     ),
-    outputType: typeSignatureFromSchema(
+    previewOutputType: typeSignatureFromSchema(
       input.outputSchema,
       "unknown",
-      Infinity,
+      GRAPHQL_PRESENTATION_TYPE_MAX_LENGTH,
     ),
     ...(input.inputSchema !== undefined
       ? { inputSchema: input.inputSchema }
@@ -1382,8 +1434,8 @@ export const graphqlToolDescriptorFromDefinition = (input: {
     description: input.definition.description,
     interaction:
       input.definition.operationType === "query" ? "auto" : "required",
-    inputType: presentation.inputType,
-    outputType: presentation.outputType,
+    previewInputType: presentation.previewInputType,
+    previewOutputType: presentation.previewOutputType,
     ...(input.includeSchemas && presentation.inputSchema !== undefined
       ? { inputSchema: presentation.inputSchema }
       : {}),

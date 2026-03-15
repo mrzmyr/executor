@@ -432,10 +432,10 @@ export function toolDescriptorsFromTools(input: {
       description: definition.description,
       interaction: metadata?.interaction,
       elicitation: metadata?.elicitation,
-      inputType:
-        metadata?.inputType ?? inferTypeFromSchemaValue(inputSchema, "unknown"),
-      outputType:
-        metadata?.outputType ?? inferTypeFromSchemaValue(outputSchema, "unknown"),
+      previewInputType:
+        metadata?.previewInputType ?? inferTypeFromSchemaValue(inputSchema, "unknown"),
+      previewOutputType:
+        metadata?.previewOutputType ?? inferTypeFromSchemaValue(outputSchema, "unknown"),
       ...(inputSchema !== undefined ? { inputSchema } : {}),
       ...(outputSchema !== undefined ? { outputSchema } : {}),
       ...(metadata?.exampleInput !== undefined

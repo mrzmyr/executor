@@ -464,6 +464,7 @@ export const createOpenApiToolFromDefinition = (
   const httpClientLayer = input.httpClientLayer ?? FetchHttpClient.layer;
   const presentation = buildOpenApiToolPresentation({
     definition: input.definition,
+    refHintTable: input.refHintTable,
   });
 
   return toTool({
@@ -524,8 +525,8 @@ export const createOpenApiToolFromDefinition = (
     },
     metadata: {
       sourceKey: input.sourceKey,
-      inputType: presentation.inputType,
-      outputType: presentation.outputType,
+      previewInputType: presentation.previewInputType,
+      previewOutputType: presentation.previewOutputType,
       ...((presentation.inputSchema ?? input.definition.typing?.inputSchema) !== undefined
         ? { inputSchema: presentation.inputSchema ?? input.definition.typing?.inputSchema }
         : {}),

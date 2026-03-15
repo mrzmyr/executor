@@ -78,8 +78,8 @@ export type OnElicitation = (
 export type ToolMetadata = {
   interaction?: "auto" | "required";
   elicitation?: ElicitationRequest;
-  inputType?: string;
-  outputType?: string;
+  previewInputType?: string;
+  previewOutputType?: string;
   inputSchema?: unknown;
   outputSchema?: unknown;
   exampleInput?: unknown;
@@ -131,8 +131,8 @@ export type ToolDescriptor = {
   description?: string;
   interaction?: "auto" | "required";
   elicitation?: ElicitationRequest;
-  inputType?: string;
-  outputType?: string;
+  previewInputType?: string;
+  previewOutputType?: string;
   inputSchema?: unknown;
   outputSchema?: unknown;
   exampleInput?: unknown;
@@ -149,8 +149,8 @@ export const ToolDescriptorSchema = Schema.Struct({
     Schema.Union(Schema.Literal("auto"), Schema.Literal("required")),
   ),
   elicitation: Schema.optional(Schema.Unknown),
-  inputType: Schema.optional(Schema.String),
-  outputType: Schema.optional(Schema.String),
+  previewInputType: Schema.optional(Schema.String),
+  previewOutputType: Schema.optional(Schema.String),
   inputSchema: Schema.optional(Schema.Unknown),
   outputSchema: Schema.optional(Schema.Unknown),
   exampleInput: Schema.optional(Schema.Unknown),

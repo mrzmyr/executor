@@ -30,6 +30,9 @@ import {
   catalogSyncResultFromMcpManifestEntries,
 } from "./source-adapters/mcp";
 import { SecretMaterialResolverService } from "./secret-material-providers";
+import {
+  refreshSourceTypeDeclarationInBackground,
+} from "./source-type-declarations";
 
 const shouldIndexSource = (source: Source): boolean =>
   source.enabled
@@ -114,6 +117,13 @@ const syncSourceCatalogWithDeps = (
         context: workspaceContext,
         state: nextState,
       });
+      yield* Effect.sync(() => {
+        refreshSourceTypeDeclarationInBackground({
+          context: workspaceContext,
+          source: input.source,
+          snapshot: null,
+        });
+      });
       return;
     }
 
@@ -156,6 +166,14 @@ const syncSourceCatalogWithDeps = (
       context: workspaceContext,
       state: nextState,
     });
+
+    yield* Effect.sync(() => {
+      refreshSourceTypeDeclarationInBackground({
+        context: workspaceContext,
+        source: input.source,
+        snapshot: syncResult.snapshot,
+      });
+    });
   });
 
 const persistMcpCatalogSnapshotFromManifestWithDeps = (
@@ -183,6 +201,14 @@ const persistMcpCatalogSnapshotFromManifestWithDeps = (
         source: input.source,
         syncResult,
       }),
+    });
+
+    yield* Effect.sync(() => {
+      refreshSourceTypeDeclarationInBackground({
+        context: workspaceContext,
+        source: input.source,
+        snapshot: syncResult.snapshot,
+      });
     });
   });
 

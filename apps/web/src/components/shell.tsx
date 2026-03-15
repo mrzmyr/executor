@@ -1,7 +1,8 @@
 import { Link, Outlet, useMatchRoute } from "@tanstack/react-router";
+import { useCallback, useEffect, useState } from "react";
 import { useSources, type Source } from "@executor/react";
 import { cn } from "../lib/utils";
-import { IconPlus } from "./icons";
+import { IconPlus, IconCopy, IconCheck } from "./icons";
 import { LoadableBlock } from "./loadable";
 import { SourceFavicon } from "./source-favicon";
 
@@ -24,12 +25,86 @@ const { VITE_APP_VERSION, VITE_GITHUB_URL } = (import.meta as ImportMeta & {
   readonly env: AppMetaEnv;
 }).env;
 
+// ── useLatestVersion ─────────────────────────────────────────────────────
+
+function useLatestVersion(currentVersion: string) {
+  const [latestVersion, setLatestVersion] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    fetch("https://registry.npmjs.org/executor/latest")
+      .then((res) => res.json())
+      .then((data: { version?: string }) => {
+        if (!cancelled && data.version) setLatestVersion(data.version);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const updateAvailable =
+    latestVersion !== null && latestVersion !== currentVersion;
+
+  return { latestVersion, updateAvailable };
+}
+
+// ── UpdateCard ───────────────────────────────────────────────────────────
+
+function UpdateCard(props: { latestVersion: string }) {
+  const command = `npm i -g executor@latest`;
+  const [copied, setCopied] = useState(false);
+
+  const handleCopy = useCallback(() => {
+    void navigator.clipboard.writeText(command).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    });
+  }, [command]);
+
+  return (
+    <div className="mx-2 mb-2 rounded-xl border border-primary/25 bg-primary/[0.06] p-3">
+      <div className="flex items-center gap-2">
+        <div className="flex size-5 shrink-0 items-center justify-center rounded-full bg-primary/15">
+          <svg viewBox="0 0 16 16" fill="none" className="size-3 text-primary">
+            <path d="M8 3v7M5 7l3 3 3-3" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" />
+            <path d="M3 12h10" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
+          </svg>
+        </div>
+        <div className="min-w-0">
+          <p className="text-[11px] font-semibold text-foreground">Update available</p>
+          <p className="text-[10px] text-muted-foreground">
+            v{props.latestVersion}
+          </p>
+        </div>
+      </div>
+      <button
+        type="button"
+        onClick={handleCopy}
+        className="mt-2.5 flex w-full items-center justify-between gap-2 rounded-lg border border-border/60 bg-background/50 px-2.5 py-1.5 text-left transition-colors hover:bg-background/80"
+      >
+        <code className="truncate font-mono text-[10px] text-sidebar-foreground">
+          {command}
+        </code>
+        <span className="shrink-0 text-muted-foreground transition-colors group-hover:text-foreground">
+          {copied ? (
+            <IconCheck className="size-3 text-primary" />
+          ) : (
+            <IconCopy className="size-3" />
+          )}
+        </span>
+      </button>
+    </div>
+  );
+}
+
 // ── AppShell ─────────────────────────────────────────────────────────────
 export function AppShell() {
   const sources = useSources();
   const matchRoute = useMatchRoute();
   const isHome = matchRoute({ to: "/" });
   const isSecrets = matchRoute({ to: "/secrets" });
+  const { latestVersion, updateAvailable } = useLatestVersion(VITE_APP_VERSION);
   return (
     <div className="flex h-screen overflow-hidden">
       {/* Sidebar */}
@@ -81,17 +156,22 @@ export function AppShell() {
           </LoadableBlock>
         </nav>
 
+        {/* Update available */}
+        {updateAvailable && latestVersion && (
+          <UpdateCard latestVersion={latestVersion} />
+        )}
+
         {/* Footer */}
         <div className="shrink-0 border-t border-sidebar-border px-4 py-2.5">
-          <div className="flex flex-col items-start gap-1 text-[10px] leading-none">
-            <span className="text-muted-foreground/35">v{VITE_APP_VERSION}</span>
+          <div className="flex items-center justify-between text-[10px] leading-none">
+            <span className="text-muted-foreground/70 tabular-nums">v{VITE_APP_VERSION}</span>
             <a
               href={VITE_GITHUB_URL}
               target="_blank"
               rel="noreferrer"
-              className="text-muted-foreground/50 transition-colors hover:text-foreground"
+              className="text-muted-foreground/70 transition-colors hover:text-foreground"
             >
-              Star on GitHub
+              GitHub
             </a>
           </div>
         </div>

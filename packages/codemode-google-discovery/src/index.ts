@@ -3,6 +3,7 @@ export {
   compileGoogleDiscoveryToolDefinitions,
 } from "./google-discovery-document";
 export {
+  buildGoogleDiscoveryToolPresentation,
   createGoogleDiscoveryToolFromDefinition,
   decodeGoogleDiscoverySchemaRefTableJson,
   googleDiscoveryProviderDataFromDefinition,

@@ -13,6 +13,7 @@ import {
   type SourceInspectionDiscoverResult,
 } from "@executor/react";
 import { cn } from "../lib/utils";
+import { formatSchemaJsonForDisplay } from "../lib/schema-display";
 import { Badge, MethodBadge } from "../components/ui/badge";
 import { Button } from "../components/ui/button";
 import { LoadableBlock, EmptyState } from "../components/loadable";
@@ -536,6 +537,14 @@ function ToolListItem(props: {
 function ToolDetailPanel(props: { detail: SourceInspectionToolDetail }) {
   const { detail } = props;
   const [copiedField, setCopiedField] = useState<string | null>(null);
+  const displayedCallSchema = useMemo(
+    () => formatSchemaJsonForDisplay(detail.callSchemaJson),
+    [detail.callSchemaJson],
+  );
+  const displayedResultSchema = useMemo(
+    () => formatSchemaJsonForDisplay(detail.resultSchemaJson),
+    [detail.resultSchemaJson],
+  );
 
   const copy = useCallback((text: string, field: string) => {
     void navigator.clipboard.writeText(text).then(() => {
@@ -581,14 +590,14 @@ function ToolDetailPanel(props: { detail: SourceInspectionToolDetail }) {
 
           {/* Type signatures */}
           <div className="grid grid-cols-1 gap-3 xl:grid-cols-2">
-            <DocumentPanel title="Input" body={detail.summary.inputType ?? null} lang="typescript" empty="No input." />
-            <DocumentPanel title="Output" body={detail.summary.outputType ?? null} lang="typescript" empty="No output." />
+            <DocumentPanel title="Input" body={detail.summary.fullInputType ?? null} lang="typescript" empty="No input." />
+            <DocumentPanel title="Output" body={detail.summary.fullOutputType ?? null} lang="typescript" empty="No output." />
           </div>
 
           {/* Schemas */}
           <div className="grid grid-cols-1 gap-2 xl:grid-cols-2">
-            <DocumentPanel title="Input schema" body={detail.callSchemaJson} empty="No input schema." compact />
-            <DocumentPanel title="Output schema" body={detail.resultSchemaJson} empty="No output schema." compact />
+            <DocumentPanel title="Input schema" body={displayedCallSchema} empty="No input schema." compact />
+            <DocumentPanel title="Output schema" body={displayedResultSchema} empty="No output schema." compact />
             {detail.exampleCallJson && (
               <DocumentPanel title="Example request" body={detail.exampleCallJson} empty="" compact />
             )}

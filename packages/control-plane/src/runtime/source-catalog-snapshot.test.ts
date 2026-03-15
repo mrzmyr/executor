@@ -3,6 +3,11 @@ import { describe, expect, it } from "@effect/vitest";
 import type { Source } from "#schema";
 
 import {
+  buildGraphqlToolPresentation,
+  compileGraphqlToolDefinitions,
+  type GraphqlToolManifest,
+} from "./graphql-tools";
+import {
   createGoogleDiscoveryCatalogSnapshot,
   createGraphqlCatalogSnapshot,
   createOpenApiCatalogSnapshot,
@@ -217,5 +222,147 @@ describe("source-catalog-snapshot", () => {
     expect(executable.operationType).toBe("query");
     expect(executable.rootField).toBe("viewer");
     expect(executable.selectionMode).toBe("fixed");
+  });
+
+  it("materializes GraphQL input refs before importing into IR snapshots", () => {
+    const manifest: GraphqlToolManifest = {
+      version: 2,
+      sourceHash: "hash_graphql",
+      queryTypeName: "Query",
+      mutationTypeName: "Mutation",
+      subscriptionTypeName: null,
+      schemaRefTable: {
+        "#/$defs/graphql/input/AgentActivityCreatePromptInput": JSON.stringify({
+          type: "object",
+          properties: {
+            prompt: {
+              type: "string",
+              description: "Prompt text.",
+            },
+          },
+          required: ["prompt"],
+          additionalProperties: false,
+        }),
+      },
+      tools: [{
+        kind: "field",
+        toolId: "agentActivityCreatePrompt",
+        rawToolId: "agentActivityCreatePrompt",
+        toolName: "Agent Activity Create Prompt",
+        description: "Create a prompt activity.",
+        group: "mutation",
+        leaf: "agentActivityCreatePrompt",
+        fieldName: "agentActivityCreatePrompt",
+        operationType: "mutation",
+        operationName: "MutationAgentActivityCreatePrompt",
+        operationDocument:
+          "mutation MutationAgentActivityCreatePrompt($input: AgentActivityCreatePromptInput!) { agentActivityCreatePrompt(input: $input) { success __typename } }",
+        searchTerms: ["mutation", "agentActivityCreatePrompt", "input"],
+        inputSchema: {
+          type: "object",
+          properties: {
+            input: {
+              $ref: "#/$defs/graphql/input/AgentActivityCreatePromptInput",
+              description: "Prompt activity input.",
+            },
+            headers: {
+              type: "object",
+              additionalProperties: {
+                type: "string",
+              },
+            },
+          },
+          required: ["input"],
+          additionalProperties: false,
+        },
+        outputSchema: {
+          type: "object",
+          properties: {
+            data: {
+              type: "object",
+              properties: {
+                success: {
+                  type: "boolean",
+                },
+              },
+              required: ["success"],
+              additionalProperties: false,
+            },
+            errors: {
+              type: "array",
+              items: {
+                type: "object",
+                properties: {
+                  message: {
+                    type: "string",
+                  },
+                },
+              },
+            },
+          },
+          required: ["data", "errors"],
+          additionalProperties: false,
+        },
+      }],
+    };
+
+    const definition = compileGraphqlToolDefinitions(manifest)[0]!;
+    const presentation = buildGraphqlToolPresentation({
+      manifest,
+      definition,
+    });
+    const snapshot = createGraphqlCatalogSnapshot({
+      source: {
+        ...baseSource,
+        kind: "graphql",
+        namespace: "linear",
+      },
+      documents: [],
+      operations: [{
+        toolId: definition.toolId,
+        title: definition.name,
+        description: definition.description,
+        effect: "write",
+        inputSchema: presentation.inputSchema,
+        outputSchema: presentation.outputSchema,
+        providerData: presentation.providerData,
+      }],
+    });
+
+    expect(presentation.previewInputType).toContain("{ input: {");
+    expect(presentation.previewOutputType).not.toContain("unknown[]");
+
+    const executable = Object.values(snapshot.catalog.executables)[0]!;
+    const argumentShape = snapshot.catalog.symbols[executable.argumentShapeId];
+    expect(argumentShape?.kind).toBe("shape");
+    if (!argumentShape || argumentShape.kind !== "shape") {
+      throw new Error("Expected argument shape symbol");
+    }
+
+    expect(argumentShape.node.type).toBe("object");
+    if (argumentShape.node.type !== "object") {
+      throw new Error("Expected object argument shape");
+    }
+
+    const inputFieldShapeId = argumentShape.node.fields.input?.shapeId;
+    expect(inputFieldShapeId).toBeDefined();
+    const inputFieldShape =
+      inputFieldShapeId === undefined
+        ? undefined
+        : snapshot.catalog.symbols[inputFieldShapeId];
+
+    expect(inputFieldShape?.kind).toBe("shape");
+    if (!inputFieldShape || inputFieldShape.kind !== "shape") {
+      throw new Error("Expected GraphQL input field shape");
+    }
+
+    expect(inputFieldShape.node.type).toBe("ref");
+    expect(
+      Object.values(snapshot.catalog.diagnostics).some(
+        (diagnostic) =>
+          diagnostic.code === "unresolved_ref"
+          && diagnostic.message.includes("AgentActivityCreatePromptInput"),
+      ),
+    ).toBe(false);
   });
 });

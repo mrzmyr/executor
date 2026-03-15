@@ -1,8 +1,10 @@
+import * as Match from "effect/Match";
 import { typeSignatureFromSchema } from "@executor/codemode-core";
 
 import type {
   OpenApiExample,
   OpenApiInvocationPayload,
+  OpenApiRefHintTable,
   OpenApiToolDocumentation,
   OpenApiToolProviderData,
 } from "./openapi-types";
@@ -10,6 +12,10 @@ import {
   openApiProviderDataFromDefinition,
   type OpenApiToolDefinition,
 } from "./openapi-definitions";
+import {
+  resolveSchemaWithRefHints,
+  resolveTypingSchemasWithRefHints,
+} from "./openapi-schema-refs";
 
 const asRecord = (value: unknown): Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value)
@@ -45,9 +51,11 @@ const firstExample = (
   examples: ReadonlyArray<OpenApiExample> | undefined,
 ): OpenApiExample | undefined => examples?.[0];
 
-const fallbackInputSchemaFromInvocation = (
-  invocation: OpenApiInvocationPayload,
-): Record<string, unknown> | undefined => {
+const callInputSchemaFromInvocation = (input: {
+  invocation: OpenApiInvocationPayload;
+  requestBodySchema?: unknown;
+}): Record<string, unknown> | undefined => {
+  const invocation = input.invocation;
   const properties: Record<string, unknown> = {};
   const required: string[] = [];
 
@@ -61,7 +69,7 @@ const fallbackInputSchemaFromInvocation = (
   }
 
   if (invocation.requestBody) {
-    properties.body = {
+    properties.body = input.requestBodySchema ?? {
       type: "object",
     };
     if (invocation.requestBody.required) {
@@ -77,6 +85,79 @@ const fallbackInputSchemaFromInvocation = (
       additionalProperties: false,
     }
     : undefined;
+};
+
+const schemaRefPlaceholder = (
+  refHintKey: string | undefined,
+): Record<string, string> | undefined =>
+  typeof refHintKey === "string" && refHintKey.length > 0
+    ? { $ref: refHintKey }
+    : undefined;
+
+const inferRefHintPlaceholders = (
+  definition: OpenApiToolDefinition,
+): {
+  requestBodySchema?: Record<string, string>;
+  outputSchema?: Record<string, string>;
+} => {
+  const refHintKeys = definition.typing?.refHintKeys ?? [];
+
+  return Match.value(definition.invocation.requestBody).pipe(
+    Match.when(null, () => ({
+      outputSchema: schemaRefPlaceholder(refHintKeys[0]),
+    })),
+    Match.orElse(() => ({
+      requestBodySchema: schemaRefPlaceholder(refHintKeys[0]),
+      outputSchema: schemaRefPlaceholder(refHintKeys[1]),
+    })),
+  );
+};
+
+const resolvePresentationSchemas = (input: {
+  definition: OpenApiToolDefinition;
+  refHintTable?: Readonly<OpenApiRefHintTable>;
+}): {
+  inputSchema?: unknown;
+  outputSchema?: unknown;
+} => {
+  const resolvedTyping = resolveTypingSchemasWithRefHints(
+    input.definition.typing,
+    input.refHintTable,
+  );
+  const inferredRefPlaceholders = inferRefHintPlaceholders(input.definition);
+  const resolvedRequestBodySchema = resolveSchemaWithRefHints(
+    inferredRefPlaceholders.requestBodySchema,
+    input.refHintTable,
+  );
+  const requestBodySchema =
+    resolvedTyping.inputSchema
+    ?? (resolvedRequestBodySchema !== undefined && resolvedRequestBodySchema !== null
+      ? resolvedRequestBodySchema
+      : undefined);
+
+  const inputSchema =
+    input.definition.invocation.requestBody !== null
+      ? callInputSchemaFromInvocation({
+        invocation: input.definition.invocation,
+        ...(requestBodySchema !== undefined
+          ? { requestBodySchema }
+          : {}),
+      })
+      : resolvedTyping.inputSchema
+        ?? callInputSchemaFromInvocation({
+          invocation: input.definition.invocation,
+        });
+  const outputSchema =
+    resolvedTyping.outputSchema
+    ?? resolveSchemaWithRefHints(
+      inferredRefPlaceholders.outputSchema,
+      input.refHintTable,
+    );
+
+  return {
+    ...(inputSchema !== undefined && inputSchema !== null ? { inputSchema } : {}),
+    ...(outputSchema !== undefined && outputSchema !== null ? { outputSchema } : {}),
+  };
 };
 
 const buildExampleInput = (
@@ -113,8 +194,8 @@ const buildExampleOutput = (
 };
 
 export type OpenApiToolPresentation = {
-  inputType: string;
-  outputType: string;
+  previewInputType: string;
+  previewOutputType: string;
   inputSchema?: unknown;
   outputSchema?: unknown;
   exampleInput?: unknown;
@@ -124,17 +205,15 @@ export type OpenApiToolPresentation = {
 
 export const buildOpenApiToolPresentation = (input: {
   definition: OpenApiToolDefinition;
+  refHintTable?: Readonly<OpenApiRefHintTable>;
 }): OpenApiToolPresentation => {
-  const inputSchema =
-    input.definition.typing?.inputSchema
-    ?? fallbackInputSchemaFromInvocation(input.definition.invocation);
-  const outputSchema = input.definition.typing?.outputSchema;
+  const { inputSchema, outputSchema } = resolvePresentationSchemas(input);
   const exampleInput = buildExampleInput(input.definition.documentation);
   const exampleOutput = buildExampleOutput(input.definition.documentation);
 
   return {
-    inputType: typeSignatureFromSchema(inputSchema, "unknown", Infinity),
-    outputType: openApiOutputTypeSignatureFromSchema(outputSchema, Infinity),
+    previewInputType: typeSignatureFromSchema(inputSchema, "unknown", Infinity),
+    previewOutputType: openApiOutputTypeSignatureFromSchema(outputSchema, Infinity),
     ...(inputSchema !== undefined ? { inputSchema } : {}),
     ...(outputSchema !== undefined ? { outputSchema } : {}),
     ...(exampleInput !== undefined ? { exampleInput } : {}),

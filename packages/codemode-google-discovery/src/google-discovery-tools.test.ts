@@ -6,6 +6,7 @@ import { makeToolInvokerFromTools } from "@executor/codemode-core";
 import * as Effect from "effect/Effect";
 
 import {
+  buildGoogleDiscoveryToolPresentation,
   compileGoogleDiscoveryToolDefinitions,
   createGoogleDiscoveryToolFromDefinition,
   extractGoogleDiscoveryManifest,
@@ -122,6 +123,51 @@ describe("google discovery tools", () => {
       expect(Object.keys(manifest.schemaRefTable ?? {})).toContain(
         "#/$defs/google/ValueRange",
       );
+    }).pipe(Effect.runPromise));
+
+  it("materializes schema refs for projected tool presentation from a real Google discovery document", () =>
+    Effect.gen(function* () {
+      const discoveryDocument = yield* Effect.tryPromise({
+        try: () =>
+          fetchLiveDiscoveryDocument(
+            "https://www.googleapis.com/discovery/v1/apis/sheets/v4/rest",
+          ),
+        catch: (cause) =>
+          cause instanceof Error ? cause : new Error(String(cause)),
+      });
+
+      const manifest = yield* extractGoogleDiscoveryManifest(
+        "Google Sheets",
+        discoveryDocument,
+      );
+      const definitions = compileGoogleDiscoveryToolDefinitions(manifest);
+      const batchUpdate = definitions.find(
+        (definition) => definition.toolId === "spreadsheets.batchUpdate",
+      );
+
+      expect(batchUpdate).toBeDefined();
+
+      const presentation = buildGoogleDiscoveryToolPresentation({
+        manifest,
+        definition: batchUpdate!,
+      });
+
+      expect(presentation.previewInputType).toContain("spreadsheetId: string");
+      expect(presentation.previewInputType).toContain("repeatCell?");
+      expect(presentation.previewOutputType).toContain("spreadsheetId");
+      expect(presentation.inputSchema).toMatchObject({
+        type: "object",
+        properties: {
+          spreadsheetId: {
+            type: "string",
+          },
+          body: {
+            type: "object",
+          },
+        },
+      });
+      expect(JSON.stringify(presentation.inputSchema)).toContain("\"repeatCell\"");
+      expect(JSON.stringify(presentation.outputSchema)).toContain("\"spreadsheetId\"");
     }).pipe(Effect.runPromise));
 
   it("invokes a tool compiled from a real Google discovery document", () =>

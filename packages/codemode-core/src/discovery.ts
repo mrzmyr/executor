@@ -27,8 +27,8 @@ const searchableTextForTool = (tool: ToolDescriptor): string =>
     tool.path,
     tool.sourceKey,
     tool.description ?? "",
-    tool.inputType ?? "",
-    tool.outputType ?? "",
+    tool.previewInputType ?? "",
+    tool.previewOutputType ?? "",
   ]
     .join(" ")
     .toLowerCase();
@@ -383,8 +383,8 @@ export function createDiscoveryPrimitivesFromToolCatalog(input: {
             score: hit.score,
             description: descriptor.description,
             interaction: descriptor.interaction ?? "auto",
-            inputType: descriptor.inputType,
-            outputType: descriptor.outputType,
+            previewInputType: descriptor.previewInputType,
+            previewOutputType: descriptor.previewOutputType,
             ...(includeSchemas
               ? {
                   inputSchema: descriptor.inputSchema,

@@ -62,6 +62,7 @@ import { authArtifactSecretMaterialRefs } from "./auth-artifacts";
 import { removeAuthLeaseAndSecrets } from "./auth-leases";
 import { ControlPlaneStore, type ControlPlaneStoreShape } from "./store";
 import { getSourceAdapter } from "./source-adapters";
+import { refreshWorkspaceSourceTypeDeclarationsInBackground } from "./source-type-declarations";
 import { slugify } from "./slug";
 
 const secretRefKey = (ref: { providerId: string; handle: string }): string =>
@@ -336,9 +337,7 @@ const loadRuntimeSourceStoreDeps = (
     };
   });
 
-const buildLocalSourceRecord = (input: {
-  context: ResolvedLocalWorkspaceContext;
-  sourceArtifactStore: SourceArtifactStoreShape;
+export const buildLocalSourceRecord = (input: {
   workspaceId: WorkspaceId;
   loadedConfig: LoadedLocalExecutorConfig;
   workspaceState: LocalWorkspaceState;
@@ -386,13 +385,6 @@ const buildLocalSourceRecord = (input: {
       updatedAt: existingState?.updatedAt ?? Date.now(),
     });
 
-    const artifact = yield* input.sourceArtifactStore.read({
-      context: input.context,
-      sourceId: input.sourceId,
-    }).pipe(
-      Effect.catchAll(() => Effect.succeed(null)),
-    );
-
     const runtimeAuthArtifact = selectPreferredAuthArtifact({
       authArtifacts: input.authArtifacts.filter((artifactItem) => artifactItem.sourceId === baseSource.id),
       actorAccountId: input.actorAccountId,
@@ -403,25 +395,6 @@ const buildLocalSourceRecord = (input: {
       actorAccountId: input.actorAccountId,
       slot: "import",
     });
-
-    const sourceRecord = {
-      id: baseSource.id,
-      workspaceId: baseSource.workspaceId,
-      catalogId: artifact?.catalogId ?? stableSourceCatalogId(baseSource),
-      catalogRevisionId: artifact?.revision.id ?? stableSourceCatalogRevisionId(baseSource),
-      name: baseSource.name,
-      kind: baseSource.kind,
-      endpoint: baseSource.endpoint,
-      status: baseSource.status,
-      enabled: baseSource.enabled,
-      namespace: baseSource.namespace,
-      importAuthPolicy: baseSource.importAuthPolicy,
-      bindingConfigJson: adapter.serializeBindingConfig(baseSource),
-      sourceHash: baseSource.sourceHash,
-      lastError: baseSource.lastError,
-      createdAt: baseSource.createdAt,
-      updatedAt: baseSource.updatedAt,
-    };
 
     const source: Source = {
       ...baseSource,
@@ -435,10 +408,6 @@ const buildLocalSourceRecord = (input: {
             ? baseSource.importAuth
             : sourceAuthFromAuthArtifact(importAuthArtifact)
           : { kind: "none" },
-      sourceHash: sourceRecord.sourceHash,
-      lastError: sourceRecord.lastError,
-      createdAt: sourceRecord.createdAt,
-      updatedAt: sourceRecord.updatedAt,
     };
 
     return {
@@ -472,8 +441,6 @@ const loadSourcesInWorkspaceWithDeps = (
       (sourceId) =>
         Effect.map(
           buildLocalSourceRecord({
-            context: localWorkspace.context,
-            sourceArtifactStore: localWorkspace.sourceArtifactStore,
             workspaceId,
             loadedConfig: localWorkspace.loadedConfig,
             workspaceState: localWorkspace.workspaceState,
@@ -484,6 +451,40 @@ const loadSourcesInWorkspaceWithDeps = (
           ({ source }) => source,
         ),
     );
+  });
+
+const syncWorkspaceSourceTypeDeclarationsWithDeps = (
+  deps: RuntimeSourceStoreDeps,
+  workspaceId: WorkspaceId,
+  options: {
+    actorAccountId?: AccountId | null;
+  } = {},
+): Effect.Effect<void, Error, never> =>
+  Effect.gen(function* () {
+    const localWorkspace = yield* resolveRuntimeLocalWorkspaceFromDeps(deps, workspaceId);
+    const sources = yield* loadSourcesInWorkspaceWithDeps(deps, workspaceId, options);
+    const entries = yield* Effect.forEach(sources, (source) =>
+      Effect.map(
+        deps.sourceArtifactStore.read({
+          context: localWorkspace.context,
+          sourceId: source.id,
+        }),
+        (artifact) =>
+          artifact === null
+            ? null
+            : {
+                source,
+                snapshot: artifact.snapshot,
+              },
+      )
+    );
+
+    yield* Effect.sync(() => {
+      refreshWorkspaceSourceTypeDeclarationsInBackground({
+        context: localWorkspace.context,
+        entries: entries.filter((entry): entry is NonNullable<typeof entry> => entry !== null),
+      });
+    });
   });
 
 export const loadSourcesInWorkspace = (
@@ -611,8 +612,6 @@ const loadSourceByIdWithDeps = (deps: RuntimeSourceStoreDeps, input: {
     }
 
     const localSource = yield* buildLocalSourceRecord({
-      context: localWorkspace.context,
-      sourceArtifactStore: localWorkspace.sourceArtifactStore,
       workspaceId: input.workspaceId,
       loadedConfig: localWorkspace.loadedConfig,
       workspaceState: localWorkspace.workspaceState,
@@ -788,6 +787,7 @@ const removeSourceByIdWithDeps = (deps: RuntimeSourceStoreDeps, input: {
       sourceId: input.sourceId,
     });
     yield* removeAuthArtifactsForSource(deps.rows, input);
+    yield* syncWorkspaceSourceTypeDeclarationsWithDeps(deps, input.workspaceId);
 
     return true;
   });
@@ -938,6 +938,12 @@ const persistSourceWithDeps = (
       context: localWorkspace.context,
       state: workspaceState,
     });
+
+    yield* syncWorkspaceSourceTypeDeclarationsWithDeps(
+      deps,
+      nextSource.workspaceId,
+      options,
+    );
 
     return yield* loadSourceByIdWithDeps(deps, {
       workspaceId: nextSource.workspaceId,

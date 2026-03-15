@@ -13,6 +13,7 @@ import type {
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Match from "effect/Match";
 
 import {
   projectCatalogForAgentSdk,
@@ -89,6 +90,11 @@ const catalogNamespaceFromPath = (path: string): string => {
   return second ? `${first}.${second}` : first;
 };
 
+const descriptorPath = (descriptor: CatalogToolDescriptor): string => descriptor.path;
+
+const projectedToolPath = (projected: ProjectedCatalog, capability: Capability): string =>
+  projected.toolDescriptors[capability.id]?.toolPath.join(".") ?? "";
+
 const chooseExecutable = (catalog: CatalogV1, capability: Capability): Executable => {
   const preferred =
     capability.preferredExecutableId !== undefined
@@ -116,6 +122,11 @@ const asShape = (catalog: CatalogV1, shapeId: string | undefined): ShapeSymbol |
   return symbol?.kind === "shape" ? symbol : undefined;
 };
 
+const asJsonRecord = (value: unknown): Record<string, unknown> =>
+  typeof value === "object" && value !== null && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : {};
+
 const symbolDocsSummary = (symbol: IrSymbol | undefined): string | undefined => {
   if (!symbol || !("docs" in symbol)) {
     return undefined;
@@ -124,187 +135,424 @@ const symbolDocsSummary = (symbol: IrSymbol | undefined): string | undefined => 
   return symbol.docs?.summary ?? symbol.docs?.description;
 };
 
-const shapeToJsonSchema = (catalog: CatalogV1, rootShapeId: string): unknown => {
+export const shapeToJsonSchema = (catalog: CatalogV1, rootShapeId: string): unknown => {
   const defs: Record<string, unknown> = {};
-  const visiting = new Set<string>();
-  const built = new Set<string>();
+  const inlineStack = new Set<string>();
+  const buildingDefs = new Set<string>();
+  const builtDefs = new Set<string>();
+  const defNameByShapeId = new Map<string, string>();
+  const usedDefNames = new Set<string>();
 
-  const defNameFor = (shapeId: string) => shapeId.replace(/[^A-Za-z0-9_]/g, "_");
-
-  const visit = (shapeId: string): { $ref: string } => {
-    const defName = defNameFor(shapeId);
-    if (built.has(shapeId)) {
-      return { $ref: `#/$defs/${defName}` };
+  const sanitizeDefName = (value: string): string | null => {
+    const trimmed = value.trim();
+    if (trimmed.length === 0) {
+      return null;
     }
-    if (visiting.has(shapeId)) {
+
+    const sanitized = trimmed
+      .replace(/[^A-Za-z0-9_]+/g, "_")
+      .replace(/_+/g, "_")
+      .replace(/^_+|_+$/g, "");
+
+    if (sanitized.length === 0) {
+      return null;
+    }
+
+    return /^[A-Za-z_]/.test(sanitized) ? sanitized : `shape_${sanitized}`;
+  };
+
+  const shapeLabelCandidates = (shapeId: string, suggestions: readonly string[]): string[] => {
+    const shape = asShape(catalog, shapeId);
+    return [
+      ...suggestions,
+      shape?.title,
+      shapeId,
+    ].flatMap((candidate) =>
+      typeof candidate === "string" && candidate.trim().length > 0
+        ? [candidate]
+        : [],
+    );
+  };
+
+  const defNameFor = (shapeId: string, suggestions: readonly string[]): string => {
+    const existing = defNameByShapeId.get(shapeId);
+    if (existing) {
+      return existing;
+    }
+
+    const candidates = shapeLabelCandidates(shapeId, suggestions);
+    for (const candidate of candidates) {
+      const sanitized = sanitizeDefName(candidate);
+      if (!sanitized) {
+        continue;
+      }
+
+      if (!usedDefNames.has(sanitized)) {
+        defNameByShapeId.set(shapeId, sanitized);
+        usedDefNames.add(sanitized);
+        return sanitized;
+      }
+    }
+
+    const fallbackBase = sanitizeDefName(shapeId) ?? "shape";
+    let fallback = fallbackBase;
+    let index = 2;
+    while (usedDefNames.has(fallback)) {
+      fallback = `${fallbackBase}_${String(index)}`;
+      index += 1;
+    }
+
+    defNameByShapeId.set(shapeId, fallback);
+    usedDefNames.add(fallback);
+    return fallback;
+  };
+
+  const primaryLabel = (shapeId: string, suggestions: readonly string[], fallback: string): string =>
+    shapeLabelCandidates(shapeId, suggestions)[0] ?? fallback;
+
+  const isShallowInlineCandidate = (
+    shapeId: string,
+    depth: number,
+    seen: ReadonlySet<string>,
+  ): boolean => {
+    const shape = asShape(catalog, shapeId);
+    if (!shape) {
+      return true;
+    }
+
+    if (depth < 0 || seen.has(shapeId)) {
+      return false;
+    }
+
+    const nextSeen = new Set(seen);
+    nextSeen.add(shapeId);
+
+    return Match.value(shape.node).pipe(
+      Match.when({ type: "unknown" }, () => true),
+      Match.when({ type: "const" }, () => true),
+      Match.when({ type: "enum" }, () => true),
+      Match.when({ type: "scalar" }, () => true),
+      Match.when({ type: "ref" }, (node) =>
+        isShallowInlineCandidate(node.target, depth, nextSeen)),
+      Match.when({ type: "nullable" }, (node) =>
+        isShallowInlineCandidate(node.itemShapeId, depth - 1, nextSeen)),
+      Match.when({ type: "array" }, (node) =>
+        isShallowInlineCandidate(node.itemShapeId, depth - 1, nextSeen)),
+      Match.when({ type: "object" }, (node) => {
+        const fields = Object.values(node.fields);
+        return fields.length <= 8
+          && fields.every((field) =>
+            isShallowInlineCandidate(field.shapeId, depth - 1, nextSeen));
+      }),
+      Match.orElse(() => false),
+    );
+  };
+
+  const shouldInlineRefTarget = (shapeId: string): boolean =>
+    isShallowInlineCandidate(shapeId, 2, new Set<string>());
+
+  const buildInline = (
+    shapeId: string,
+    suggestions: readonly string[] = [],
+  ): Record<string, unknown> => {
+    if (inlineStack.has(shapeId)) {
+      return buildRef(shapeId, suggestions);
+    }
+
+    const shape = asShape(catalog, shapeId);
+    if (!shape) {
+      return {};
+    }
+
+    inlineStack.add(shapeId);
+    try {
+      return buildSchema(shapeId, suggestions);
+    } finally {
+      inlineStack.delete(shapeId);
+    }
+  };
+
+  const buildRef = (
+    shapeId: string,
+    suggestions: readonly string[] = [],
+  ): { $ref: string } => {
+    const defName = defNameFor(shapeId, suggestions);
+    if (builtDefs.has(shapeId) || buildingDefs.has(shapeId)) {
       return { $ref: `#/$defs/${defName}` };
     }
 
     const shape = asShape(catalog, shapeId);
-    visiting.add(shapeId);
+    buildingDefs.add(shapeId);
+    const alreadyInline = inlineStack.has(shapeId);
+    if (!alreadyInline) {
+      inlineStack.add(shapeId);
+    }
 
-    const schema = (() => {
-      if (!shape) {
-        return {} as Record<string, unknown>;
+    try {
+      defs[defName] = shape
+        ? buildSchema(shapeId, suggestions)
+        : {};
+      builtDefs.add(shapeId);
+    } finally {
+      buildingDefs.delete(shapeId);
+      if (!alreadyInline) {
+        inlineStack.delete(shapeId);
       }
+    }
 
-      const withDocs = (schemaValue: Record<string, unknown>): Record<string, unknown> => ({
-        ...(shape.title ? { title: shape.title } : {}),
-        ...(shape.docs?.description ? { description: shape.docs.description } : {}),
-        ...schemaValue,
-      });
-
-      switch (shape.node.type) {
-        case "unknown":
-          return withDocs({});
-        case "const":
-          return withDocs({ const: shape.node.value });
-        case "enum":
-          return withDocs({ enum: shape.node.values });
-        case "scalar":
-          return withDocs({
-            type:
-              shape.node.scalar === "bytes"
-                ? "string"
-                : shape.node.scalar,
-            ...(shape.node.scalar === "bytes" ? { format: "binary" } : {}),
-            ...(shape.node.format ? { format: shape.node.format } : {}),
-            ...(shape.node.constraints ?? {}),
-          });
-        case "ref":
-          return visit(shape.node.target);
-        case "nullable":
-          return withDocs({
-            anyOf: [
-              visit(shape.node.itemShapeId),
-              { type: "null" },
-            ],
-          });
-        case "allOf":
-          return withDocs({
-            allOf: shape.node.items.map((entry) => visit(entry)),
-          });
-        case "anyOf":
-          return withDocs({
-            anyOf: shape.node.items.map((entry) => visit(entry)),
-          });
-        case "oneOf":
-          return withDocs({
-            oneOf: shape.node.items.map((entry) => visit(entry)),
-            ...(shape.node.discriminator
-              ? {
-                  discriminator: {
-                    propertyName: shape.node.discriminator.propertyName,
-                    ...(shape.node.discriminator.mapping
-                      ? {
-                          mapping: Object.fromEntries(
-                            Object.entries(shape.node.discriminator.mapping).map(([key, value]) => [
-                              key,
-                              `#/$defs/${defNameFor(value)}`,
-                            ]),
-                          ),
-                        }
-                      : {}),
-                  },
-                }
-              : {}),
-          });
-        case "not":
-          return withDocs({
-            not: visit(shape.node.itemShapeId),
-          });
-        case "conditional":
-          return withDocs({
-            if: visit(shape.node.ifShapeId),
-            ...(shape.node.thenShapeId ? { then: visit(shape.node.thenShapeId) } : {}),
-            ...(shape.node.elseShapeId ? { else: visit(shape.node.elseShapeId) } : {}),
-          });
-        case "array":
-          return withDocs({
-            type: "array",
-            items: visit(shape.node.itemShapeId),
-            ...(shape.node.minItems !== undefined ? { minItems: shape.node.minItems } : {}),
-            ...(shape.node.maxItems !== undefined ? { maxItems: shape.node.maxItems } : {}),
-          });
-        case "tuple":
-          return withDocs({
-            type: "array",
-            prefixItems: shape.node.itemShapeIds.map((entry) => visit(entry)),
-            ...(shape.node.additionalItems !== undefined
-              ? {
-                  items:
-                    typeof shape.node.additionalItems === "boolean"
-                      ? shape.node.additionalItems
-                      : visit(shape.node.additionalItems),
-                }
-              : {}),
-          });
-        case "map":
-          return withDocs({
-            type: "object",
-            additionalProperties: visit(shape.node.valueShapeId),
-          });
-        case "object":
-          return withDocs({
-            type: "object",
-            properties: Object.fromEntries(
-              Object.entries(shape.node.fields).map(([key, field]) => [
-                key,
-                {
-                  ...(visit(field.shapeId)),
-                  ...(field.docs?.description ? { description: field.docs.description } : {}),
-                },
-              ]),
-            ),
-            ...(shape.node.required && shape.node.required.length > 0
-              ? { required: shape.node.required }
-              : {}),
-            ...(shape.node.additionalProperties !== undefined
-              ? {
-                  additionalProperties:
-                    typeof shape.node.additionalProperties === "boolean"
-                      ? shape.node.additionalProperties
-                      : visit(shape.node.additionalProperties),
-                }
-              : {}),
-            ...(shape.node.patternProperties
-              ? {
-                  patternProperties: Object.fromEntries(
-                    Object.entries(shape.node.patternProperties).map(([key, value]) => [
-                      key,
-                      visit(value),
-                    ]),
-                  ),
-                }
-              : {}),
-          });
-        case "graphqlInterface":
-          return withDocs({
-            type: "object",
-            properties: Object.fromEntries(
-              Object.entries(shape.node.fields).map(([key, field]) => [
-                key,
-                visit(field.shapeId),
-              ]),
-            ),
-          });
-        case "graphqlUnion":
-          return withDocs({
-            oneOf: shape.node.memberTypeIds.map((entry) => visit(entry)),
-          });
-      }
-    })();
-
-    visiting.delete(shapeId);
-    built.add(shapeId);
-    defs[defName] = schema;
     return { $ref: `#/$defs/${defName}` };
   };
 
-  const rootRef = visit(rootShapeId);
+  const buildSchema = (
+    shapeId: string,
+    suggestions: readonly string[] = [],
+  ): Record<string, unknown> => {
+    const shape = asShape(catalog, shapeId);
+    if (!shape) {
+      return {};
+    }
+
+    const label = primaryLabel(shapeId, suggestions, "shape");
+    const withDocs = (schemaValue: Record<string, unknown>): Record<string, unknown> => ({
+      ...(shape.title ? { title: shape.title } : {}),
+      ...(shape.docs?.description ? { description: shape.docs.description } : {}),
+      ...schemaValue,
+    });
+
+    return Match.value(shape.node).pipe(
+      Match.when({ type: "unknown" }, () => withDocs({})),
+      Match.when({ type: "const" }, (node) => withDocs({ const: node.value })),
+      Match.when({ type: "enum" }, (node) => withDocs({ enum: node.values })),
+      Match.when({ type: "scalar" }, (node) =>
+        withDocs({
+          type: node.scalar === "bytes" ? "string" : node.scalar,
+          ...(node.scalar === "bytes" ? { format: "binary" } : {}),
+          ...(node.format ? { format: node.format } : {}),
+          ...(node.constraints ?? {}),
+        })),
+      Match.when({ type: "ref" }, (node) =>
+        shouldInlineRefTarget(node.target)
+          ? buildInline(node.target, suggestions)
+          : buildRef(node.target, suggestions)),
+      Match.when({ type: "nullable" }, (node) =>
+        withDocs({
+          anyOf: [
+            buildInline(node.itemShapeId, suggestions),
+            { type: "null" },
+          ],
+        })),
+      Match.when({ type: "allOf" }, (node) =>
+        withDocs({
+          allOf: node.items.map((entry, index) =>
+            buildInline(entry, [`${label}_allOf_${String(index + 1)}`])),
+        })),
+      Match.when({ type: "anyOf" }, (node) =>
+        withDocs({
+          anyOf: node.items.map((entry, index) =>
+            buildInline(entry, [`${label}_anyOf_${String(index + 1)}`])),
+        })),
+      Match.when({ type: "oneOf" }, (node) =>
+        withDocs({
+          oneOf: node.items.map((entry, index) =>
+            buildInline(entry, [`${label}_option_${String(index + 1)}`])),
+          ...(node.discriminator
+            ? {
+                discriminator: {
+                  propertyName: node.discriminator.propertyName,
+                  ...(node.discriminator.mapping
+                    ? {
+                        mapping: Object.fromEntries(
+                          Object.entries(node.discriminator.mapping).map(([key, value]) => [
+                            key,
+                            buildRef(value, [key, `${label}_${key}`]).$ref,
+                          ]),
+                        ),
+                      }
+                    : {}),
+                },
+              }
+            : {}),
+        })),
+      Match.when({ type: "not" }, (node) =>
+        withDocs({
+          not: buildInline(node.itemShapeId, [`${label}_not`]),
+        })),
+      Match.when({ type: "conditional" }, (node) =>
+        withDocs({
+          if: buildInline(node.ifShapeId, [`${label}_if`]),
+          ...(node.thenShapeId
+            ? { then: buildInline(node.thenShapeId, [`${label}_then`]) }
+            : {}),
+          ...(node.elseShapeId
+            ? { else: buildInline(node.elseShapeId, [`${label}_else`]) }
+            : {}),
+        })),
+      Match.when({ type: "array" }, (node) =>
+        withDocs({
+          type: "array",
+          items: buildInline(node.itemShapeId, [`${label}_item`]),
+          ...(node.minItems !== undefined ? { minItems: node.minItems } : {}),
+          ...(node.maxItems !== undefined ? { maxItems: node.maxItems } : {}),
+        })),
+      Match.when({ type: "tuple" }, (node) =>
+        withDocs({
+          type: "array",
+          prefixItems: node.itemShapeIds.map((entry, index) =>
+            buildInline(entry, [`${label}_item_${String(index + 1)}`])),
+          ...(node.additionalItems !== undefined
+            ? {
+                items:
+                  typeof node.additionalItems === "boolean"
+                    ? node.additionalItems
+                    : buildInline(node.additionalItems, [`${label}_item_rest`]),
+              }
+            : {}),
+        })),
+      Match.when({ type: "map" }, (node) =>
+        withDocs({
+          type: "object",
+          additionalProperties: buildInline(node.valueShapeId, [`${label}_value`]),
+        })),
+      Match.when({ type: "object" }, (node) =>
+        withDocs({
+          type: "object",
+          properties: Object.fromEntries(
+            Object.entries(node.fields).map(([key, field]) => [
+              key,
+              {
+                ...buildInline(field.shapeId, [key]),
+                ...(field.docs?.description ? { description: field.docs.description } : {}),
+              },
+            ]),
+          ),
+          ...(node.required && node.required.length > 0
+            ? { required: node.required }
+            : {}),
+          ...(node.additionalProperties !== undefined
+            ? {
+                additionalProperties:
+                  typeof node.additionalProperties === "boolean"
+                    ? node.additionalProperties
+                    : buildInline(node.additionalProperties, [`${label}_additionalProperty`]),
+              }
+            : {}),
+          ...(node.patternProperties
+            ? {
+                patternProperties: Object.fromEntries(
+                  Object.entries(node.patternProperties).map(([key, value]) => [
+                    key,
+                    buildInline(value, [`${label}_patternProperty`]),
+                  ]),
+                ),
+              }
+            : {}),
+        })),
+      Match.when({ type: "graphqlInterface" }, (node) =>
+        withDocs({
+          type: "object",
+          properties: Object.fromEntries(
+            Object.entries(node.fields).map(([key, field]) => [
+              key,
+              buildInline(field.shapeId, [key]),
+            ]),
+          ),
+        })),
+      Match.when({ type: "graphqlUnion" }, (node) =>
+        withDocs({
+          oneOf: node.memberTypeIds.map((entry, index) =>
+            buildInline(entry, [`${label}_member_${String(index + 1)}`])),
+        })),
+      Match.exhaustive,
+    );
+  };
+
+  const buildRootSchema = (
+    shapeId: string,
+    suggestions: readonly string[] = [],
+  ): Record<string, unknown> => {
+    const shape = asShape(catalog, shapeId);
+    if (!shape) {
+      return {};
+    }
+
+    return Match.value(shape.node).pipe(
+      Match.when({ type: "ref" }, (node) => buildRootSchema(node.target, suggestions)),
+      Match.orElse(() => buildInline(shapeId, suggestions)),
+    );
+  };
+
+  const rootSchema = buildRootSchema(rootShapeId, ["input"]);
+  return Object.keys(defs).length > 0
+    ? {
+        ...rootSchema,
+        $defs: defs,
+      }
+    : rootSchema;
+};
+
+const graphqlErrorItemSchema = (): Record<string, unknown> => ({
+  type: "object",
+  properties: {
+    message: {
+      type: "string",
+      description: "GraphQL error message.",
+    },
+    path: {
+      type: "array",
+      description: "Path to the field that produced the error.",
+      items: {
+        anyOf: [
+          { type: "string" },
+          { type: "number" },
+        ],
+      },
+    },
+    locations: {
+      type: "array",
+      description: "Source locations for the error in the GraphQL document.",
+      items: {
+        type: "object",
+        properties: {
+          line: { type: "number" },
+          column: { type: "number" },
+        },
+        required: ["line", "column"],
+        additionalProperties: false,
+      },
+    },
+    extensions: {
+      type: "object",
+      description: "Additional provider-specific GraphQL error metadata.",
+      additionalProperties: true,
+    },
+  },
+  required: ["message"],
+  additionalProperties: true,
+});
+
+const applyGraphqlSchemaHints = (executable: Executable, schema: unknown): unknown => {
+  if (executable.protocol !== "graphql") {
+    return schema;
+  }
+
+  const root = asJsonRecord(schema);
+  const properties = asJsonRecord(root.properties);
+  const errors = asJsonRecord(properties.errors);
+  const errorItems = asJsonRecord(errors.items);
+
+  if (errors.type !== "array" || Object.keys(errorItems).length > 0) {
+    return schema;
+  }
+
   return {
-    ...rootRef,
-    $defs: defs,
+    ...root,
+    properties: {
+      ...properties,
+      errors: {
+        ...errors,
+        items: graphqlErrorItemSchema(),
+      },
+    },
   };
 };
 
@@ -324,10 +572,14 @@ const codemodeDescriptorFromCapability = (input: {
   const inputSchema = input.includeSchemas
     ? shapeToJsonSchema(input.projected.catalog, descriptor.callShapeId)
     : undefined;
-  const outputSchema =
+  const rawOutputSchema =
     input.includeSchemas && descriptor.resultShapeId
       ? shapeToJsonSchema(input.projected.catalog, descriptor.resultShapeId)
       : undefined;
+  const outputSchema =
+    rawOutputSchema === undefined
+      ? undefined
+      : applyGraphqlSchemaHints(input.executable, rawOutputSchema);
 
   return {
     path: path as CatalogToolDescriptor["path"],
@@ -338,12 +590,12 @@ const codemodeDescriptorFromCapability = (input: {
     ...(outputSchema !== undefined ? { outputSchema } : {}),
     ...(inputSchema !== undefined
       ? {
-          inputType: typeSignatureFromSchema(inputSchema, "unknown"),
+          previewInputType: typeSignatureFromSchema(inputSchema, "unknown"),
         }
       : {}),
     ...(outputSchema !== undefined
       ? {
-          outputType: typeSignatureFromSchema(outputSchema, "unknown"),
+          previewOutputType: typeSignatureFromSchema(outputSchema, "unknown"),
         }
       : {}),
     providerKind: input.executable.protocol,
@@ -353,6 +605,53 @@ const codemodeDescriptorFromCapability = (input: {
       protocol: input.executable.protocol,
     },
   };
+};
+
+const loadedCatalogToolFromCapability = (input: {
+  catalogEntry: LoadedSourceCatalog;
+  capability: Capability;
+  includeSchemas: boolean;
+}): LoadedSourceCatalogTool => {
+  const executable = chooseExecutable(input.catalogEntry.projected.catalog, input.capability);
+  const descriptor = codemodeDescriptorFromCapability({
+    source: input.catalogEntry.source,
+    projected: input.catalogEntry.projected,
+    capability: input.capability,
+    executable,
+    includeSchemas: input.includeSchemas,
+  });
+  const path = descriptorPath(descriptor);
+  const searchDoc = input.catalogEntry.projected.searchDocs[input.capability.id];
+  const searchNamespace = catalogNamespaceFromPath(path);
+  const searchText = [
+    path,
+    searchNamespace,
+    input.catalogEntry.source.name,
+    input.capability.surface.title,
+    input.capability.surface.summary,
+    input.capability.surface.description,
+    ...(searchDoc?.tags ?? []),
+    ...(searchDoc?.protocolHints ?? []),
+    ...(searchDoc?.authHints ?? []),
+  ]
+    .filter((part): part is string => typeof part === "string" && part.length > 0)
+    .join(" ")
+    .toLowerCase();
+
+  return {
+    path,
+    searchNamespace,
+    searchText,
+    source: input.catalogEntry.source,
+    sourceRecord: input.catalogEntry.sourceRecord,
+    revision: input.catalogEntry.revision,
+    capabilityId: input.capability.id,
+    executableId: executable.id,
+    capability: input.capability,
+    executable,
+    descriptor,
+    projectedCatalog: input.catalogEntry.projected.catalog,
+  } satisfies LoadedSourceCatalogTool;
 };
 
 const sourceRecordFromCatalogArtifact = (input: {
@@ -593,49 +892,35 @@ export const expandCatalogTools = (input: {
 }): Effect.Effect<readonly LoadedSourceCatalogTool[], Error, never> =>
   Effect.succeed(
     input.catalogs.flatMap((catalogEntry) =>
-      Object.values(catalogEntry.catalog.capabilities).map((capability) => {
-        const executable = chooseExecutable(catalogEntry.projected.catalog, capability);
-        const descriptor = codemodeDescriptorFromCapability({
-          source: catalogEntry.source,
-          projected: catalogEntry.projected,
+      Object.values(catalogEntry.catalog.capabilities).map((capability) =>
+        loadedCatalogToolFromCapability({
+          catalogEntry,
           capability,
-          executable,
           includeSchemas: input.includeSchemas,
-        });
-        const path = descriptor.path;
-        const searchDoc = catalogEntry.projected.searchDocs[capability.id];
-        const searchNamespace = catalogNamespaceFromPath(path);
-        const searchText = [
-          path,
-          searchNamespace,
-          catalogEntry.source.name,
-          capability.surface.title,
-          capability.surface.summary,
-          capability.surface.description,
-          ...(searchDoc?.tags ?? []),
-          ...(searchDoc?.protocolHints ?? []),
-          ...(searchDoc?.authHints ?? []),
-        ]
-          .filter((part): part is string => typeof part === "string" && part.length > 0)
-          .join(" ")
-          .toLowerCase();
-
-        return {
-          path,
-          searchNamespace,
-          searchText,
-          source: catalogEntry.source,
-          sourceRecord: catalogEntry.sourceRecord,
-          revision: catalogEntry.revision,
-          capabilityId: capability.id,
-          executableId: executable.id,
-          capability,
-          executable,
-          descriptor,
-          projectedCatalog: catalogEntry.projected.catalog,
-        } satisfies LoadedSourceCatalogTool;
-      }),
+        })),
     ),
+  );
+
+export const expandCatalogToolByPath = (input: {
+  catalogs: readonly LoadedSourceCatalog[];
+  path: string;
+  includeSchemas: boolean;
+}): Effect.Effect<LoadedSourceCatalogTool | null, Error, never> =>
+  Effect.succeed(
+    input.catalogs
+      .flatMap((catalogEntry) =>
+        Object.values(catalogEntry.catalog.capabilities).flatMap((capability) => {
+          return projectedToolPath(catalogEntry.projected, capability) === input.path
+            ? [
+                loadedCatalogToolFromCapability({
+                  catalogEntry,
+                  capability,
+                  includeSchemas: input.includeSchemas,
+                }),
+              ]
+            : [];
+        }))
+      .at(0) ?? null,
   );
 
 export const loadWorkspaceSourceCatalogToolIndex = (input: {
@@ -686,11 +971,11 @@ export const loadWorkspaceSourceCatalogToolByPath = (input: {
       workspaceId: input.workspaceId,
       actorAccountId: input.actorAccountId,
     });
-    const tools = yield* expandCatalogTools({
+    const tool = yield* expandCatalogToolByPath({
       catalogs,
+      path: input.path,
       includeSchemas: input.includeSchemas,
     });
-    const tool = tools.find((entry) => entry.path === input.path) ?? null;
     return tool
       ? {
           path: tool.path,
