@@ -2,7 +2,6 @@ import {
   ControlPlaneBadRequestError,
   ControlPlaneStorageError,
 } from "../api/errors";
-import { ControlPlanePersistenceError } from "#persistence";
 import * as Effect from "effect/Effect";
 
 import {
@@ -11,26 +10,14 @@ import {
 } from "./operation-errors";
 export type Mutable<T> = { -readonly [K in keyof T]: T[K] };
 
-const isUniqueViolation = (error: ControlPlanePersistenceError): boolean =>
-  error.kind === "unique_violation";
-
-export const mapPersistenceError = <A>(
+export const mapPersistenceError = <A, R>(
   operation: OperationErrorsLike,
-  effect: Effect.Effect<A, ControlPlanePersistenceError | Error>,
-): Effect.Effect<A, ControlPlaneBadRequestError | ControlPlaneStorageError> =>
+  effect: Effect.Effect<A, Error, R>,
+): Effect.Effect<A, ControlPlaneBadRequestError | ControlPlaneStorageError, R> =>
   effect.pipe(
     Effect.mapError((error) => {
       const errors = asOperationErrors(operation);
-      if (error instanceof ControlPlanePersistenceError) {
-        return isUniqueViolation(error)
-          ? errors.badRequest("Unique constraint violation", error.details ?? "duplicate key")
-          : errors.storage(error);
-      }
-
-      return errors.unknownStorage(
-        error,
-        error.message,
-      );
+      return errors.storage(error);
     }),
   );
 

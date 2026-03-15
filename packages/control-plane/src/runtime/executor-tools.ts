@@ -18,25 +18,33 @@ import {
 import * as Effect from "effect/Effect";
 import * as Cause from "effect/Cause";
 import * as Exit from "effect/Exit";
+import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import type { RuntimeLocalWorkspaceState } from "./local-runtime-context";
-import { RuntimeLocalWorkspaceService } from "./local-runtime-context";
+import {
+  InstallationStore,
+  type LocalStorageServices,
+  LocalInstallationStore,
+  LocalSourceArtifactStore,
+  LocalWorkspaceConfigStore,
+  LocalWorkspaceStateStore,
+  SourceArtifactStore,
+  WorkspaceConfigStore,
+  WorkspaceStateStore,
+} from "./local-storage";
 
 /** Run an Effect as a Promise, preserving the original error (not FiberFailure). */
 const runEffect = async <A>(
-  effect: Effect.Effect<A, unknown, never>,
-  runtimeLocalWorkspace: RuntimeLocalWorkspaceState | null = null,
+  effect: Effect.Effect<A, unknown, LocalStorageServices>,
+  _runtimeLocalWorkspace: RuntimeLocalWorkspaceState | null = null,
 ): Promise<A> => {
-  const provided =
-    runtimeLocalWorkspace === null
-      ? effect
-      : effect.pipe(
-          Effect.provideService(
-            RuntimeLocalWorkspaceService,
-            runtimeLocalWorkspace,
-          ),
-        );
-  const exit = await Effect.runPromiseExit(provided);
+  const baseLayer = Layer.mergeAll(
+    Layer.succeed(InstallationStore, LocalInstallationStore),
+    Layer.succeed(WorkspaceConfigStore, LocalWorkspaceConfigStore),
+    Layer.succeed(WorkspaceStateStore, LocalWorkspaceStateStore),
+    Layer.succeed(SourceArtifactStore, LocalSourceArtifactStore),
+  );
+  const exit = await Effect.runPromiseExit(effect.pipe(Effect.provide(baseLayer)));
   if (Exit.isSuccess(exit)) return exit.value;
   throw Cause.squash(exit.cause);
 };

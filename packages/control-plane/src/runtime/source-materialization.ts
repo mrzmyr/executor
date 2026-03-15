@@ -1,4 +1,3 @@
-import type { SqlControlPlaneRows } from "#persistence";
 import type {
   AccountId,
   Source,
@@ -6,16 +5,16 @@ import type {
 } from "#schema";
 import * as Effect from "effect/Effect";
 
-import {
-  buildLocalSourceArtifact,
-  writeLocalSourceArtifact,
-} from "./local-source-artifacts";
+import type { ControlPlaneStoreShape } from "./store";
 import {
   requireRuntimeLocalWorkspace,
 } from "./local-runtime-context";
 import {
-  loadLocalWorkspaceState,
-  writeLocalWorkspaceState,
+  type WorkspaceStorageServices,
+  SourceArtifactStore,
+  WorkspaceStateStore,
+} from "./local-storage";
+import {
   type LocalWorkspaceState,
 } from "./local-workspace-state";
 import { resolveSourceAuthMaterial } from "./source-auth-material";
@@ -24,7 +23,6 @@ import {
 } from "./source-adapters";
 import {
   materializationFromMcpManifestEntries,
-  persistMcpRecipeRevisionFromManifestEntries,
 } from "./source-adapters/mcp";
 import type {
   ResolveSecretMaterial as ResolveSourceSecretMaterial,
@@ -36,16 +34,20 @@ const shouldIndexSource = (source: Source): boolean =>
   && getSourceAdapterForSource(source).family !== "internal";
 
 export const syncSourceMaterialization = (input: {
-  rows: SqlControlPlaneRows;
+  rows: ControlPlaneStoreShape;
   source: Source;
   actorAccountId?: AccountId | null;
   resolveSecretMaterial: ResolveSourceSecretMaterial;
-}): Effect.Effect<void, Error, never> =>
+}): Effect.Effect<void, Error, WorkspaceStorageServices> =>
   Effect.gen(function* () {
     const runtimeLocalWorkspace = yield* requireRuntimeLocalWorkspace(input.source.workspaceId);
+    const workspaceStateStore = yield* WorkspaceStateStore;
+    const sourceArtifactStore = yield* SourceArtifactStore;
 
     if (!shouldIndexSource(input.source)) {
-      const state = yield* loadLocalWorkspaceState(runtimeLocalWorkspace.context);
+      const state = yield* workspaceStateStore.load(
+        runtimeLocalWorkspace.context,
+      );
       const existingSourceState = state.sources[input.source.id];
       const nextState: LocalWorkspaceState = {
         ...state,
@@ -60,7 +62,7 @@ export const syncSourceMaterialization = (input: {
           },
         },
       };
-      yield* writeLocalWorkspaceState({
+      yield* workspaceStateStore.write({
         context: runtimeLocalWorkspace.context,
         state: nextState,
       });
@@ -80,16 +82,18 @@ export const syncSourceMaterialization = (input: {
           resolveSecretMaterial: input.resolveSecretMaterial,
         }),
     });
-    yield* writeLocalSourceArtifact({
+    yield* sourceArtifactStore.write({
       context: runtimeLocalWorkspace.context,
       sourceId: input.source.id,
-      artifact: buildLocalSourceArtifact({
+      artifact: sourceArtifactStore.build({
         source: input.source,
         materialization,
       }),
     });
 
-    const state = yield* loadLocalWorkspaceState(runtimeLocalWorkspace.context);
+    const state = yield* workspaceStateStore.load(
+      runtimeLocalWorkspace.context,
+    );
     const existingSourceState = state.sources[input.source.id];
     const nextState: LocalWorkspaceState = {
       ...state,
@@ -104,31 +108,30 @@ export const syncSourceMaterialization = (input: {
         },
       },
     };
-    yield* writeLocalWorkspaceState({
+    yield* workspaceStateStore.write({
       context: runtimeLocalWorkspace.context,
       state: nextState,
     });
   });
 
 export const persistMcpRecipeMaterializationFromManifest = (input: {
-  rows: SqlControlPlaneRows;
+  rows: ControlPlaneStoreShape;
   source: Source;
-  manifestEntries: Parameters<
-    typeof persistMcpRecipeRevisionFromManifestEntries
-  >[0]["manifestEntries"];
-}): Effect.Effect<void, Error, never> =>
+  manifestEntries: Parameters<typeof materializationFromMcpManifestEntries>[0]["manifestEntries"];
+}): Effect.Effect<void, Error, WorkspaceStorageServices> =>
   Effect.gen(function* () {
     const runtimeLocalWorkspace = yield* requireRuntimeLocalWorkspace(input.source.workspaceId);
+    const sourceArtifactStore = yield* SourceArtifactStore;
     const materialization = materializationFromMcpManifestEntries({
       recipeRevisionId: "src_recipe_rev_materialization" as never,
       endpoint: input.source.endpoint,
       manifestEntries: input.manifestEntries,
     });
 
-    yield* writeLocalSourceArtifact({
+    yield* sourceArtifactStore.write({
       context: runtimeLocalWorkspace.context,
       sourceId: input.source.id,
-      artifact: buildLocalSourceArtifact({
+      artifact: sourceArtifactStore.build({
         source: input.source,
         materialization,
       }),

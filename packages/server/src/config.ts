@@ -11,7 +11,6 @@ export const EXECUTOR_LOCAL_DATA_DIR_ENV = "EXECUTOR_LOCAL_DATA_DIR";
 export const EXECUTOR_SERVER_PID_FILE_ENV = "EXECUTOR_SERVER_PID_FILE";
 export const EXECUTOR_SERVER_LOG_FILE_ENV = "EXECUTOR_SERVER_LOG_FILE";
 export const EXECUTOR_WEB_ASSETS_DIR_ENV = "EXECUTOR_WEB_ASSETS_DIR";
-export const EXECUTOR_MIGRATIONS_DIR_ENV = "EXECUTOR_MIGRATIONS_DIR";
 
 const trim = (value: string | undefined): string | undefined => {
   const candidate = value?.trim();

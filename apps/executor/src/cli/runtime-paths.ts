@@ -3,7 +3,6 @@ import { dirname, extname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import {
-  EXECUTOR_MIGRATIONS_DIR_ENV,
   EXECUTOR_WEB_ASSETS_DIR_ENV,
 } from "@executor/server";
 
@@ -92,21 +91,4 @@ export const resolveRuntimeWebAssetsDir = (): string | null => {
   }
 
   return resolveIfExists(resolve(sourceDir, "../../../web/dist"));
-};
-
-export const resolveRuntimeMigrationsDir = (): string | null => {
-  const explicit = resolveIfExists(process.env[EXECUTOR_MIGRATIONS_DIR_ENV]);
-  if (explicit) {
-    return explicit;
-  }
-
-  const resourcesRoot = resolveRuntimeResourcesRoot();
-  const bundled = resourcesRoot
-    ? resolveIfExists(resolve(resourcesRoot, "migrations"))
-    : null;
-  if (bundled) {
-    return bundled;
-  }
-
-  return resolveIfExists(resolve(sourceDir, "../../../../packages/control-plane/drizzle"));
 };

@@ -4,7 +4,6 @@ import { promises as fs } from "node:fs";
 import { lstatSync, realpathSync } from "node:fs";
 import { isAbsolute } from "node:path";
 
-import type { SqlControlPlaneRows } from "#persistence";
 import {
   type LocalConfigSecretProvider,
   type LocalExecutorConfig,
@@ -17,15 +16,16 @@ import * as Option from "effect/Option";
 
 import { resolveConfigRelativePath } from "./local-config";
 import { fromConfigSecretProviderId } from "./local-config-secrets";
+import type { ControlPlaneStoreShape } from "./store";
 
 export const ENV_SECRET_PROVIDER_ID = "env";
 export const PARAMS_SECRET_PROVIDER_ID = "params";
 export const KEYCHAIN_SECRET_PROVIDER_ID = "keychain";
-export const POSTGRES_SECRET_PROVIDER_ID = "postgres";
+export const LOCAL_SECRET_PROVIDER_ID = "local";
 
 export type SecretStoreProviderId =
   | typeof KEYCHAIN_SECRET_PROVIDER_ID
-  | typeof POSTGRES_SECRET_PROVIDER_ID;
+  | typeof LOCAL_SECRET_PROVIDER_ID;
 
 export type SecretMaterialResolveContext = {
   params?: Readonly<Record<string, string | undefined>>;
@@ -47,7 +47,7 @@ export type DeleteSecretMaterial = (
 ) => Effect.Effect<boolean, Error, never>;
 
 type SecretMaterialProviderRuntime = {
-  rows: SqlControlPlaneRows;
+  rows: ControlPlaneStoreShape;
   env: NodeJS.ProcessEnv;
   dangerouslyAllowEnvSecrets: boolean;
   keychainServiceName: string;
@@ -106,8 +106,10 @@ export const parseSecretStoreProviderId = (value: string | undefined): SecretSto
     return KEYCHAIN_SECRET_PROVIDER_ID;
   }
 
-  if (normalized === POSTGRES_SECRET_PROVIDER_ID) {
-    return POSTGRES_SECRET_PROVIDER_ID;
+  if (
+    normalized === LOCAL_SECRET_PROVIDER_ID
+  ) {
+    return LOCAL_SECRET_PROVIDER_ID;
   }
 
   return null;
@@ -119,7 +121,7 @@ const resolveDangerouslyAllowEnvSecrets = (value: boolean | undefined): boolean 
 const resolveSecretStoreProviderId = (value: SecretStoreProviderId | undefined): SecretStoreProviderId =>
   value
   ?? parseSecretStoreProviderId(process.env[SECRET_STORE_PROVIDER_ENV])
-  ?? POSTGRES_SECRET_PROVIDER_ID;
+  ?? LOCAL_SECRET_PROVIDER_ID;
 
 const resolveKeychainServiceName = (value: string | undefined): string =>
   trimOrNull(value)
@@ -239,7 +241,7 @@ const createEnvSecretMaterialProvider = (): SecretMaterialProvider => ({
   remove: () => Effect.succeed(false),
 });
 
-const createPostgresSecretMaterialProvider = (): SecretMaterialProvider => ({
+const createLocalSecretMaterialProvider = (): SecretMaterialProvider => ({
   resolve: ({ ref, runtime }) =>
     Effect.gen(function* () {
       const materialId = SecretMaterialIdSchema.make(ref.handle);
@@ -265,7 +267,7 @@ const createPostgresSecretMaterialProvider = (): SecretMaterialProvider => ({
       });
 
       return {
-        providerId: POSTGRES_SECRET_PROVIDER_ID,
+        providerId: LOCAL_SECRET_PROVIDER_ID,
         handle: id,
       } satisfies SecretRef;
     }),
@@ -467,7 +469,7 @@ const createSecretMaterialProviderRegistry = (): SecretMaterialProviderRegistry 
     [PARAMS_SECRET_PROVIDER_ID, createParamsSecretMaterialProvider()],
     [ENV_SECRET_PROVIDER_ID, createEnvSecretMaterialProvider()],
     [KEYCHAIN_SECRET_PROVIDER_ID, createKeychainSecretMaterialProvider()],
-    [POSTGRES_SECRET_PROVIDER_ID, createPostgresSecretMaterialProvider()],
+    [LOCAL_SECRET_PROVIDER_ID, createLocalSecretMaterialProvider()],
   ]);
 
 const getSecretMaterialProvider = (input: {
@@ -483,7 +485,7 @@ const getSecretMaterialProvider = (input: {
 };
 
 const createSecretMaterialProviderRuntime = (input: {
-  rows: SqlControlPlaneRows;
+  rows: ControlPlaneStoreShape;
   dangerouslyAllowEnvSecrets?: boolean;
   keychainServiceName?: string;
   localConfig?: LocalExecutorConfig | null;
@@ -644,7 +646,7 @@ const resolveConfiguredSecretProvider = (input: {
 };
 
 export const createDefaultSecretMaterialResolver = (input: {
-  rows: SqlControlPlaneRows;
+  rows: ControlPlaneStoreShape;
   dangerouslyAllowEnvSecrets?: boolean;
   keychainServiceName?: string;
   localConfig?: LocalExecutorConfig | null;
@@ -682,7 +684,7 @@ export const createDefaultSecretMaterialResolver = (input: {
 };
 
 export const createDefaultSecretMaterialStorer = (input: {
-  rows: SqlControlPlaneRows;
+  rows: ControlPlaneStoreShape;
   storeProviderId?: SecretStoreProviderId;
   dangerouslyAllowEnvSecrets?: boolean;
   keychainServiceName?: string;
@@ -714,7 +716,7 @@ export const createDefaultSecretMaterialStorer = (input: {
 };
 
 export const createDefaultSecretMaterialDeleter = (input: {
-  rows: SqlControlPlaneRows;
+  rows: ControlPlaneStoreShape;
   dangerouslyAllowEnvSecrets?: boolean;
   keychainServiceName?: string;
 }): DeleteSecretMaterial => {

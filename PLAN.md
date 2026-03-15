@@ -31,7 +31,7 @@ We are on v3 of this codebase which is a completely fresh start, the original co
 Architecture I like:
 
 Database:
-Postgres SQLIte for local, Postgres SQL for cloud hosted version
+Local-file-backed control plane for local use, with room for future hosted backends
 
 Server:
 
@@ -69,7 +69,7 @@ Runtimes:
 Other:
 
 - Avoid hardcoding strings in the core libraries, prefer programming to interfaces, this is because it allows people to build custom adapters without having to modify the core
-- Aim for composability of adapters. For example, the cloud product may be able to leverage storing secrets both encrypted in postgres and also BYO 1password setup. This does not need to be implemented today but worth noting
+- Aim for composability of adapters. For example, the cloud product may eventually store secrets in a hosted backend while still supporting BYO 1Password. This does not need to be implemented today but is worth noting.
 - This is a fresh start so we can make whatever changes we need.
 
 Rough architecture is: Turborepo monorepo, effect-vitest for testing, bun for package manager / running apps (but we leverage Effect wherever possible rather than bun's apis i.e for the server), Next.js for web app

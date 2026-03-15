@@ -161,19 +161,19 @@ Because of that, these surfaces share:
 
 ## Persistence model
 
-The persistence layer is SQL-backed.
+The persistence layer is local-file-backed.
 
 Default behavior:
 
-- embedded PGlite for local use
+- workspace config and state are stored in local files
 
 Optional behavior:
 
-- Postgres when a Postgres URL is supplied
+- future cloud backends can plug in behind Effect service boundaries
 
-At a high level, the database stores these domains:
+At a high level, the local control plane stores these domains:
 
-- installation identity: local installation, accounts, organizations, memberships, workspaces
+- installation identity: local installation identity for the workspace
 - source state: sources, auth sessions, source credential bindings
 - tool model: tool artifacts and related metadata extracted from sources
 - secret state: credentials and secret materials

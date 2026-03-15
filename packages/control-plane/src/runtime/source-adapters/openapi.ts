@@ -3,7 +3,6 @@ import {
   HttpClient,
   HttpClientRequest,
 } from "@effect/platform";
-import type { SqlControlPlaneRows } from "#persistence";
 import {
   applyCookiePlacementsToHeaders,
   applyHttpQueryPlacementsToUrl,
@@ -41,7 +40,6 @@ import {
 import type {
   SourceAdapter,
   SourceAdapterMaterialization,
-  SourceAdapterRepairRevisionInput,
 } from "./types";
 import {
   ConnectHttpAuthSchema,
@@ -329,74 +327,6 @@ const primaryDocument = (
   documents: readonly StoredSourceRecipeDocumentRecord[],
 ): StoredSourceRecipeDocumentRecord | null =>
   documents.find((document) => document.documentKind === "openapi") ?? null;
-
-export const rebuildOpenApiRecipeRevisionContent = (input: {
-  rows: SqlControlPlaneRows;
-  sourceRecord: SourceAdapterRepairRevisionInput["sourceRecord"];
-  revision: SourceAdapterRepairRevisionInput["revision"];
-  documents: readonly StoredSourceRecipeDocumentRecord[];
-}): Effect.Effect<void, Error, never> =>
-  Effect.gen(function* () {
-    const manifest =
-      input.revision.manifestJson !== null
-        ? ((yield* parseJsonValue<OpenApiToolManifest>({
-            label: `OpenAPI manifest for ${input.sourceRecord.id}`,
-            value: input.revision.manifestJson,
-          })) as OpenApiToolManifest | null)
-        : null;
-    const document = primaryDocument(input.documents);
-    const resolvedManifest =
-      manifest
-      ?? (document !== null
-        ? yield* extractOpenApiManifest(
-            input.sourceRecord.name,
-            document.contentText,
-          )
-        : null);
-
-    if (resolvedManifest === null) {
-      return yield* Effect.fail(
-        new Error(
-          `Missing OpenAPI manifest and document for ${input.sourceRecord.id}`,
-        ),
-      );
-    }
-
-    const now = Math.max(input.revision.updatedAt, input.sourceRecord.updatedAt);
-    const definitions = compileOpenApiToolDefinitions(resolvedManifest);
-    const schemaBundle = toOpenApiSchemaBundleRecord({
-      recipeRevisionId: input.revision.id,
-      refTable: resolvedManifest.refHintTable,
-      now,
-    });
-
-    yield* input.rows.sourceRecipeRevisions.update(input.revision.id, {
-      manifestJson: JSON.stringify(resolvedManifest),
-      manifestHash: resolvedManifest.sourceHash,
-      updatedAt: now,
-    });
-    yield* input.rows.sourceRecipeOperations.replaceForRevision({
-      recipeRevisionId: input.revision.id,
-      operations: definitions.map((definition) =>
-        toOpenApiRecipeOperationRecord({
-          recipeRevisionId: input.revision.id,
-          definition,
-          now,
-        }),
-      ),
-    });
-    yield* input.rows.sourceRecipeSchemaBundles.replaceForRevision({
-      recipeRevisionId: input.revision.id,
-      bundles: schemaBundle ? [schemaBundle] : [],
-    });
-
-    if (input.sourceRecord.sourceHash !== resolvedManifest.sourceHash) {
-      yield* input.rows.sources.update(input.sourceRecord.workspaceId, input.sourceRecord.id, {
-        sourceHash: resolvedManifest.sourceHash,
-        updatedAt: now,
-      });
-    }
-  });
 
 export const openApiSourceAdapter: SourceAdapter = {
   key: "openapi",

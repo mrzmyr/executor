@@ -5,7 +5,6 @@ import {
   makeToolInvokerFromTools,
   typeSignatureFromSchemaJson,
 } from "@executor/codemode-core";
-import type { SqlControlPlaneRows } from "#persistence";
 import type {
   GraphqlToolManifest,
 } from "../graphql-tools";
@@ -41,7 +40,6 @@ import {
 import type {
   SourceAdapter,
   SourceAdapterMaterialization,
-  SourceAdapterRepairRevisionInput,
 } from "./types";
 import {
   ConnectHttpAuthSchema,
@@ -284,75 +282,6 @@ const primaryDocument = (
 ): StoredSourceRecipeDocumentRecord | null =>
   documents.find((document) => document.documentKind === "graphql_introspection")
   ?? null;
-
-export const rebuildGraphqlRecipeRevisionContent = (input: {
-  rows: SqlControlPlaneRows;
-  sourceRecord: SourceAdapterRepairRevisionInput["sourceRecord"];
-  revision: SourceAdapterRepairRevisionInput["revision"];
-  documents: readonly StoredSourceRecipeDocumentRecord[];
-}): Effect.Effect<void, Error, never> =>
-  Effect.gen(function* () {
-    const manifest =
-      input.revision.manifestJson !== null
-        ? yield* parseJsonValue<GraphqlToolManifest>({
-            label: `GraphQL manifest for ${input.sourceRecord.id}`,
-            value: input.revision.manifestJson,
-          })
-        : null;
-    const document = primaryDocument(input.documents);
-    const resolvedManifest =
-      manifest
-      ?? (document !== null
-        ? yield* extractGraphqlManifest(
-            input.sourceRecord.name,
-            document.contentText,
-          )
-        : null);
-
-    if (resolvedManifest === null) {
-      return yield* Effect.fail(
-        new Error(
-          `Missing GraphQL manifest and document for ${input.sourceRecord.id}`,
-        ),
-      );
-    }
-
-    const now = Math.max(input.revision.updatedAt, input.sourceRecord.updatedAt);
-    const definitions = compileGraphqlToolDefinitions(resolvedManifest);
-    const schemaBundle = toGraphqlSchemaBundleRecord({
-      recipeRevisionId: input.revision.id,
-      manifest: resolvedManifest,
-      now,
-    });
-
-    yield* input.rows.sourceRecipeRevisions.update(input.revision.id, {
-      manifestJson: JSON.stringify(resolvedManifest),
-      manifestHash: resolvedManifest.sourceHash,
-      updatedAt: now,
-    });
-    yield* input.rows.sourceRecipeOperations.replaceForRevision({
-      recipeRevisionId: input.revision.id,
-      operations: definitions.map((definition) =>
-        toGraphqlRecipeOperationRecord({
-          recipeRevisionId: input.revision.id,
-          definition,
-          manifest: resolvedManifest,
-          now,
-        }),
-      ),
-    });
-    yield* input.rows.sourceRecipeSchemaBundles.replaceForRevision({
-      recipeRevisionId: input.revision.id,
-      bundles: schemaBundle ? [schemaBundle] : [],
-    });
-
-    if (input.sourceRecord.sourceHash !== resolvedManifest.sourceHash) {
-      yield* input.rows.sources.update(input.sourceRecord.workspaceId, input.sourceRecord.id, {
-        sourceHash: resolvedManifest.sourceHash,
-        updatedAt: now,
-      });
-    }
-  });
 
 export const graphqlSourceAdapter: SourceAdapter = {
   key: "graphql",

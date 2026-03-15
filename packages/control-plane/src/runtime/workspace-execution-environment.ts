@@ -1,28 +1,22 @@
 import {
   createSystemToolMap,
+  createToolCatalogFromEntries,
   createToolCatalogFromTools,
   makeToolInvokerFromTools,
+  mergeToolCatalogs,
   mergeToolMaps,
-  type SearchHit,
   type ToolCatalog,
-  type ToolDescriptor,
   type ToolInvoker,
-  type ToolNamespace,
   type ToolPath,
   type ToolSchemaBundle,
 } from "@executor/codemode-core";
 import { makeQuickJsExecutor } from "@executor/runtime-quickjs";
-import {
-  SqlControlPlaneRowsService,
-  type SqlControlPlaneRows,
-} from "#persistence";
 import type { AccountId, Source, SourceRecipeSchemaBundleId } from "#schema";
 import { SourceRecipeSchemaBundleIdSchema } from "#schema";
 import * as Context from "effect/Context";
 import * as Either from "effect/Either";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
 import type {
@@ -40,6 +34,7 @@ import {
   loadWorkspaceSourceRecipeToolIndex,
   loadWorkspaceSourceRecipes,
   type LoadedSourceRecipeToolIndexEntry,
+  recipeToolCatalogEntry,
 } from "./source-recipes-runtime";
 import { resolveSourceAuthMaterial } from "./source-auth-material";
 import { namespaceFromSourceName } from "./source-names";
@@ -60,6 +55,16 @@ import {
   type RuntimeLocalWorkspaceState,
 } from "./local-runtime-context";
 import { loadLocalToolRuntime, type LocalToolRuntime } from "./local-tools";
+import {
+  SourceArtifactStore,
+  type SourceArtifactStoreShape,
+  WorkspaceConfigStore,
+  type WorkspaceConfigStoreShape,
+  WorkspaceStateStore,
+  type WorkspaceStateStoreShape,
+  type WorkspaceStorageServices,
+} from "./local-storage";
+import { ControlPlaneStore, type ControlPlaneStoreShape } from "./store";
 
 const asToolPath = (value: string): ToolPath => value as ToolPath;
 
@@ -142,11 +147,11 @@ const queryTokenWeight = (token: string): number =>
   LOW_SIGNAL_QUERY_TOKENS.has(token) ? 0.25 : 1;
 
 const loadWorkspaceRecipeTools = (input: {
-  rows: SqlControlPlaneRows;
+  rows: ControlPlaneStoreShape;
   workspaceId: Source["workspaceId"];
   accountId: AccountId;
   includeSchemas: boolean;
-}): Effect.Effect<readonly LoadedSourceRecipeToolIndexEntry[], Error, never> =>
+}): Effect.Effect<readonly LoadedSourceRecipeToolIndexEntry[], Error, WorkspaceStorageServices> =>
   Effect.map(
     loadWorkspaceSourceRecipeToolIndex({
       rows: input.rows,
@@ -161,12 +166,12 @@ const loadWorkspaceRecipeTools = (input: {
   );
 
 const loadWorkspaceRecipeToolByPath = (input: {
-  rows: SqlControlPlaneRows;
+  rows: ControlPlaneStoreShape;
   workspaceId: Source["workspaceId"];
   accountId: AccountId;
   path: string;
   includeSchemas: boolean;
-}): Effect.Effect<LoadedSourceRecipeToolIndexEntry | null, Error, never> =>
+}): Effect.Effect<LoadedSourceRecipeToolIndexEntry | null, Error, WorkspaceStorageServices> =>
   loadWorkspaceSourceRecipeToolByPath({
     rows: input.rows,
     workspaceId: input.workspaceId,
@@ -182,52 +187,26 @@ const loadWorkspaceRecipeToolByPath = (input: {
   );
 
 const loadWorkspaceSchemaBundle = (input: {
-  rows: SqlControlPlaneRows;
+  rows: ControlPlaneStoreShape;
   workspaceId: Source["workspaceId"];
   id: SourceRecipeSchemaBundleId;
-}): Effect.Effect<ToolSchemaBundle | null, Error, never> =>
+}): Effect.Effect<ToolSchemaBundle | null, Error, WorkspaceStorageServices> =>
   Effect.gen(function* () {
-    const runtimeLocalWorkspace = yield* getRuntimeLocalWorkspaceOption();
-    if (runtimeLocalWorkspace !== null) {
-      const recipes = yield* loadWorkspaceSourceRecipes({
-        rows: input.rows,
-        workspaceId: input.workspaceId,
-      });
-      const localBundle = recipes
-        .flatMap((recipe) => recipe.schemaBundles)
-        .find((schemaBundle) => schemaBundle.id === input.id);
-      return localBundle
-        ? {
-            id: localBundle.id,
-            kind: localBundle.bundleKind,
-            hash: localBundle.contentHash,
-            refsJson: localBundle.refsJson,
-          }
-        : null;
-    }
-
-    const bundle = yield* input.rows.sourceRecipeSchemaBundles.getById(
-      input.id,
-    );
-    if (Option.isSome(bundle)) {
-      const sourceRecords = yield* input.rows.sources.listByWorkspaceId(
-        input.workspaceId,
-      );
-      if (
-        sourceRecords.some(
-          (sourceRecord) =>
-            sourceRecord.recipeRevisionId === bundle.value.recipeRevisionId,
-        )
-      ) {
-        return {
-          id: bundle.value.id,
-          kind: bundle.value.bundleKind,
-          hash: bundle.value.contentHash,
-          refsJson: bundle.value.refsJson,
-        };
-      }
-    }
-    return null;
+    const recipes = yield* loadWorkspaceSourceRecipes({
+      rows: input.rows,
+      workspaceId: input.workspaceId,
+    });
+    const localBundle = recipes
+      .flatMap((recipe) => recipe.schemaBundles)
+      .find((schemaBundle) => schemaBundle.id === input.id);
+    return localBundle
+      ? {
+          id: localBundle.id,
+          kind: localBundle.bundleKind,
+          hash: localBundle.contentHash,
+          refsJson: localBundle.refsJson,
+        }
+      : null;
   });
 
 const scoreRecipeTool = (
@@ -384,7 +363,7 @@ const toInvocationDescriptorFromRecipeTool = (input: {
 });
 
 const authorizePersistedToolInvocation = (input: {
-  rows: SqlControlPlaneRows;
+  rows: ControlPlaneStoreShape;
   workspaceId: Source["workspaceId"];
   accountId: AccountId;
   descriptor: InvocationDescriptor;
@@ -394,7 +373,7 @@ const authorizePersistedToolInvocation = (input: {
   onElicitation?: Parameters<
     typeof makeToolInvokerFromTools
   >[0]["onElicitation"];
-}): Effect.Effect<void, Error, never> =>
+}): Effect.Effect<void, Error, WorkspaceStorageServices> =>
   Effect.gen(function* () {
     const localWorkspacePolicies = yield* loadRuntimeLocalWorkspacePolicies(
       input.workspaceId,
@@ -486,211 +465,107 @@ const provideRuntimeLocalWorkspace = <A, E, R>(
         ),
       );
 
-const dedupeToolDescriptors = (
-  preferred: readonly ToolDescriptor[],
-  fallback: readonly ToolDescriptor[],
-): ToolDescriptor[] => {
-  const merged = new Map<string, ToolDescriptor>();
-
-  for (const descriptor of preferred) {
-    merged.set(descriptor.path, descriptor);
-  }
-  for (const descriptor of fallback) {
-    if (!merged.has(descriptor.path)) {
-      merged.set(descriptor.path, descriptor);
-    }
-  }
-
-  return [...merged.values()];
-};
-
-const dedupeSearchHits = (
-  preferred: readonly SearchHit[],
-  fallback: readonly SearchHit[],
-): SearchHit[] => {
-  const merged = new Map<string, SearchHit>();
-
-  for (const hit of preferred) {
-    merged.set(hit.path, hit);
-  }
-  for (const hit of fallback) {
-    if (!merged.has(hit.path)) {
-      merged.set(hit.path, hit);
-    }
-  }
-
-  return [...merged.values()];
-};
-
-const createWorkspaceToolCatalog = (input: {
+const createWorkspaceRecipeCatalog = (input: {
   workspaceId: Source["workspaceId"];
   accountId: AccountId;
-  rows: SqlControlPlaneRows;
-  authoredCatalog: ToolCatalog;
+  rows: ControlPlaneStoreShape;
+  workspaceConfigStore: WorkspaceConfigStoreShape;
+  workspaceStateStore: WorkspaceStateStoreShape;
+  sourceArtifactStore: SourceArtifactStoreShape;
   runtimeLocalWorkspace: RuntimeLocalWorkspaceState | null;
-}): ToolCatalog => ({
-  listNamespaces: ({ limit }) =>
-    provideRuntimeLocalWorkspace(
-      Effect.gen(function* () {
-        const [recipeTools, authored] = yield* Effect.all([
-          loadWorkspaceRecipeTools({
-            rows: input.rows,
-            workspaceId: input.workspaceId,
-            accountId: input.accountId,
-            includeSchemas: false,
+}): ToolCatalog => {
+  const workspaceStorageLayer = Layer.mergeAll(
+    Layer.succeed(WorkspaceConfigStore, input.workspaceConfigStore),
+    Layer.succeed(WorkspaceStateStore, input.workspaceStateStore),
+    Layer.succeed(SourceArtifactStore, input.sourceArtifactStore),
+  );
+  const provideWorkspaceStorage = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+    effect.pipe(Effect.provide(workspaceStorageLayer));
+
+  const createSharedCatalog = (includeSchemas: boolean): Effect.Effect<ToolCatalog, Error, never> =>
+    provideWorkspaceStorage(Effect.gen(function* () {
+      const recipeTools = yield* loadWorkspaceRecipeTools({
+        rows: input.rows,
+        workspaceId: input.workspaceId,
+        accountId: input.accountId,
+        includeSchemas,
+      });
+
+      return createToolCatalogFromEntries({
+        entries: recipeTools.map((tool) =>
+          recipeToolCatalogEntry({
+            tool,
+            score: (queryTokens) => scoreRecipeTool(queryTokens, tool),
           }),
-          input.authoredCatalog.listNamespaces({ limit }),
-        ]);
-
-        const merged = new Map<string, ToolNamespace>();
-        for (const tool of recipeTools) {
-          const existing = merged.get(tool.searchNamespace);
-          merged.set(tool.searchNamespace, {
-            namespace: tool.searchNamespace,
-            toolCount: (existing?.toolCount ?? 0) + 1,
-          });
-        }
-        for (const namespace of authored) {
-          const existing = merged.get(namespace.namespace);
-          merged.set(namespace.namespace, {
-            namespace: namespace.namespace,
-            displayName: namespace.displayName ?? existing?.displayName,
-            toolCount:
-              namespace.toolCount !== undefined ||
-              existing?.toolCount === undefined
-                ? namespace.toolCount
-                : existing.toolCount,
-          });
-        }
-
-        return [...merged.values()]
-          .sort((left, right) => left.namespace.localeCompare(right.namespace))
-          .slice(0, limit);
-      }),
-      input.runtimeLocalWorkspace,
-    ),
-
-  listTools: ({ namespace, query, limit, includeSchemas = false }) =>
-    provideRuntimeLocalWorkspace(
-      Effect.gen(function* () {
-        const [recipeTools, authored] = yield* Effect.all([
-          loadWorkspaceRecipeTools({
+        ),
+        getSchemaBundle: ({ id }) =>
+          provideWorkspaceStorage(loadWorkspaceSchemaBundle({
             rows: input.rows,
             workspaceId: input.workspaceId,
-            accountId: input.accountId,
-            includeSchemas,
-          }).pipe(
-            Effect.map((tools) =>
-              tools.filter((tool) => {
-                if (namespace && tool.searchNamespace !== namespace) {
-                  return false;
-                }
-                if (!query) {
-                  return true;
-                }
-                return tokenize(query).every((token) =>
-                  tool.searchText.includes(token),
-                );
-              }),
-            ),
-          ),
-          input.authoredCatalog.listTools({
+            id: SourceRecipeSchemaBundleIdSchema.make(id),
+          })),
+      });
+    }));
+
+  return {
+    listNamespaces: ({ limit }) =>
+      provideRuntimeLocalWorkspace(
+        Effect.flatMap(createSharedCatalog(false), (catalog) =>
+          catalog.listNamespaces({ limit }),
+        ),
+        input.runtimeLocalWorkspace,
+      ),
+
+    listTools: ({ namespace, query, limit, includeSchemas = false }) =>
+      provideRuntimeLocalWorkspace(
+        Effect.flatMap(createSharedCatalog(includeSchemas), (catalog) =>
+          catalog.listTools({
             ...(namespace !== undefined ? { namespace } : {}),
             ...(query !== undefined ? { query } : {}),
             limit,
             includeSchemas,
           }),
-        ]);
+        ),
+        input.runtimeLocalWorkspace,
+      ),
 
-        return dedupeToolDescriptors(
-          authored,
-          recipeTools.map((tool) => tool.descriptor),
-        )
-          .sort((left, right) => left.path.localeCompare(right.path))
-          .slice(0, limit);
-      }),
-      input.runtimeLocalWorkspace,
-    ),
+    getToolByPath: ({ path, includeSchemas }) =>
+      provideRuntimeLocalWorkspace(
+        Effect.flatMap(createSharedCatalog(includeSchemas), (catalog) =>
+          catalog.getToolByPath({ path, includeSchemas }),
+        ),
+        input.runtimeLocalWorkspace,
+      ),
 
-  getToolByPath: ({ path, includeSchemas }) =>
-    provideRuntimeLocalWorkspace(
-      Effect.gen(function* () {
-        const authored = yield* input.authoredCatalog.getToolByPath({
-          path,
-          includeSchemas,
-        });
-        if (authored) {
-          return authored;
-        }
+    getSchemaBundle: ({ id }) =>
+      provideRuntimeLocalWorkspace(
+        Effect.flatMap(createSharedCatalog(false), (catalog) =>
+          catalog.getSchemaBundle({ id }),
+        ),
+        input.runtimeLocalWorkspace,
+      ),
 
-        const recipeTool = yield* loadWorkspaceRecipeToolByPath({
-          rows: input.rows,
-          workspaceId: input.workspaceId,
-          accountId: input.accountId,
-          path,
-          includeSchemas,
-        });
-        return recipeTool?.descriptor ?? null;
-      }),
-      input.runtimeLocalWorkspace,
-    ),
-
-  getSchemaBundle: ({ id }) =>
-    provideRuntimeLocalWorkspace(
-      loadWorkspaceSchemaBundle({
-        rows: input.rows,
-        workspaceId: input.workspaceId,
-        id: SourceRecipeSchemaBundleIdSchema.make(id),
-      }),
-      input.runtimeLocalWorkspace,
-    ),
-
-  searchTools: ({ query, namespace, limit }) =>
-    provideRuntimeLocalWorkspace(
-      Effect.gen(function* () {
-        const queryTokens = tokenize(query);
-        const [recipeTools, authored] = yield* Effect.all([
-          loadWorkspaceRecipeTools({
-            rows: input.rows,
-            workspaceId: input.workspaceId,
-            accountId: input.accountId,
-            includeSchemas: false,
-          }).pipe(
-            Effect.map((tools) =>
-              tools.filter(
-                (tool) => !namespace || tool.searchNamespace === namespace,
-              ),
-            ),
-          ),
-          input.authoredCatalog.searchTools({
+    searchTools: ({ query, namespace, limit }) =>
+      provideRuntimeLocalWorkspace(
+        Effect.flatMap(createSharedCatalog(false), (catalog) =>
+          catalog.searchTools({
             query,
             ...(namespace !== undefined ? { namespace } : {}),
             limit,
           }),
-        ]);
-
-        const recipeHits: SearchHit[] = recipeTools
-          .map((tool) => ({
-            path: asToolPath(tool.path),
-            score: scoreRecipeTool(queryTokens, tool),
-          }))
-          .filter((hit) => hit.score > 0);
-
-        return dedupeSearchHits(authored, recipeHits)
-          .sort(
-            (left, right) =>
-              right.score - left.score || left.path.localeCompare(right.path),
-          )
-          .slice(0, limit);
-      }),
-      input.runtimeLocalWorkspace,
-    ),
-});
+        ),
+        input.runtimeLocalWorkspace,
+      ),
+  } satisfies ToolCatalog;
+};
 
 const createWorkspaceToolInvoker = (input: {
   workspaceId: Source["workspaceId"];
   accountId: AccountId;
-  rows: SqlControlPlaneRows;
+  rows: ControlPlaneStoreShape;
+  workspaceConfigStore: WorkspaceConfigStoreShape;
+  workspaceStateStore: WorkspaceStateStoreShape;
+  sourceArtifactStore: SourceArtifactStoreShape;
   resolveSecretMaterial: ResolveSecretMaterial;
   sourceAuthService: RuntimeSourceAuthService;
   runtimeLocalWorkspace: RuntimeLocalWorkspaceState | null;
@@ -702,38 +577,51 @@ const createWorkspaceToolInvoker = (input: {
   catalog: ToolCatalog;
   toolInvoker: ToolInvoker;
 } => {
+  const workspaceStorageLayer = Layer.mergeAll(
+    Layer.succeed(WorkspaceConfigStore, input.workspaceConfigStore),
+    Layer.succeed(WorkspaceStateStore, input.workspaceStateStore),
+    Layer.succeed(SourceArtifactStore, input.sourceArtifactStore),
+  );
+  const provideWorkspaceStorage = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+    effect.pipe(Effect.provide(workspaceStorageLayer));
+
   const executorTools = createExecutorToolMap({
     workspaceId: input.workspaceId,
     accountId: input.accountId,
     sourceAuthService: input.sourceAuthService,
     runtimeLocalWorkspace: input.runtimeLocalWorkspace,
   });
+  const recipeCatalog = createWorkspaceRecipeCatalog({
+    workspaceId: input.workspaceId,
+    accountId: input.accountId,
+    rows: input.rows,
+    workspaceConfigStore: input.workspaceConfigStore,
+    workspaceStateStore: input.workspaceStateStore,
+    sourceArtifactStore: input.sourceArtifactStore,
+    runtimeLocalWorkspace: input.runtimeLocalWorkspace,
+  });
+  let catalog: ToolCatalog | null = null;
+  const systemTools = createSystemToolMap({
+    getCatalog: () => {
+      if (catalog === null) {
+        throw new Error("Workspace tool catalog has not been initialized");
+      }
+
+      return catalog;
+    },
+  });
   const authoredTools = mergeToolMaps([
+    systemTools,
     executorTools,
     input.localToolRuntime.tools,
   ]);
   const authoredCatalog = createToolCatalogFromTools({
     tools: authoredTools,
   });
-  const catalog = createWorkspaceToolCatalog({
-    workspaceId: input.workspaceId,
-    accountId: input.accountId,
-    rows: input.rows,
-    authoredCatalog,
-    runtimeLocalWorkspace: input.runtimeLocalWorkspace,
+  catalog = mergeToolCatalogs({
+    catalogs: [authoredCatalog, recipeCatalog],
   });
-  const systemTools = createSystemToolMap({ catalog });
-  const systemToolPaths = new Set(Object.keys(systemTools));
   const authoredToolPaths = new Set(Object.keys(authoredTools));
-  for (const systemToolPath of systemToolPaths) {
-    if (authoredToolPaths.has(systemToolPath)) {
-      throw new Error(`Tool path conflict: ${systemToolPath}`);
-    }
-  }
-  const systemInvoker = makeToolInvokerFromTools({
-    tools: systemTools,
-    onElicitation: input.onElicitation,
-  });
   const authoredInvoker = makeToolInvokerFromTools({
     tools: authoredTools,
     onElicitation: input.onElicitation,
@@ -745,7 +633,7 @@ const createWorkspaceToolInvoker = (input: {
     context?: Record<string, unknown>;
   }) =>
     provideRuntimeLocalWorkspace(
-      Effect.gen(function* () {
+      provideWorkspaceStorage(Effect.gen(function* () {
         const recipeTool = yield* loadWorkspaceRecipeToolByPath({
           rows: input.rows,
           workspaceId: input.workspaceId,
@@ -811,7 +699,7 @@ const createWorkspaceToolInvoker = (input: {
           context: invocation.context,
           onElicitation: input.onElicitation,
         });
-      }),
+      })),
       input.runtimeLocalWorkspace,
     );
 
@@ -820,11 +708,9 @@ const createWorkspaceToolInvoker = (input: {
     toolInvoker: {
       invoke: ({ path, args, context }) =>
         provideRuntimeLocalWorkspace(
-          systemToolPaths.has(path)
-            ? systemInvoker.invoke({ path, args, context })
-            : authoredToolPaths.has(path)
-              ? authoredInvoker.invoke({ path, args, context })
-              : invokePersistedTool({ path, args, context }),
+          authoredToolPaths.has(path)
+            ? authoredInvoker.invoke({ path, args, context })
+            : invokePersistedTool({ path, args, context }),
           input.runtimeLocalWorkspace,
         ),
     },
@@ -832,9 +718,12 @@ const createWorkspaceToolInvoker = (input: {
 };
 
 export const createWorkspaceExecutionEnvironmentResolver = (input: {
-  rows: SqlControlPlaneRows;
+  rows: ControlPlaneStoreShape;
   resolveSecretMaterial?: ResolveSecretMaterial;
   sourceAuthService: RuntimeSourceAuthService;
+  workspaceConfigStore: WorkspaceConfigStoreShape;
+  workspaceStateStore: WorkspaceStateStoreShape;
+  sourceArtifactStore: SourceArtifactStoreShape;
 }): ResolveExecutionEnvironment => {
   const resolveSecretMaterial =
     input.resolveSecretMaterial ??
@@ -858,6 +747,9 @@ export const createWorkspaceExecutionEnvironmentResolver = (input: {
         workspaceId,
         accountId,
         rows: input.rows,
+        workspaceConfigStore: input.workspaceConfigStore,
+        workspaceStateStore: input.workspaceStateStore,
+        sourceArtifactStore: input.sourceArtifactStore,
         resolveSecretMaterial,
         sourceAuthService: input.sourceAuthService,
         runtimeLocalWorkspace,
@@ -890,16 +782,22 @@ export const RuntimeExecutionResolverLive = (
 ) =>
   input.executionResolver
     ? Layer.succeed(RuntimeExecutionResolverService, input.executionResolver)
-    : Layer.effect(
+      : Layer.effect(
         RuntimeExecutionResolverService,
         Effect.gen(function* () {
-          const rows = yield* SqlControlPlaneRowsService;
+          const rows = yield* ControlPlaneStore;
           const sourceAuthService = yield* RuntimeSourceAuthServiceTag;
+          const workspaceConfigStore = yield* WorkspaceConfigStore;
+          const workspaceStateStore = yield* WorkspaceStateStore;
+          const sourceArtifactStore = yield* SourceArtifactStore;
 
           return createWorkspaceExecutionEnvironmentResolver({
             rows,
             sourceAuthService,
             resolveSecretMaterial: input.resolveSecretMaterial,
+            workspaceConfigStore,
+            workspaceStateStore,
+            sourceArtifactStore,
           });
         }),
       );

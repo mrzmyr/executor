@@ -129,7 +129,7 @@ describe("source-definitions", () => {
           headerName: "Authorization",
           prefix: "Bearer ",
           token: {
-            providerId: "postgres",
+            providerId: "local",
             handle: "sec_token",
           },
         },
@@ -166,7 +166,7 @@ describe("source-definitions", () => {
             headerName: "   ",
             prefix: undefined,
             accessToken: {
-              providerId: " postgres ",
+              providerId: " local ",
               handle: " sec_access ",
             },
             refreshToken: null,
@@ -180,7 +180,7 @@ describe("source-definitions", () => {
         headerName: "Authorization",
         prefix: "Bearer ",
         accessToken: {
-          providerId: "postgres",
+          providerId: "local",
           handle: "sec_access",
         },
         refreshToken: null,
@@ -222,11 +222,11 @@ describe("source-definitions", () => {
             headerName: "Authorization",
             prefix: "Bearer ",
             accessToken: {
-              providerId: "postgres",
+              providerId: "local",
               handle: "sec_access",
             },
             refreshToken: {
-              providerId: "postgres",
+              providerId: "local",
               handle: "   ",
             },
           } as never,
@@ -319,7 +319,7 @@ describe("source-definitions", () => {
             headerName: "  ",
             prefix: "Token ",
             token: {
-              providerId: " postgres ",
+              providerId: " local ",
               handle: " sec_token ",
             },
           } as never,
@@ -332,7 +332,7 @@ describe("source-definitions", () => {
         headerName: "Authorization",
         prefix: "Token ",
         token: {
-          providerId: "postgres",
+          providerId: "local",
           handle: "sec_token",
         },
       });
@@ -353,7 +353,7 @@ describe("source-definitions", () => {
           headerName: "Authorization",
           prefix: "Bearer ",
           token: {
-            providerId: "postgres",
+            providerId: "local",
             handle: "sec_bearer",
           },
         },
@@ -397,11 +397,11 @@ describe("source-definitions", () => {
           headerName: "Authorization",
           prefix: "Bearer ",
           accessToken: {
-            providerId: "postgres",
+            providerId: "local",
             handle: "sec_access",
           },
           refreshToken: {
-            providerId: "postgres",
+            providerId: "local",
             handle: "sec_refresh",
           },
         },
@@ -416,7 +416,7 @@ describe("source-definitions", () => {
           headerName: "Authorization",
           prefix: "Bearer ",
           accessToken: {
-            providerId: "postgres",
+            providerId: "local",
             handle: "sec_access",
           },
           refreshToken: null,

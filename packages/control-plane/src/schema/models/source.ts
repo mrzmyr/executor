@@ -1,9 +1,5 @@
-import {
-  createSelectSchema,
-} from "drizzle-orm/effect-schema";
 import { Schema } from "effect";
 
-import { sourcesTable } from "../../persistence/schema";
 import { TimestampMsSchema } from "../common";
 import {
   SourceIdSchema,
@@ -78,19 +74,24 @@ export const SourceBindingSchema = Schema.Struct({
   payload: JsonObjectSchema,
 });
 
-const sourceRowSchemaOverrides = {
+const SourceStorageRowSchema = Schema.Struct({
   workspaceId: WorkspaceIdSchema,
   sourceId: SourceIdSchema,
   recipeId: SourceRecipeIdSchema,
   recipeRevisionId: SourceRecipeRevisionIdSchema,
+  name: Schema.String,
   kind: SourceKindSchema,
+  endpoint: Schema.String,
   status: SourceStatusSchema,
+  enabled: Schema.Boolean,
+  namespace: Schema.NullOr(Schema.String),
   importAuthPolicy: SourceImportAuthPolicySchema,
+  bindingConfigJson: Schema.String,
+  sourceHash: Schema.NullOr(Schema.String),
+  lastError: Schema.NullOr(Schema.String),
   createdAt: TimestampMsSchema,
   updatedAt: TimestampMsSchema,
-} as const;
-
-const SourceStorageRowSchema = createSelectSchema(sourcesTable, sourceRowSchemaOverrides);
+});
 
 export const StoredSourceRecordSchema = Schema.transform(
   SourceStorageRowSchema,
@@ -114,7 +115,7 @@ export const StoredSourceRecordSchema = Schema.transform(
   }),
   {
     strict: false,
-    decode: (row, _input) => ({
+    decode: (row) => ({
       id: row.sourceId,
       workspaceId: row.workspaceId,
       recipeId: row.recipeId,
@@ -132,7 +133,7 @@ export const StoredSourceRecordSchema = Schema.transform(
       createdAt: row.createdAt,
       updatedAt: row.updatedAt,
     }),
-    encode: (source, _output) => ({
+    encode: (source) => ({
       workspaceId: source.workspaceId,
       sourceId: source.id,
       recipeId: source.recipeId,

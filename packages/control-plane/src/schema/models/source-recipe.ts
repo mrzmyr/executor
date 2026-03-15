@@ -1,13 +1,5 @@
-import { createSelectSchema } from "drizzle-orm/effect-schema";
 import { Schema } from "effect";
 
-import {
-  sourceRecipeDocumentsTable,
-  sourceRecipeOperationsTable,
-  sourceRecipeSchemaBundlesTable,
-  sourceRecipeRevisionsTable,
-  sourceRecipesTable,
-} from "../../persistence/schema";
 import { TimestampMsSchema } from "../common";
 import {
   SourceRecipeIdSchema,
@@ -50,77 +42,74 @@ export const SourceRecipeOperationKindSchema = Schema.Literal(
 
 export const SourceRecipeOperationProviderKindSchema = Schema.String;
 
-const recipeRowSchemaOverrides = {
+export const StoredSourceRecipeRecordSchema = Schema.Struct({
   id: SourceRecipeIdSchema,
   kind: SourceRecipeKindSchema,
   adapterKey: SourceRecipeAdapterKeySchema,
+  providerKey: Schema.String,
+  name: Schema.String,
+  summary: Schema.NullOr(Schema.String),
   visibility: SourceRecipeVisibilitySchema,
   latestRevisionId: SourceRecipeRevisionIdSchema,
   createdAt: TimestampMsSchema,
   updatedAt: TimestampMsSchema,
-} as const;
+});
 
-const recipeRevisionRowSchemaOverrides = {
+export const StoredSourceRecipeRevisionRecordSchema = Schema.Struct({
   id: SourceRecipeRevisionIdSchema,
   recipeId: SourceRecipeIdSchema,
   revisionNumber: Schema.Number,
+  sourceConfigJson: Schema.String,
+  manifestJson: Schema.NullOr(Schema.String),
+  manifestHash: Schema.NullOr(Schema.String),
   materializationHash: Schema.NullOr(Schema.String),
   createdAt: TimestampMsSchema,
   updatedAt: TimestampMsSchema,
-} as const;
+});
 
-const recipeDocumentRowSchemaOverrides = {
+export const StoredSourceRecipeDocumentRecordSchema = Schema.Struct({
+  id: Schema.String,
   recipeRevisionId: SourceRecipeRevisionIdSchema,
   documentKind: SourceRecipeDocumentKindSchema,
+  documentKey: Schema.String,
+  contentText: Schema.String,
+  contentHash: Schema.String,
   fetchedAt: Schema.NullOr(TimestampMsSchema),
   createdAt: TimestampMsSchema,
   updatedAt: TimestampMsSchema,
-} as const;
+});
 
-const recipeSchemaBundleRowSchemaOverrides = {
+export const StoredSourceRecipeSchemaBundleRecordSchema = Schema.Struct({
   id: SourceRecipeSchemaBundleIdSchema,
   recipeRevisionId: SourceRecipeRevisionIdSchema,
   bundleKind: SourceRecipeSchemaBundleKindSchema,
+  refsJson: Schema.String,
+  contentHash: Schema.String,
   createdAt: TimestampMsSchema,
   updatedAt: TimestampMsSchema,
-} as const;
-
-const sourceRecipeOperationRowSchemaOverrides = {
-  recipeRevisionId: SourceRecipeRevisionIdSchema,
-  transportKind: SourceRecipeTransportKindSchema,
-  operationKind: SourceRecipeOperationKindSchema,
-  providerKind: SourceRecipeOperationProviderKindSchema,
-  createdAt: TimestampMsSchema,
-  updatedAt: TimestampMsSchema,
-} as const;
-
-export const StoredSourceRecipeRecordSchema = createSelectSchema(
-  sourceRecipesTable,
-  recipeRowSchemaOverrides,
-);
-
-export const StoredSourceRecipeRevisionRecordSchema = createSelectSchema(
-  sourceRecipeRevisionsTable,
-  recipeRevisionRowSchemaOverrides,
-);
-
-export const StoredSourceRecipeDocumentRecordSchema = createSelectSchema(
-  sourceRecipeDocumentsTable,
-  recipeDocumentRowSchemaOverrides,
-);
-
-export const StoredSourceRecipeSchemaBundleRecordSchema = createSelectSchema(
-  sourceRecipeSchemaBundlesTable,
-  recipeSchemaBundleRowSchemaOverrides,
-);
-
-export const StoredSourceRecipeOperationRowSchema = createSelectSchema(
-  sourceRecipeOperationsTable,
-  sourceRecipeOperationRowSchemaOverrides,
-);
-export const StoredSourceRecipeOperationRecordSchema = StoredSourceRecipeOperationRowSchema.annotations({
-  identifier: "StoredSourceRecipeOperationRecord",
 });
+
+export const StoredSourceRecipeOperationRowSchema = Schema.Struct({
+  id: Schema.String,
+  recipeRevisionId: SourceRecipeRevisionIdSchema,
+  operationKey: Schema.String,
+  transportKind: SourceRecipeTransportKindSchema,
+  toolId: Schema.String,
+  title: Schema.NullOr(Schema.String),
+  description: Schema.NullOr(Schema.String),
+  operationKind: SourceRecipeOperationKindSchema,
+  searchText: Schema.String,
+  inputSchemaJson: Schema.NullOr(Schema.String),
+  outputSchemaJson: Schema.NullOr(Schema.String),
+  providerKind: SourceRecipeOperationProviderKindSchema,
+  providerDataJson: Schema.NullOr(Schema.String),
+  createdAt: TimestampMsSchema,
+  updatedAt: TimestampMsSchema,
+});
+export const StoredSourceRecipeOperationRecordSchema =
+  StoredSourceRecipeOperationRowSchema.annotations({
+    identifier: "StoredSourceRecipeOperationRecord",
+  });
 
 export type SourceRecipeKind = typeof SourceRecipeKindSchema.Type;
 export type SourceRecipeAdapterKey = typeof SourceRecipeAdapterKeySchema.Type;

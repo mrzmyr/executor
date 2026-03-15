@@ -12,7 +12,7 @@ import {
 import {
   ENV_SECRET_PROVIDER_ID,
   KEYCHAIN_SECRET_PROVIDER_ID,
-  POSTGRES_SECRET_PROVIDER_ID,
+  LOCAL_SECRET_PROVIDER_ID,
   parseSecretStoreProviderId,
 } from "../../runtime/secret-material-providers";
 import { ControlPlaneStore } from "../../runtime/store";
@@ -35,8 +35,8 @@ const SECRET_STORE_PROVIDER_ENV = "EXECUTOR_SECRET_STORE_PROVIDER";
 const getInstanceConfig = (): Effect.Effect<InstanceConfig> => {
   const providers: SecretProvider[] = [
     {
-      id: POSTGRES_SECRET_PROVIDER_ID,
-      name: "Database",
+      id: LOCAL_SECRET_PROVIDER_ID,
+      name: "Local store",
       canStore: true,
     },
   ];
@@ -57,7 +57,7 @@ const getInstanceConfig = (): Effect.Effect<InstanceConfig> => {
 
   const defaultStoreProvider =
     parseSecretStoreProviderId(process.env[SECRET_STORE_PROVIDER_ENV])
-    ?? POSTGRES_SECRET_PROVIDER_ID;
+    ?? LOCAL_SECRET_PROVIDER_ID;
 
   return Effect.succeed({
     platform: process.platform,
@@ -133,7 +133,7 @@ export const ControlPlaneLocalLive = HttpApiBuilder.group(
           return {
             id,
             name,
-            providerId: POSTGRES_SECRET_PROVIDER_ID,
+            providerId: LOCAL_SECRET_PROVIDER_ID,
             purpose,
             createdAt: now,
             updatedAt: now,

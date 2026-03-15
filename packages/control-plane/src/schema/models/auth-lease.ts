@@ -1,7 +1,5 @@
-import { createSelectSchema } from "drizzle-orm/effect-schema";
 import { Schema } from "effect";
 
-import { authLeasesTable } from "../../persistence/schema";
 import { TimestampMsSchema } from "../common";
 import {
   AccountIdSchema,
@@ -17,7 +15,7 @@ import {
   type RequestPlacementTemplate,
 } from "./auth-artifact";
 
-const authLeaseSchemaOverrides = {
+export const AuthLeaseSchema = Schema.Struct({
   id: AuthLeaseIdSchema,
   authArtifactId: AuthArtifactIdSchema,
   workspaceId: WorkspaceIdSchema,
@@ -29,12 +27,7 @@ const authLeaseSchemaOverrides = {
   refreshAfter: Schema.NullOr(TimestampMsSchema),
   createdAt: TimestampMsSchema,
   updatedAt: TimestampMsSchema,
-} as const;
-
-export const AuthLeaseSchema = createSelectSchema(
-  authLeasesTable,
-  authLeaseSchemaOverrides,
-);
+});
 
 export type AuthLease = typeof AuthLeaseSchema.Type;
 

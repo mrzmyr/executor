@@ -1,4 +1,3 @@
-import { ControlPlanePersistenceError } from "#persistence";
 import type {
   Execution,
   ExecutionInteraction,
@@ -12,13 +11,13 @@ import {
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 
-import { loadLocalInstallation } from "./local-installation";
 import { submitExecutionInteractionResponse } from "./execution-service";
 import { LiveExecutionManagerService } from "./live-execution";
 import {
   operationErrors,
 } from "./operation-errors";
 import { resolveLocalWorkspaceContext } from "./local-config";
+import { InstallationStore, LocalInstallationStore } from "./local-storage";
 import { getRuntimeLocalWorkspaceOption } from "./local-runtime-context";
 import { RuntimeSourceAuthServiceTag } from "./source-auth-service";
 import {
@@ -130,12 +129,10 @@ const loadSourceCredentialInteraction = (input: {
 
     const stored = yield* store.executionInteractions.getById(input.interactionId).pipe(
       Effect.mapError((error) =>
-        error instanceof ControlPlanePersistenceError
-          ? input.operation.storage(error)
-          : input.operation.unknownStorage(
-              error,
-              `Failed loading execution interaction ${input.interactionId}`,
-            ),
+        input.operation.unknownStorage(
+          error,
+          `Failed loading execution interaction ${input.interactionId}`,
+        ),
       ),
     );
 
@@ -194,7 +191,13 @@ export const getLocalInstallation = () =>
           ),
       ));
 
-    return yield* loadLocalInstallation(context);
+    const installationStore = runtimeLocalWorkspace !== null
+      ? yield* InstallationStore
+      : LocalInstallationStore;
+
+    return yield* installationStore.load(
+      context,
+    );
   });
 
 export const getSourceCredentialInteraction = (input: {
@@ -331,12 +334,10 @@ export const submitSourceCredentialInteraction = (input: {
       value: token,
     }).pipe(
       Effect.mapError((error) =>
-        error instanceof ControlPlanePersistenceError
-          ? localOps.sourceCredentialSubmit.storage(error)
-          : localOps.sourceCredentialSubmit.unknownStorage(
-              error,
-              `Failed storing credential material for interaction ${interaction.interactionId}`,
-            ),
+        localOps.sourceCredentialSubmit.unknownStorage(
+          error,
+          `Failed storing credential material for interaction ${interaction.interactionId}`,
+        ),
       ),
     );
     const resumed = yield* liveExecutionManager.resolveInteraction({

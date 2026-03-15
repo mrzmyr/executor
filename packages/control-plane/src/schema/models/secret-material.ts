@@ -1,7 +1,5 @@
-import { createSelectSchema } from "drizzle-orm/effect-schema";
 import { Schema } from "effect";
 
-import { secretMaterialsTable } from "../../persistence/schema";
 import { TimestampMsSchema } from "../common";
 import { SecretMaterialIdSchema } from "../ids";
 
@@ -12,18 +10,14 @@ export const SecretMaterialPurposeSchema = Schema.Literal(
   "oauth_client_info",
 );
 
-const secretMaterialSchemaOverrides = {
+export const SecretMaterialSchema = Schema.Struct({
   id: SecretMaterialIdSchema,
   name: Schema.NullOr(Schema.String),
   purpose: SecretMaterialPurposeSchema,
+  value: Schema.String,
   createdAt: TimestampMsSchema,
   updatedAt: TimestampMsSchema,
-} as const;
-
-export const SecretMaterialSchema = createSelectSchema(
-  secretMaterialsTable,
-  secretMaterialSchemaOverrides,
-);
+});
 
 export type SecretMaterialPurpose = typeof SecretMaterialPurposeSchema.Type;
 export type SecretMaterial = typeof SecretMaterialSchema.Type;

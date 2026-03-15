@@ -3,7 +3,6 @@ import type {
   ToolDescriptor,
   ToolSchemaBundle,
 } from "@executor/codemode-core";
-import type { SqlControlPlaneRows } from "#persistence";
 import type {
   AccountId,
   CredentialSlot,
@@ -25,6 +24,7 @@ import * as Schema from "effect/Schema";
 
 import type { ResolvedSourceAuthMaterial } from "../source-auth-material";
 import type { ResolveSecretMaterial } from "../secret-material-providers";
+import type { ControlPlaneStoreShape } from "../store";
 
 export type SourceAdapterFamily = "http_api" | "mcp" | "internal";
 export type SourceAdapterInputSchema = Schema.Schema<any, any, never>;
@@ -81,17 +81,8 @@ export type SourceAdapterOauth2SetupConfig = {
   authorizationParams?: Readonly<Record<string, string>>;
 };
 
-export type SourceAdapterRepairRevisionInput = {
-  rows: SqlControlPlaneRows;
-  sourceRecord: StoredSourceRecord;
-  revision: StoredSourceRecipeRevisionRecord;
-  documents: readonly StoredSourceRecipeDocumentRecord[];
-  operations: readonly StoredSourceRecipeOperationRecord[];
-  schemaBundles: readonly ToolSchemaBundle[];
-};
-
 export type SourceAdapterInvokePersistedToolInput = {
-  rows: SqlControlPlaneRows;
+  rows: ControlPlaneStoreShape;
   workspaceId: Source["workspaceId"];
   accountId: AccountId;
   source: Source;

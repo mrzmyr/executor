@@ -14,16 +14,20 @@ import {
 import * as Effect from "effect/Effect";
 
 import {
-  loadLocalExecutorConfig,
-  writeProjectLocalExecutorConfig,
-} from "./local-config";
-import {
   requireRuntimeLocalWorkspace,
 } from "./local-runtime-context";
+import type {
+  WorkspaceStorageServices,
+  WorkspaceConfigStoreShape,
+  WorkspaceStateStoreShape,
+} from "./local-storage";
 import {
-  loadLocalWorkspaceState,
+  WorkspaceConfigStore,
+  WorkspaceStateStore,
+} from "./local-storage";
+import type { ResolvedLocalWorkspaceContext } from "./local-config";
+import {
   type LocalWorkspaceState,
-  writeLocalWorkspaceState,
 } from "./local-workspace-state";
 import {
   derivePolicyConfigKey,
@@ -77,8 +81,14 @@ const toLocalWorkspacePolicy = (input: {
 export const loadRuntimeLocalWorkspacePolicies = (workspaceId: WorkspaceId) =>
   Effect.gen(function* () {
     const runtimeLocalWorkspace = yield* requireRuntimeLocalWorkspace(workspaceId);
-    const loadedConfig = yield* loadLocalExecutorConfig(runtimeLocalWorkspace.context);
-    const workspaceState = yield* loadLocalWorkspaceState(runtimeLocalWorkspace.context);
+    const workspaceConfigStore = yield* WorkspaceConfigStore;
+    const workspaceStateStore = yield* WorkspaceStateStore;
+    const loadedConfig = yield* workspaceConfigStore.load(
+      runtimeLocalWorkspace.context,
+    );
+    const workspaceState = yield* workspaceStateStore.load(
+      runtimeLocalWorkspace.context,
+    );
 
     const policies = Object.entries(loadedConfig.config?.policies ?? {}).map(([key, policyConfig]) =>
       toLocalWorkspacePolicy({
@@ -99,16 +109,18 @@ export const loadRuntimeLocalWorkspacePolicies = (workspaceId: WorkspaceId) =>
 
 const writeLocalPolicyFiles = (input: {
   operation: OperationErrors;
-  context: Parameters<typeof writeProjectLocalExecutorConfig>[0]["context"];
+  context: ResolvedLocalWorkspaceContext;
+  workspaceConfigStore: WorkspaceConfigStoreShape;
+  workspaceStateStore: WorkspaceStateStoreShape;
   projectConfig: LocalExecutorConfig;
   workspaceState: LocalWorkspaceState;
 }) =>
   Effect.all([
-    writeProjectLocalExecutorConfig({
+    input.workspaceConfigStore.writeProject({
       context: input.context,
       config: input.projectConfig,
     }),
-    writeLocalWorkspaceState({
+    input.workspaceStateStore.write({
       context: input.context,
       state: input.workspaceState,
     }),
@@ -154,6 +166,8 @@ export const createPolicy = (input: {
 }) =>
   Effect.gen(function* () {
     const runtimeLocalWorkspace = yield* loadWorkspacePolicyContext(policyOps.create, input.workspaceId);
+    const workspaceConfigStore = yield* WorkspaceConfigStore;
+    const workspaceStateStore = yield* WorkspaceStateStore;
     const localWorkspace = yield* loadRuntimeLocalWorkspacePolicies(input.workspaceId).pipe(
       Effect.mapError((cause) =>
         policyOps.create.unknownStorage(
@@ -201,6 +215,8 @@ export const createPolicy = (input: {
     yield* writeLocalPolicyFiles({
       operation: policyOps.create,
       context: runtimeLocalWorkspace.context,
+      workspaceConfigStore,
+      workspaceStateStore,
       projectConfig: {
         ...projectConfig,
         policies,
@@ -250,6 +266,8 @@ export const updatePolicy = (input: {
 }) =>
   Effect.gen(function* () {
     const runtimeLocalWorkspace = yield* loadWorkspacePolicyContext(policyOps.update, input.workspaceId);
+    const workspaceConfigStore = yield* WorkspaceConfigStore;
+    const workspaceStateStore = yield* WorkspaceStateStore;
     const localWorkspace = yield* loadRuntimeLocalWorkspacePolicies(input.workspaceId).pipe(
       Effect.mapError((cause) =>
         policyOps.update.unknownStorage(
@@ -300,6 +318,8 @@ export const updatePolicy = (input: {
     yield* writeLocalPolicyFiles({
       operation: policyOps.update,
       context: runtimeLocalWorkspace.context,
+      workspaceConfigStore,
+      workspaceStateStore,
       projectConfig: {
         ...projectConfig,
         policies,
@@ -322,6 +342,8 @@ export const removePolicy = (input: {
 }) =>
   Effect.gen(function* () {
     const runtimeLocalWorkspace = yield* loadWorkspacePolicyContext(policyOps.remove, input.workspaceId);
+    const workspaceConfigStore = yield* WorkspaceConfigStore;
+    const workspaceStateStore = yield* WorkspaceStateStore;
     const localWorkspace = yield* loadRuntimeLocalWorkspacePolicies(input.workspaceId).pipe(
       Effect.mapError((cause) =>
         policyOps.remove.unknownStorage(
@@ -343,6 +365,8 @@ export const removePolicy = (input: {
     yield* writeLocalPolicyFiles({
       operation: policyOps.remove,
       context: runtimeLocalWorkspace.context,
+      workspaceConfigStore,
+      workspaceStateStore,
       projectConfig: {
         ...projectConfig,
         policies,

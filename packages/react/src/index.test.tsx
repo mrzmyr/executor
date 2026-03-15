@@ -96,7 +96,6 @@ const closeScope = (scope: Scope.CloseableScope) =>
 const startControlPlaneServer = async (): Promise<ApiServer> => {
   const runtime = await Effect.runPromise(
     createControlPlaneRuntime({
-      localDataDir: ":memory:",
       workspaceRoot: mkdtempSync(join(tmpdir(), "executor-react-test-")),
     }),
   );
