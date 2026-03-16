@@ -1,5 +1,11 @@
 # executor
 
+## 1.3.0
+
+### Minor Changes
+
+- 329cc41: fix migration
+
 ## 1.2.0
 
 ### Minor Changes
