@@ -228,10 +228,19 @@ At a high level, every execution follows the same loop:
 
 1. `executor` resolves the current local installation and workspace.
 2. It builds a tool catalog from built-in tools plus all connected workspace sources.
-3. It runs your TypeScript inside the QuickJS sandbox runtime by default.
+3. It runs your TypeScript inside the configured sandbox runtime. QuickJS is the default, and `.executor/executor.jsonc` can set `"runtime": "quickjs" | "ses" | "deno"`.
 4. Tool calls are dispatched through `executor` rather than directly from your code.
 5. If a tool needs interaction, the run pauses and records a pending interaction.
 6. Once the interaction is resolved, the execution continues and eventually completes or fails.
+
+Example:
+
+```jsonc
+{
+  "runtime": "ses",
+  "sources": {}
+}
+```
 
 This gives you a stable surface for agent automation:
 
@@ -317,6 +326,7 @@ If you are exploring the repo, these are the directories that matter most:
 - `apps/web`: local React web UI
 - `packages/server`: local HTTP server that serves API, MCP, and UI
 - `packages/control-plane`: source management, secrets, persistence, execution, and inspection
+- `packages/runtime-deno-subprocess`: optional Deno subprocess runtime for TypeScript execution
 - `packages/runtime-quickjs`: default QuickJS sandbox runtime for TypeScript execution
 - `packages/runtime-ses`: optional SES sandbox runtime for TypeScript execution
 - `packages/executor-mcp`: MCP bridge for `execute` and `resume`

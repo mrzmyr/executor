@@ -8,6 +8,7 @@ import * as Effect from "effect/Effect";
 
 import {
   loadLocalExecutorConfig,
+  mergeLocalExecutorConfigs,
   resolveDefaultHomeConfigCandidates,
   resolveDefaultHomeStateDirectory,
   resolveHomeConfigPath,
@@ -27,6 +28,7 @@ describe("local-config", () => {
         writeFile(
           join(configDirectory, "executor.jsonc"),
           `{
+  "runtime": "ses",
   // local workspace config
   "sources": {
     "github": {
@@ -52,6 +54,7 @@ describe("local-config", () => {
       expect(loaded.config?.sources?.github?.connection.endpoint).toBe(
         "https://api.github.com",
       );
+      expect(loaded.config?.runtime).toBe("ses");
       expect(context.homeStateDirectory).toContain("executor");
     }).pipe(Effect.provide(NodeFileSystem.layer)),
   );
@@ -146,4 +149,18 @@ describe("local-config", () => {
       expect(resolvedPath).toBe(join(legacyConfigDirectory, "executor.jsonc"));
     }).pipe(Effect.provide(NodeFileSystem.layer)),
   );
+
+  it("lets project config override the merged runtime", () => {
+    const merged = mergeLocalExecutorConfigs(
+      {
+        runtime: "quickjs",
+        sources: {},
+      },
+      {
+        runtime: "deno",
+      },
+    );
+
+    expect(merged?.runtime).toBe("deno");
+  });
 });

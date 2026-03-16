@@ -7,6 +7,16 @@ Executor turns connected integrations into a workspace tool catalog.
 
 That catalog is the thing the runtime actually executes against.
 
+The execution sandbox is selected from `.executor/executor.jsonc`:
+
+```jsonc
+{
+  "runtime": "quickjs"
+}
+```
+
+Supported values are `quickjs` (default), `ses`, and `deno`.
+
 ## How tools are produced
 
 At a high level:

@@ -117,6 +117,8 @@ and runs user-authored code against that environment.
 
 The default runtime executes code inside a QuickJS WebAssembly sandbox so tool calls stay proxied through the control plane.
 
+The workspace can override that in `.executor/executor.jsonc` with `runtime: "quickjs" | "ses" | "deno"`.
+
 ### Adapter packages
 
 Several packages exist to turn external systems into callable tools:

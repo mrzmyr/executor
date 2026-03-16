@@ -10,12 +10,16 @@ describe("distribution flow", () => {
   const verifyInstallFlow = <R>(
     runCommand: (
       args: ReadonlyArray<string>,
-    ) => Effect.Effect<{ stdout: string }, Error, R>,
+      options?: {
+        readonly okExitCodes?: ReadonlyArray<number>;
+      },
+    ) => Effect.Effect<{ stdout: string; stderr: string }, Error, R>,
   ) =>
     Effect.gen(function* () {
       const harness = yield* DistributionHarness;
 
       yield* harness.writeProjectConfig(`{
+  "runtime": "ses",
   // local workspace config
   "sources": {},
 }
@@ -65,6 +69,17 @@ describe("distribution flow", () => {
         accountId: string;
       };
 
+      const sesCall = yield* runCommand(
+        [
+          "call",
+          'await fetch("https://example.com"); return 1;',
+          "--base-url",
+          harness.baseUrl,
+        ],
+        { okExitCodes: [1] },
+      );
+      expect(sesCall.stderr).toContain("fetch is disabled in SES executor");
+
       yield* runCommand(["down", "--base-url", harness.baseUrl]);
       yield* runCommand(["up", "--base-url", harness.baseUrl]);
 
@@ -84,11 +99,13 @@ describe("distribution flow", () => {
     });
 
   it.live("boots a staged package artifact in a fresh home", () =>
-    verifyInstallFlow((args) => Effect.flatMap(DistributionHarness, (harness) => harness.run(args)))
+    verifyInstallFlow((args, options) =>
+      Effect.flatMap(DistributionHarness, (harness) => harness.run(args, options))
+    )
       .pipe(Effect.provide(LocalDistributionHarnessLive)), 240_000);
 
   it.live("boots an npm-installed package in a fresh home", () =>
-    verifyInstallFlow((args) =>
-      Effect.flatMap(DistributionHarness, (harness) => harness.runInstalled(args))
+    verifyInstallFlow((args, options) =>
+      Effect.flatMap(DistributionHarness, (harness) => harness.runInstalled(args, options))
     ).pipe(Effect.provide(LocalDistributionHarnessLive)), 240_000);
 });

@@ -2,6 +2,12 @@ import { Schema } from "effect";
 
 import { SourceTransportSchema, StringMapSchema } from "./source";
 
+export const LocalExecutorRuntimeSchema = Schema.Literal(
+  "quickjs",
+  "ses",
+  "deno",
+);
+
 export const LocalConfigSecretProviderSourceSchema = Schema.Literal(
   "env",
   "file",
@@ -156,6 +162,7 @@ export const LocalConfigWorkspaceSchema = Schema.Struct({
 });
 
 export const LocalExecutorConfigSchema = Schema.Struct({
+  runtime: Schema.optional(LocalExecutorRuntimeSchema),
   workspace: Schema.optional(LocalConfigWorkspaceSchema),
   sources: Schema.optional(
     Schema.Record({
@@ -182,4 +189,5 @@ export type LocalConfigSecretInput = typeof LocalConfigSecretInputSchema.Type;
 export type LocalConfigSource = typeof LocalConfigSourceSchema.Type;
 export type LocalConfigPolicy = typeof LocalConfigPolicySchema.Type;
 export type LocalConfigSecrets = typeof LocalConfigSecretsSchema.Type;
+export type LocalExecutorRuntime = typeof LocalExecutorRuntimeSchema.Type;
 export type LocalExecutorConfig = typeof LocalExecutorConfigSchema.Type;

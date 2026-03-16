@@ -258,6 +258,7 @@ export const mergeLocalExecutorConfigs = (
   }
 
   return decodeLocalExecutorConfig({
+    runtime: extra?.runtime ?? base?.runtime,
     workspace: {
       ...(base?.workspace ?? {}),
       ...(extra?.workspace ?? {}),

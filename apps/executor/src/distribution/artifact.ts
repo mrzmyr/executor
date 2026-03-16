@@ -225,6 +225,18 @@ export const buildDistributionPackage = async (
     join(repoRoot, "packages/runtime-deno-subprocess/src/deno-subprocess-worker.mjs"),
     join(binDir, "deno-subprocess-worker.mjs"),
   );
+  await runCommand({
+    command: "bun",
+    args: [
+      "build",
+      "./packages/runtime-ses/src/sandbox-worker.mjs",
+      "--target",
+      "node",
+      "--outfile",
+      join(binDir, "sandbox-worker.mjs"),
+    ],
+    cwd: repoRoot,
+  });
   await writeFile(join(packageDir, "package.json"), createPackageJson({
     packageName,
     packageVersion,

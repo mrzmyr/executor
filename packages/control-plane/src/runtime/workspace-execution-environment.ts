@@ -1,4 +1,5 @@
 import {
+  type CodeExecutor,
   createSystemToolMap,
   createToolCatalogFromEntries,
   createToolCatalogFromTools,
@@ -9,8 +10,15 @@ import {
   type ToolInvoker,
   type ToolPath,
 } from "@executor/codemode-core";
+import { makeDenoSubprocessExecutor } from "@executor/runtime-deno-subprocess";
 import { makeQuickJsExecutor } from "@executor/runtime-quickjs";
-import type { AccountId, Source } from "#schema";
+import { makeSesExecutor } from "@executor/runtime-ses";
+import type {
+  AccountId,
+  LocalExecutorConfig,
+  LocalExecutorRuntime,
+  Source,
+} from "#schema";
 import * as Context from "effect/Context";
 import * as Either from "effect/Either";
 import * as Effect from "effect/Effect";
@@ -66,6 +74,26 @@ import {
 } from "./local-storage";
 
 const asToolPath = (value: string): ToolPath => value as ToolPath;
+
+const DEFAULT_EXECUTION_RUNTIME: LocalExecutorRuntime = "quickjs";
+
+export const resolveConfiguredExecutionRuntime = (
+  config: LocalExecutorConfig | null | undefined,
+): LocalExecutorRuntime => config?.runtime ?? DEFAULT_EXECUTION_RUNTIME;
+
+export const createCodeExecutorForRuntime = (
+  runtime: LocalExecutorRuntime,
+): CodeExecutor => {
+  switch (runtime) {
+    case "deno":
+      return makeDenoSubprocessExecutor();
+    case "ses":
+      return makeSesExecutor();
+    case "quickjs":
+    default:
+      return makeQuickJsExecutor();
+  }
+};
 
 const tokenize = (value: string): string[] =>
   value
@@ -652,6 +680,10 @@ export const createWorkspaceExecutionEnvironmentResolver = (input: {
   ({ workspaceId, accountId, onElicitation }) =>
     Effect.gen(function* () {
       const runtimeLocalWorkspace = yield* getRuntimeLocalWorkspaceOption();
+      const loadedConfig =
+        runtimeLocalWorkspace === null
+          ? null
+          : yield* input.workspaceConfigStore.load(runtimeLocalWorkspace.context);
       const localToolRuntime =
         runtimeLocalWorkspace === null
           ? {
@@ -675,7 +707,9 @@ export const createWorkspaceExecutionEnvironmentResolver = (input: {
         onElicitation,
       });
 
-      const executor = makeQuickJsExecutor();
+      const executor = createCodeExecutorForRuntime(
+        resolveConfiguredExecutionRuntime(loadedConfig?.config),
+      );
 
       return {
         executor,
