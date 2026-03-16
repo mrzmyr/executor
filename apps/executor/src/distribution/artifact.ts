@@ -73,7 +73,7 @@ const runCommand = async (input: CommandInput): Promise<void> => {
 
 const resolveQuickJsWasmPath = (): string => {
   const requireFromQuickJsRuntime = createRequire(
-    join(repoRoot, "packages/runtime-quickjs/package.json"),
+    join(repoRoot, "packages/kernel/runtime-quickjs/package.json"),
   );
   const quickJsPackagePath = requireFromQuickJsRuntime.resolve(
     "quickjs-emscripten/package.json",
@@ -90,33 +90,6 @@ const resolveQuickJsWasmPath = (): string => {
   return wasmPath;
 };
 
-const resolvePGliteAssetPaths = (): {
-  dataPath: string;
-  wasmPath: string;
-} => {
-  const requireFromControlPlane = createRequire(
-    join(repoRoot, "packages/control-plane/package.json"),
-  );
-  const pgliteEntryPath = requireFromControlPlane.resolve(
-    "@electric-sql/pglite",
-  );
-  const pgliteDistDir = dirname(pgliteEntryPath);
-  const dataPath = join(pgliteDistDir, "pglite.data");
-  const wasmPath = join(pgliteDistDir, "pglite.wasm");
-
-  if (!existsSync(dataPath)) {
-    throw new Error(`Unable to locate PGlite data asset at ${dataPath}`);
-  }
-
-  if (!existsSync(wasmPath)) {
-    throw new Error(`Unable to locate PGlite wasm asset at ${wasmPath}`);
-  }
-
-  return {
-    dataPath,
-    wasmPath,
-  };
-};
 
 const createPackageJson = (input: {
   packageName: string;
@@ -178,7 +151,7 @@ export const buildDistributionPackage = async (
   const bundlePath = join(binDir, "executor.mjs");
   const launcherPath = join(binDir, "executor.js");
   const quickJsWasmPath = resolveQuickJsWasmPath();
-  const pgliteAssets = resolvePGliteAssetPaths();
+
   const webDistDir = join(repoRoot, "apps/web/dist");
   const readmePath = join(repoRoot, "README.md");
   const packageName = options.packageName ?? defaults.name;
@@ -214,22 +187,21 @@ export const buildDistributionPackage = async (
 
   await cp(webDistDir, webDir, { recursive: true });
   await cp(quickJsWasmPath, join(binDir, "emscripten-module.wasm"));
-  await cp(pgliteAssets.dataPath, join(binDir, "pglite.data"));
-  await cp(pgliteAssets.wasmPath, join(binDir, "pglite.wasm"));
+
   await mkdir(join(binDir, "openapi-extractor-wasm"), { recursive: true });
   await cp(
-    join(repoRoot, "packages/codemode-openapi/src/openapi-extractor-wasm/openapi_extractor_bg.wasm"),
+    join(repoRoot, "packages/drivers/openapi/src/openapi-extractor-wasm/openapi_extractor_bg.wasm"),
     join(binDir, "openapi-extractor-wasm/openapi_extractor_bg.wasm"),
   );
   await cp(
-    join(repoRoot, "packages/runtime-deno-subprocess/src/deno-subprocess-worker.mjs"),
+    join(repoRoot, "packages/kernel/runtime-deno-subprocess/src/deno-subprocess-worker.mjs"),
     join(binDir, "deno-subprocess-worker.mjs"),
   );
   await runCommand({
     command: "bun",
     args: [
       "build",
-      "./packages/runtime-ses/src/sandbox-worker.mjs",
+      "./packages/kernel/runtime-ses/src/sandbox-worker.mjs",
       "--target",
       "node",
       "--outfile",

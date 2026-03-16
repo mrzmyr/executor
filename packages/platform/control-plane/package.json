@@ -21,7 +21,7 @@
   },
   "dependencies": {
     "@effect/platform": "catalog:",
-    "@electric-sql/pglite": "^0.3.15",
+
     "@executor/codemode-core": "workspace:*",
     "@executor/codemode-google-discovery": "workspace:*",
     "@executor/codemode-mcp": "workspace:*",

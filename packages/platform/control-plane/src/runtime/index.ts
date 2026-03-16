@@ -17,7 +17,7 @@ import {
   createLocalControlPlanePersistence,
   type LocalControlPlanePersistence,
 } from "./local-control-plane-store";
-import { migrateLegacyPostgresWorkspaceIfNeeded } from "./legacy-postgres-migration";
+
 import {
   resolveLocalWorkspaceContext,
 } from "./local-config";
@@ -70,8 +70,6 @@ export type RuntimeControlPlaneOptions = {
   resolveSecretMaterial?: ResolveSecretMaterial;
   getLocalServerBaseUrl?: () => string | undefined;
   localDataDir?: string;
-  legacyLocalDataDir?: string;
-  legacyDatabaseUrl?: string;
   workspaceRoot?: string;
   homeConfigPath?: string;
   homeStateDirectory?: string;
@@ -216,16 +214,6 @@ export const createControlPlaneRuntime = (
       ),
     );
 
-    yield* migrateLegacyPostgresWorkspaceIfNeeded({
-      context: localWorkspaceContext,
-      legacyLocalDataDir: options.legacyLocalDataDir ?? options.localDataDir,
-      legacyDatabaseUrl: options.legacyDatabaseUrl,
-    }).pipe(
-      Effect.mapError(toLocalRuntimeBootstrapError),
-      Effect.catchAll((error) =>
-        closeScope(scope).pipe(Effect.zipRight(Effect.fail(error))),
-      ),
-    );
 
     const installationStore = LocalInstallationStore;
     const workspaceConfigStore = LocalWorkspaceConfigStore;

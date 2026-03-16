@@ -24,7 +24,7 @@ describe("loadMonorepoRootEnv", () => {
     const root = await makeTempDir();
     await writeFile(join(root, "package.json"), JSON.stringify({
       private: true,
-      workspaces: ["apps/*", "packages/*"],
+      workspaces: ["apps/*", "packages/*/*"],
     }));
     await writeFile(join(root, ".env.local"), "GOOGLE_CLIENT_ID=test-client\nGOOGLE_CLIENT_SECRET=test-secret\n");
     const child = join(root, "apps", "executor");
@@ -46,7 +46,7 @@ describe("loadMonorepoRootEnv", () => {
     const root = await makeTempDir();
     await writeFile(join(root, "package.json"), JSON.stringify({
       private: true,
-      workspaces: ["apps/*", "packages/*"],
+      workspaces: ["apps/*", "packages/*/*"],
     }));
     await writeFile(join(root, ".env.local"), "GOOGLE_CLIENT_ID=file-client\n");
     const child = join(root, "apps", "executor");

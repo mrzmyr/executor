@@ -1,6 +1,11 @@
-import * as prettier from "prettier";
+import { format } from "prettier/standalone";
+import parserBabel from "prettier/plugins/babel";
+import parserEstree from "prettier/plugins/estree";
+import parserTypescript from "prettier/plugins/typescript";
 
 export type PrettierParser = "json" | "typescript";
+
+const plugins = [parserBabel, parserEstree, parserTypescript];
 
 const formatCache = new Map<string, string>();
 
@@ -25,8 +30,9 @@ export async function formatWithPrettier(
       unwrap = true;
     }
 
-    const result = await prettier.format(input, {
+    const result = await format(input, {
       parser,
+      plugins,
       printWidth: 60,
       tabWidth: 2,
       semi: true,
@@ -48,13 +54,4 @@ export async function formatWithPrettier(
   } catch {
     return code;
   }
-}
-
-export async function formatJsonIfNeeded(code: string): Promise<string> {
-  const trimmed = code.trimStart();
-  if (!trimmed.startsWith("{") && !trimmed.startsWith("[")) {
-    return code;
-  }
-
-  return formatWithPrettier(code, "json");
 }

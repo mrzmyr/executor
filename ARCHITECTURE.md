@@ -20,15 +20,16 @@ If `README.md` answers "what is this product and how do I use it?", this file an
                             v
 +-------------+   +---------+---------+   +----------------+
 | Browser UI  |-->| local server      |<--| MCP clients    |
-| apps/web    |   | packages/server   |   | via /mcp       |
+| apps/web    |   | packages/platform |   | via /mcp       |
+|             |   | /server           |   |                |
 +-------------+   +---------+---------+   +----------------+
                             |
                             | provides runtime layer
                             v
                   +---------+---------+
                   | control plane      |
-                  | packages/control-  |
-                  | plane              |
+                  | packages/platform/ |
+                  | control-plane      |
                   +----+-----+----+----+
                        |     |    |
          persistence --+     |    +-- source auth / discovery / inspection
@@ -40,6 +41,7 @@ If `README.md` answers "what is this product and how do I use it?", this file an
                   +---------+---------+
                   | QuickJS sandboxed  |
                   | executor runtime   |
+                  | packages/kernel/   |
                   | runtime-quickjs    |
                   | default executor   |
                   +--------------------+
@@ -72,7 +74,7 @@ Responsibilities:
 
 Conceptually, the CLI is not the business logic. It is a thin user-facing shell over the local runtime.
 
-### `packages/server`: one local process for API, MCP, and UI
+### `packages/platform/server`: one local process for API, MCP, and UI
 
 This package hosts the actual local server.
 
@@ -86,7 +88,7 @@ Responsibilities:
 
 This is an important architectural choice: the API and UI are served by the same local process, so the product behaves like one install rather than a pile of separate services.
 
-### `packages/control-plane`: product core
+### `packages/platform/control-plane`: product core
 
 This is the center of the system.
 
@@ -103,7 +105,7 @@ It contains the runtime layer, persistence integration, and the business logic f
 
 If you want to understand the behavior of the product, this is the most important package.
 
-### `packages/runtime-quickjs`: default code execution runtime
+### `packages/kernel/runtime-quickjs`: default code execution runtime
 
 This package provides the TypeScript execution environment used by the local product.
 
@@ -123,11 +125,11 @@ The workspace can override that in `.executor/executor.jsonc` with `runtime: "qu
 
 Several packages exist to turn external systems into callable tools:
 
-- `packages/codemode-core`: shared tool abstractions, discovery, schemas, and system tools
-- `packages/codemode-mcp`: MCP tool loading and invocation
-- `packages/codemode-openapi`: OpenAPI extraction, manifests, and tool generation
-- `packages/executor-mcp`: exposes the local runtime itself as an MCP server
-- `packages/react`: React hooks and client state wrappers for the local UI
+- `packages/kernel/core`: shared tool abstractions, discovery, schemas, and system tools
+- `packages/drivers/mcp`: MCP tool loading and invocation
+- `packages/drivers/openapi`: OpenAPI extraction, manifests, and tool generation
+- `packages/hosts/mcp`: exposes the local runtime itself as an MCP server
+- `packages/clients/react`: React hooks and client state wrappers for the local UI
 
 These packages are what let the control plane treat multiple source kinds as one logical tool catalog.
 
@@ -356,7 +358,7 @@ The web UI is a client of this API.
 
 ### MCP bridge
 
-`packages/executor-mcp` exposes the local runtime as an MCP server.
+`packages/hosts/mcp` exposes the local runtime as an MCP server.
 
 The bridge registers two main tools:
 
@@ -405,5 +407,5 @@ A few practical boundaries are worth calling out:
 
 - `README.md` for the product view and usage guidance
 - `apps/executor/src/cli/main.ts` for the CLI surface
-- `packages/server/src/index.ts` for how the local server is assembled
-- `packages/control-plane/src/runtime/` for the core runtime flows
+- `packages/platform/server/src/index.ts` for how the local server is assembled
+- `packages/platform/control-plane/src/runtime/` for the core runtime flows

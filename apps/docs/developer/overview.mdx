@@ -31,7 +31,7 @@ Responsibilities:
 - resume paused interactions
 - seed and inspect sources in development flows
 
-### `packages/server`
+### `packages/platform/server`
 
 The local server shell around the control plane.
 
@@ -41,7 +41,7 @@ Responsibilities:
 - mount the local MCP server at `/mcp`
 - serve the web UI
 
-### `packages/control-plane`
+### `packages/platform/control-plane`
 
 The product core.
 
@@ -58,11 +58,11 @@ Responsibilities:
 
 These packages provide the execution and tool abstractions:
 
-- `packages/runtime-ses`
-- `packages/codemode-core`
-- `packages/codemode-openapi`
-- `packages/codemode-mcp`
-- `packages/react`
+- `packages/kernel/runtime-ses`
+- `packages/kernel/core`
+- `packages/drivers/openapi`
+- `packages/drivers/mcp`
+- `packages/clients/react`
 
 ## The mental model
 

@@ -1,9 +1,7 @@
 import { Streamdown } from "streamdown";
-import { createCodePlugin } from "@streamdown/code";
+import { createLimitedCodePlugin } from "../lib/shiki";
 
-const codePlugin = createCodePlugin({
-  themes: ["vitesse-dark", "vitesse-dark"],
-});
+const codePlugin = createLimitedCodePlugin();
 
 const PROSE_CLASSES = [
   "text-[13px] leading-relaxed text-muted-foreground",

@@ -15,7 +15,7 @@ That is why it exists as a separate layer instead of being buried directly insid
 
 ## Main packages
 
-### `packages/codemode-core`
+### `packages/kernel/core`
 
 This package holds the common tool model:
 
@@ -28,13 +28,13 @@ This package holds the common tool model:
 
 This is the main abstraction boundary that other layers build on.
 
-### `packages/codemode-openapi`
+### `packages/drivers/openapi`
 
 This package handles OpenAPI-specific extraction and tool generation.
 
 Its job is to understand OpenAPI and compile it into the shared codemode tool model, not to own workspace persistence or auth lifecycle.
 
-### `packages/codemode-mcp`
+### `packages/drivers/mcp`
 
 This package handles MCP-specific tool discovery and invocation behavior and adapts remote MCP tools into the same shared tool model.
 

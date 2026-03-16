@@ -17,7 +17,7 @@ This is why MCP is modeled as its own broad family instead of being treated like
 
 This is the outward-facing side of MCP.
 
-`packages/executor-mcp` and the `/mcp` route in `packages/server` let external MCP clients talk to the local executor runtime.
+`packages/hosts/mcp` and the `/mcp` route in `packages/platform/server` let external MCP clients talk to the local executor runtime.
 
 That means external MCP hosts can:
 
@@ -40,9 +40,9 @@ Keeping that distinction clear avoids collapsing very different responsibilities
 Broadly:
 
 - control plane owns workspace state, bindings, credentials, and execution lifecycle
-- `packages/codemode-mcp` owns MCP tool loading and invocation helpers
-- `packages/executor-mcp` owns the local MCP server surface
-- `packages/server` mounts the `/mcp` handler
+- `packages/drivers/mcp` owns MCP tool loading and invocation helpers
+- `packages/hosts/mcp` owns the local MCP server surface
+- `packages/platform/server` mounts the `/mcp` handler
 
 ## Why MCP stays flexible in this model
 

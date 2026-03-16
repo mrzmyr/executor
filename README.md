@@ -328,13 +328,13 @@ If you are exploring the repo, these are the directories that matter most:
 
 - `apps/executor`: packaged CLI entrypoint and daemon lifecycle commands
 - `apps/web`: local React web UI
-- `packages/server`: local HTTP server that serves API, MCP, and UI
-- `packages/control-plane`: source management, secrets, persistence, execution, and inspection
-- `packages/runtime-deno-subprocess`: optional Deno subprocess runtime for TypeScript execution
-- `packages/runtime-quickjs`: default QuickJS sandbox runtime for TypeScript execution
-- `packages/runtime-ses`: optional SES sandbox runtime for TypeScript execution
-- `packages/executor-mcp`: MCP bridge for `execute` and `resume`
-- `packages/codemode-*`: core tool abstractions plus MCP and OpenAPI adapters
+- `packages/platform/server`: local HTTP server that serves API, MCP, and UI
+- `packages/platform/control-plane`: source management, secrets, persistence, execution, and inspection
+- `packages/kernel/runtime-deno-subprocess`: optional Deno subprocess runtime for TypeScript execution
+- `packages/kernel/runtime-quickjs`: default QuickJS sandbox runtime for TypeScript execution
+- `packages/kernel/runtime-ses`: optional SES sandbox runtime for TypeScript execution
+- `packages/hosts/mcp`: MCP bridge for `execute` and `resume`
+- `packages/kernel/core` plus `packages/drivers/*`: core tool abstractions and first-party adapters
 
 ## Releasing
 

@@ -4,7 +4,7 @@
   "type": "module",
   "packageManager": "bun@1.2.22",
   "workspaces": [
-    "packages/*",
+    "packages/*/*",
     "apps/*",
     "apps/docs"
   ],

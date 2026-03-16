@@ -1,5 +1,5 @@
 import { useEffect, useState, useRef, useCallback } from "react";
-import { codeToHtml, type BundledLanguage } from "shiki";
+import { codeToHtml, resolveLang } from "../lib/shiki";
 import { cn } from "../lib/utils";
 import { IconCopy, IconCheck } from "./icons";
 
@@ -10,8 +10,8 @@ function cacheKey(code: string, lang: string) {
   return `${lang}::${code.length}::${code.slice(0, 64)}`;
 }
 
-function detectLanguage(code: string, hint?: string): BundledLanguage {
-  if (hint) return hint as BundledLanguage;
+function detectLanguage(code: string, hint?: string): string {
+  if (hint) return resolveLang(hint) ?? "json";
   const trimmed = code.trimStart();
   if (trimmed.startsWith("{") || trimmed.startsWith("[")) return "json";
   if (trimmed.startsWith("<")) return "xml";
@@ -47,10 +47,7 @@ export function CodeBlock(props: {
     }
 
     let cancelled = false;
-    codeToHtml(code, {
-      lang: language,
-      theme: "vitesse-dark",
-    }).then((result) => {
+    codeToHtml(code, { lang: language }).then((result) => {
       if (cancelled) return;
       highlightCache.set(key, result);
       if (mountedRef.current) setHtml(result);
