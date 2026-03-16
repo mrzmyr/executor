@@ -243,6 +243,7 @@ const refreshProviderGrantRefArtifact = (input: {
       clientAuthentication: grant.clientAuthentication,
       clientSecret,
       refreshToken,
+      scopes: config.requiredScopes.length > 0 ? config.requiredScopes : null,
     });
 
     const storeSecretMaterial = createDefaultSecretMaterialStorer({

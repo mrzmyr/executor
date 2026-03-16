@@ -153,6 +153,11 @@ export const refreshOAuth2AccessToken = (input: {
   clientAuthentication: OAuth2ClientAuthenticationMethod;
   clientSecret?: string | null;
   refreshToken: string;
+  /** Optional scope restriction. When provided, the returned access token will
+   *  be limited to this subset of the originally granted scopes. This is used
+   *  by Google Discovery sources to exclude narrow scopes (e.g. gmail.metadata)
+   *  that cause the API server to restrict functionality. */
+  scopes?: ReadonlyArray<string> | null;
 }): Effect.Effect<OAuth2TokenResponse, Error, never> =>
   Effect.gen(function* () {
     const body = new URLSearchParams({
@@ -163,6 +168,10 @@ export const refreshOAuth2AccessToken = (input: {
 
     if (input.clientAuthentication === "client_secret_post" && input.clientSecret) {
       body.set("client_secret", input.clientSecret);
+    }
+
+    if (input.scopes && input.scopes.length > 0) {
+      body.set("scope", input.scopes.join(" "));
     }
 
     return yield* postFormToOAuth2TokenEndpoint({

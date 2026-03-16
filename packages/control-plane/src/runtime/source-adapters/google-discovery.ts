@@ -7,6 +7,7 @@ import {
   buildGoogleDiscoveryToolPresentation,
   compileGoogleDiscoveryToolDefinitions,
   extractGoogleDiscoveryManifest,
+  type GoogleDiscoveryToolManifest,
   type GoogleDiscoveryToolProviderData,
 } from "@executor/codemode-google-discovery";
 import type { Source } from "#schema";
@@ -205,19 +206,71 @@ const googleDiscoveryCatalogOperationFromDefinition = (input: {
   };
 };
 
+/**
+ * Google's API server enforces a "most restrictive matching scope" policy: when
+ * a narrow scope (e.g. gmail.metadata) is granted alongside a broader scope
+ * (e.g. gmail.readonly), the server may restrict behaviour to the narrow scope.
+ *
+ * For Gmail, this means having gmail.metadata in the grant blocks the `q`
+ * parameter on messages.list and prevents reading message bodies, even when
+ * gmail.readonly or gmail.modify are also granted.
+ *
+ * To avoid this, we compute the maximal non-redundant scope set from the
+ * discovery document's per-method scope declarations. A scope is "subsumed" if
+ * every method that accepts it also accepts some other scope in the set — meaning
+ * the other scope is strictly broader. Subsumed scopes are dropped so that
+ * Google's server never picks the narrower one.
+ */
+const computeMaximalScopes = (manifest: GoogleDiscoveryToolManifest): ReadonlyArray<string> => {
+  const topLevelScopes = Object.keys(manifest.oauthScopes ?? {});
+  if (topLevelScopes.length === 0) return [];
+
+  // Build a map of scope -> set of method IDs that accept it
+  const scopeToMethods = new Map<string, Set<string>>();
+  for (const scope of topLevelScopes) {
+    scopeToMethods.set(scope, new Set());
+  }
+  for (const method of manifest.methods) {
+    for (const scope of method.scopes) {
+      scopeToMethods.get(scope)?.add(method.methodId);
+    }
+  }
+
+  // A scope is subsumed if there exists another scope whose method set is a
+  // strict superset of this scope's method set. Remove subsumed scopes.
+  const maximal = topLevelScopes.filter((scope) => {
+    const methods = scopeToMethods.get(scope);
+    if (!methods || methods.size === 0) return true; // keep scopes not used by any method
+    return !topLevelScopes.some((other) => {
+      if (other === scope) return false;
+      const otherMethods = scopeToMethods.get(other);
+      if (!otherMethods || otherMethods.size <= methods.size) return false;
+      // Check if `other` is a strict superset of `scope`
+      for (const m of methods) {
+        if (!otherMethods.has(m)) return false;
+      }
+      return true;
+    });
+  });
+
+  return maximal;
+};
+
 const googleDiscoveryOauth2SetupConfig = (source: Source) =>
   Effect.gen(function* () {
     const bindingConfig = yield* googleDiscoveryBindingConfigFromSource(source);
     const configuredScopes = bindingConfig.scopes ?? [];
-    const scopes = configuredScopes.length > 0
-      ? configuredScopes
-      : yield* fetchGoogleDiscoveryDocumentWithHeaders({
-          url: bindingConfig.discoveryUrl,
-          headers: bindingConfig.defaultHeaders ?? undefined,
-        }).pipe(
-          Effect.flatMap((document) => extractGoogleDiscoveryManifest(source.name, document)),
-          Effect.map((manifest) => Object.keys(manifest.oauthScopes ?? {})),
-        );
+    const manifest = yield* fetchGoogleDiscoveryDocumentWithHeaders({
+      url: bindingConfig.discoveryUrl,
+      headers: bindingConfig.defaultHeaders ?? undefined,
+    }).pipe(
+      Effect.flatMap((document) => extractGoogleDiscoveryManifest(source.name, document)),
+      Effect.catchAll(() => Effect.succeed(null)),
+    );
+    const discoveryScopes = manifest ? computeMaximalScopes(manifest) : [];
+    const scopes = discoveryScopes.length > 0
+      ? [...new Set([...discoveryScopes, ...configuredScopes])]
+      : configuredScopes;
 
     if (scopes.length === 0) {
       return null;

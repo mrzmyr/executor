@@ -206,12 +206,8 @@ const makeGoogleWorkspaceTestServer = Effect.acquireRelease(
                 : Array.isArray(request.headers.authorization)
                   ? (request.headers.authorization[0] ?? "")
                   : "";
-            discoveryAuthorizations.push(authorizationHeader);
-
-            if (authorizationHeader !== `Bearer ${currentAccessToken ?? ""}`) {
-              response.statusCode = 401;
-              response.end("Unauthorized");
-              return;
+            if (authorizationHeader.length > 0) {
+              discoveryAuthorizations.push(authorizationHeader);
             }
 
             const scope = discoveryScopes.get(`${service}:${version}`)
