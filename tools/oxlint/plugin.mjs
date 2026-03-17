@@ -1,7 +1,9 @@
 import { definePlugin } from "@oxlint/plugins";
 
 import noCrossWorkspaceRelativeImports from "./rules/no-cross-workspace-relative-imports.mjs";
+import noAsyncEffectVitestTests from "./rules/no-async-effect-vitest-tests.mjs";
 import noDirectEffectTagRead from "./rules/no-direct-effect-tag-read.mjs";
+import noEffectRunInEffectVitestTests from "./rules/no-effect-run-in-effect-vitest-tests.mjs";
 import noNodeFsWithEffectImports from "./rules/no-node-fs-with-effect-imports.mjs";
 import noRawEffectFailErrors from "./rules/no-raw-effect-fail-errors.mjs";
 import noYieldEffectFail from "./rules/no-yield-effect-fail.mjs";
@@ -12,8 +14,10 @@ export default definePlugin({
     name: "oxlint-plugin-executor-monorepo",
   },
   rules: {
+    "no-async-effect-vitest-tests": noAsyncEffectVitestTests,
     "no-cross-workspace-relative-imports": noCrossWorkspaceRelativeImports,
     "no-direct-effect-tag-read": noDirectEffectTagRead,
+    "no-effect-run-in-effect-vitest-tests": noEffectRunInEffectVitestTests,
     "no-node-fs-with-effect-imports": noNodeFsWithEffectImports,
     "no-raw-effect-fail-errors": noRawEffectFailErrors,
     "no-yield-effect-fail": noYieldEffectFail,

@@ -6,7 +6,7 @@
   "plugins": ["typescript", "oxc", "unicorn"],
 
   "categories": {
-    "correctness": "warn"
+    "correctness": "warn",
   },
 
   "ignorePatterns": [
@@ -15,20 +15,20 @@
     "**/dist/**",
     "**/coverage/**",
     "**/.next/**",
-    "**/.mint/**"
+    "**/.mint/**",
   ],
 
   "settings": {
     "executorMonorepo": {
-      "packageScopes": ["@executor/"]
-    }
+      "packageScopes": ["@executor/"],
+    },
   },
 
   "jsPlugins": [
     {
       "name": "executor-monorepo",
-      "specifier": "./tools/oxlint/plugin.mjs"
-    }
+      "specifier": "./tools/oxlint/plugin.mjs",
+    },
   ],
 
   "rules": {
@@ -39,41 +39,41 @@
     "no-unused-vars": "warn",
 
     // Monorepo-specific rules.
+    "executor-monorepo/no-async-effect-vitest-tests": "error",
     "executor-monorepo/no-cross-workspace-relative-imports": "error",
     "executor-monorepo/no-direct-effect-tag-read": "error",
+    "executor-monorepo/no-effect-run-in-effect-vitest-tests": "error",
     "executor-monorepo/no-node-fs-with-effect-imports": "error",
     "executor-monorepo/no-raw-effect-fail-errors": "error",
     "executor-monorepo/no-yield-effect-fail": "error",
-    "executor-monorepo/no-workspace-src-imports": "warn"
+    "executor-monorepo/no-workspace-src-imports": "warn",
   },
 
   "overrides": [
     {
       // JSON Schema conditionals legitimately use a `then` key.
       "files": [
-        "packages/platform/control-plane/src/runtime/catalog/source/runtime.ts"
+        "packages/platform/control-plane/src/runtime/catalog/source/runtime.ts",
       ],
       "rules": {
-        "unicorn/no-thenable": "off"
-      }
+        "unicorn/no-thenable": "off",
+      },
     },
     {
       // This stack-integrity check intentionally prefers invariant failures in cleanup.
-      "files": [
-        "packages/sources/core/src/catalog-json-schema.ts"
-      ],
+      "files": ["packages/sources/core/src/catalog-json-schema.ts"],
       "rules": {
-        "no-unsafe-finally": "off"
-      }
+        "no-unsafe-finally": "off",
+      },
     },
     {
       // Generated wasm glue is vendored into the repo and not hand-maintained.
       "files": [
-        "packages/sources/openapi/src/openapi-extractor-wasm/openapi_extractor.js"
+        "packages/sources/openapi/src/openapi-extractor-wasm/openapi_extractor.js",
       ],
       "rules": {
-        "no-unused-vars": "off"
-      }
-    }
-  ]
+        "no-unused-vars": "off",
+      },
+    },
+  ],
 }

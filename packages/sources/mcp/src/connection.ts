@@ -176,13 +176,11 @@ export const createSdkMcpConnector = (
     if (transport === "stdio") {
       const command = input.command?.trim();
       if (!command) {
-        return yield* Effect.fail(
-          mcpConnectionError({
-            transport: "stdio",
-            message: "MCP stdio transport requires a command",
-            cause: new Error("Missing MCP stdio command"),
-          }),
-        );
+        return yield* mcpConnectionError({
+          transport: "stdio",
+          message: "MCP stdio transport requires a command",
+          cause: new Error("Missing MCP stdio command"),
+        });
       }
 
       const StdioClientTransport = yield* loadStdioClientTransport();

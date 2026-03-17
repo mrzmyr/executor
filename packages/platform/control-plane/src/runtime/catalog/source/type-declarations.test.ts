@@ -5,11 +5,7 @@ import { NodeFileSystem } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 
-import {
-  SourceIdSchema,
-  WorkspaceIdSchema,
-  type Source,
-} from "#schema";
+import { SourceIdSchema, WorkspaceIdSchema, type Source } from "#schema";
 
 import {
   createCatalogSnapshotV1,
@@ -32,11 +28,13 @@ const put = <K extends string, V>(record: Record<K, V>, key: K, value: V) => {
 };
 
 const docId = DocumentIdSchema.make("doc_graphql");
-const baseProvenance = (pointer: string): ProvenanceRef[] => [{
-  relation: "declared",
-  documentId: docId,
-  pointer,
-}];
+const baseProvenance = (pointer: string): ProvenanceRef[] => [
+  {
+    relation: "declared",
+    documentId: docId,
+    pointer,
+  },
+];
 
 const createSnapshot = (): ReturnType<typeof createCatalogSnapshotV1> => {
   const catalog = createEmptyCatalogV1();
@@ -49,244 +47,333 @@ const createSnapshot = (): ReturnType<typeof createCatalogSnapshotV1> => {
   const executableId = ExecutableIdSchema.make("exec_graphql_teams");
   const capabilityId = CapabilityIdSchema.make("cap_graphql_teams");
   const responseSetId = ResponseSetIdSchema.make("response_set_graphql_teams");
-  const secondExecutableId = ExecutableIdSchema.make("exec_graphql_teams_search");
-  const secondCapabilityId = CapabilityIdSchema.make("cap_graphql_teams_search");
+  const secondExecutableId = ExecutableIdSchema.make(
+    "exec_graphql_teams_search",
+  );
+  const secondCapabilityId = CapabilityIdSchema.make(
+    "cap_graphql_teams_search",
+  );
 
-  put(catalog.documents as Record<typeof docId, CatalogV1["documents"][typeof docId]>, docId, {
-    id: docId,
-    kind: "graphql-schema",
-    title: "Linear GraphQL",
-    fetchedAt: "2026-03-14T00:00:00.000Z",
-    rawRef: "memory://linear/graphql",
-  });
-
-  put(catalog.resources as Record<typeof resourceId, CatalogV1["resources"][typeof resourceId]>, resourceId, {
-    id: resourceId,
-    documentId: docId,
-    canonicalUri: "https://api.linear.app/graphql",
-    baseUri: "https://api.linear.app/graphql",
-    anchors: {},
-    dynamicAnchors: {},
-    synthetic: false,
-    provenance: baseProvenance("#"),
-  });
-
-  put(catalog.scopes as Record<typeof scopeId, CatalogV1["scopes"][typeof scopeId]>, scopeId, {
-    id: scopeId,
-    kind: "service",
-    name: "Linear",
-    namespace: "linear",
-    synthetic: false,
-    provenance: baseProvenance("#"),
-  });
-
-  put(catalog.symbols as Record<typeof stringShapeId, CatalogV1["symbols"][typeof stringShapeId]>, stringShapeId, {
-    id: stringShapeId,
-    kind: "shape",
-    resourceId,
-    title: "String",
-    node: {
-      type: "scalar",
-      scalar: "string",
+  put(
+    catalog.documents as Record<
+      typeof docId,
+      CatalogV1["documents"][typeof docId]
+    >,
+    docId,
+    {
+      id: docId,
+      kind: "graphql-schema",
+      title: "Linear GraphQL",
+      fetchedAt: "2026-03-14T00:00:00.000Z",
+      rawRef: "memory://linear/graphql",
     },
-    synthetic: false,
-    provenance: baseProvenance("#/scalar/String"),
-  });
+  );
 
-  put(catalog.symbols as Record<typeof teamFilterShapeId, CatalogV1["symbols"][typeof teamFilterShapeId]>, teamFilterShapeId, {
-    id: teamFilterShapeId,
-    kind: "shape",
+  put(
+    catalog.resources as Record<
+      typeof resourceId,
+      CatalogV1["resources"][typeof resourceId]
+    >,
     resourceId,
-    title: "shape_deadbeef",
-    node: {
-      type: "object",
-      fields: {
-        name: {
-          shapeId: stringShapeId,
-        },
+    {
+      id: resourceId,
+      documentId: docId,
+      canonicalUri: "https://api.linear.app/graphql",
+      baseUri: "https://api.linear.app/graphql",
+      anchors: {},
+      dynamicAnchors: {},
+      synthetic: false,
+      provenance: baseProvenance("#"),
+    },
+  );
+
+  put(
+    catalog.scopes as Record<
+      typeof scopeId,
+      CatalogV1["scopes"][typeof scopeId]
+    >,
+    scopeId,
+    {
+      id: scopeId,
+      kind: "service",
+      name: "Linear",
+      namespace: "linear",
+      synthetic: false,
+      provenance: baseProvenance("#"),
+    },
+  );
+
+  put(
+    catalog.symbols as Record<
+      typeof stringShapeId,
+      CatalogV1["symbols"][typeof stringShapeId]
+    >,
+    stringShapeId,
+    {
+      id: stringShapeId,
+      kind: "shape",
+      resourceId,
+      title: "String",
+      node: {
+        type: "scalar",
+        scalar: "string",
       },
-      additionalProperties: false,
+      synthetic: false,
+      provenance: baseProvenance("#/scalar/String"),
     },
-    synthetic: false,
-    provenance: baseProvenance("#/input/TeamFilter"),
-  });
+  );
 
-  put(catalog.symbols as Record<typeof callShapeId, CatalogV1["symbols"][typeof callShapeId]>, callShapeId, {
-    id: callShapeId,
-    kind: "shape",
-    resourceId,
-    title: "shape_feedface",
-    node: {
-      type: "object",
-      fields: {
-        filter: {
-          shapeId: teamFilterShapeId,
+  put(
+    catalog.symbols as Record<
+      typeof teamFilterShapeId,
+      CatalogV1["symbols"][typeof teamFilterShapeId]
+    >,
+    teamFilterShapeId,
+    {
+      id: teamFilterShapeId,
+      kind: "shape",
+      resourceId,
+      title: "shape_deadbeef",
+      node: {
+        type: "object",
+        fields: {
+          name: {
+            shapeId: stringShapeId,
+          },
         },
+        additionalProperties: false,
       },
-      additionalProperties: false,
+      synthetic: false,
+      provenance: baseProvenance("#/input/TeamFilter"),
     },
-    synthetic: false,
-    provenance: baseProvenance("#/query/teams/args"),
-  });
+  );
 
-  put(catalog.symbols as Record<typeof resultShapeId, CatalogV1["symbols"][typeof resultShapeId]>, resultShapeId, {
-    id: resultShapeId,
-    kind: "shape",
-    resourceId,
-    title: "TeamConnection",
-    node: {
-      type: "object",
-      fields: {
-        nodes: {
-          shapeId: teamFilterShapeId,
+  put(
+    catalog.symbols as Record<
+      typeof callShapeId,
+      CatalogV1["symbols"][typeof callShapeId]
+    >,
+    callShapeId,
+    {
+      id: callShapeId,
+      kind: "shape",
+      resourceId,
+      title: "shape_feedface",
+      node: {
+        type: "object",
+        fields: {
+          filter: {
+            shapeId: teamFilterShapeId,
+          },
         },
+        additionalProperties: false,
       },
-      additionalProperties: false,
+      synthetic: false,
+      provenance: baseProvenance("#/query/teams/args"),
     },
-    synthetic: false,
-    provenance: baseProvenance("#/query/teams/result"),
-  });
+  );
 
-  put(catalog.responseSets as Record<typeof responseSetId, CatalogV1["responseSets"][typeof responseSetId]>, responseSetId, {
-    id: responseSetId,
-    variants: [],
-    synthetic: false,
-    provenance: baseProvenance("#/responses"),
-  });
+  put(
+    catalog.symbols as Record<
+      typeof resultShapeId,
+      CatalogV1["symbols"][typeof resultShapeId]
+    >,
+    resultShapeId,
+    {
+      id: resultShapeId,
+      kind: "shape",
+      resourceId,
+      title: "TeamConnection",
+      node: {
+        type: "object",
+        fields: {
+          nodes: {
+            shapeId: teamFilterShapeId,
+          },
+        },
+        additionalProperties: false,
+      },
+      synthetic: false,
+      provenance: baseProvenance("#/query/teams/result"),
+    },
+  );
 
-  put(catalog.capabilities as Record<typeof capabilityId, CatalogV1["capabilities"][typeof capabilityId]>, capabilityId, {
-    id: capabilityId,
-    serviceScopeId: scopeId,
-    surface: {
-      toolPath: ["linear", "teams"],
-      title: "Teams",
-      summary: "List teams",
+  put(
+    catalog.responseSets as Record<
+      typeof responseSetId,
+      CatalogV1["responseSets"][typeof responseSetId]
+    >,
+    responseSetId,
+    {
+      id: responseSetId,
+      variants: [],
+      synthetic: false,
+      provenance: baseProvenance("#/responses"),
     },
-    semantics: {
-      effect: "read",
-      safe: true,
-      idempotent: true,
-      destructive: false,
-    },
-    auth: { kind: "none" },
-    interaction: {
-      approval: { mayRequire: false },
-      elicitation: { mayRequest: false },
-      resume: { supported: false },
-    },
-    executableIds: [executableId],
-    preferredExecutableId: executableId,
-    synthetic: false,
-    provenance: baseProvenance("#/query/teams"),
-  });
+  );
 
-  put(catalog.executables as Record<typeof executableId, CatalogV1["executables"][typeof executableId]>, executableId, {
-    id: executableId,
+  put(
+    catalog.capabilities as Record<
+      typeof capabilityId,
+      CatalogV1["capabilities"][typeof capabilityId]
+    >,
     capabilityId,
-    scopeId,
-    adapterKey: "graphql",
-    bindingVersion: 1,
-    binding: {
-      kind: "graphql",
-      toolKind: "field",
-      toolId: "teams",
-      rawToolId: "teams",
-      group: "query",
-      leaf: "teams",
-      fieldName: "teams",
-      operationType: "query",
-      operationName: "TeamsQuery",
-      operationDocument: "query TeamsQuery { teams { nodes { id } } }",
-      queryTypeName: "Query",
-      mutationTypeName: null,
-      subscriptionTypeName: null,
+    {
+      id: capabilityId,
+      serviceScopeId: scopeId,
+      surface: {
+        toolPath: ["linear", "teams"],
+        title: "Teams",
+        summary: "List teams",
+      },
+      semantics: {
+        effect: "read",
+        safe: true,
+        idempotent: true,
+        destructive: false,
+      },
+      auth: { kind: "none" },
+      interaction: {
+        approval: { mayRequire: false },
+        elicitation: { mayRequest: false },
+        resume: { supported: false },
+      },
+      executableIds: [executableId],
+      preferredExecutableId: executableId,
+      synthetic: false,
+      provenance: baseProvenance("#/query/teams"),
     },
-    projection: {
-      responseSetId,
-      callShapeId,
-      resultDataShapeId: resultShapeId,
-    },
-    display: {
-      protocol: "graphql",
-      method: "query",
-      pathTemplate: "teams",
-      operationId: "teams",
-      group: "query",
-      leaf: "teams",
-      rawToolId: "teams",
-      title: "Teams",
-      summary: "List teams",
-    },
-    synthetic: false,
-    provenance: baseProvenance("#/query/teams"),
-  });
+  );
 
-  put(catalog.capabilities as Record<typeof secondCapabilityId, CatalogV1["capabilities"][typeof secondCapabilityId]>, secondCapabilityId, {
-    id: secondCapabilityId,
-    serviceScopeId: scopeId,
-    surface: {
-      toolPath: ["linear", "teamsSearch"],
-      title: "Teams Search",
-      summary: "Search teams",
+  put(
+    catalog.executables as Record<
+      typeof executableId,
+      CatalogV1["executables"][typeof executableId]
+    >,
+    executableId,
+    {
+      id: executableId,
+      capabilityId,
+      scopeId,
+      adapterKey: "graphql",
+      bindingVersion: 1,
+      binding: {
+        kind: "graphql",
+        toolKind: "field",
+        toolId: "teams",
+        rawToolId: "teams",
+        group: "query",
+        leaf: "teams",
+        fieldName: "teams",
+        operationType: "query",
+        operationName: "TeamsQuery",
+        operationDocument: "query TeamsQuery { teams { nodes { id } } }",
+        queryTypeName: "Query",
+        mutationTypeName: null,
+        subscriptionTypeName: null,
+      },
+      projection: {
+        responseSetId,
+        callShapeId,
+        resultDataShapeId: resultShapeId,
+      },
+      display: {
+        protocol: "graphql",
+        method: "query",
+        pathTemplate: "teams",
+        operationId: "teams",
+        group: "query",
+        leaf: "teams",
+        rawToolId: "teams",
+        title: "Teams",
+        summary: "List teams",
+      },
+      synthetic: false,
+      provenance: baseProvenance("#/query/teams"),
     },
-    semantics: {
-      effect: "read",
-      safe: true,
-      idempotent: true,
-      destructive: false,
-    },
-    auth: { kind: "none" },
-    interaction: {
-      approval: { mayRequire: false },
-      elicitation: { mayRequest: false },
-      resume: { supported: false },
-    },
-    executableIds: [secondExecutableId],
-    preferredExecutableId: secondExecutableId,
-    synthetic: false,
-    provenance: baseProvenance("#/query/teamsSearch"),
-  });
+  );
 
-  put(catalog.executables as Record<typeof secondExecutableId, CatalogV1["executables"][typeof secondExecutableId]>, secondExecutableId, {
-    id: secondExecutableId,
-    capabilityId: secondCapabilityId,
-    scopeId,
-    adapterKey: "graphql",
-    bindingVersion: 1,
-    binding: {
-      kind: "graphql",
-      toolKind: "field",
-      toolId: "teamsSearch",
-      rawToolId: "teamsSearch",
-      group: "query",
-      leaf: "teamsSearch",
-      fieldName: "teamsSearch",
-      operationType: "query",
-      operationName: "TeamsSearchQuery",
-      operationDocument: "query TeamsSearchQuery { teamsSearch { nodes { id } } }",
-      queryTypeName: "Query",
-      mutationTypeName: null,
-      subscriptionTypeName: null,
+  put(
+    catalog.capabilities as Record<
+      typeof secondCapabilityId,
+      CatalogV1["capabilities"][typeof secondCapabilityId]
+    >,
+    secondCapabilityId,
+    {
+      id: secondCapabilityId,
+      serviceScopeId: scopeId,
+      surface: {
+        toolPath: ["linear", "teamsSearch"],
+        title: "Teams Search",
+        summary: "Search teams",
+      },
+      semantics: {
+        effect: "read",
+        safe: true,
+        idempotent: true,
+        destructive: false,
+      },
+      auth: { kind: "none" },
+      interaction: {
+        approval: { mayRequire: false },
+        elicitation: { mayRequest: false },
+        resume: { supported: false },
+      },
+      executableIds: [secondExecutableId],
+      preferredExecutableId: secondExecutableId,
+      synthetic: false,
+      provenance: baseProvenance("#/query/teamsSearch"),
     },
-    projection: {
-      responseSetId,
-      callShapeId,
-      resultDataShapeId: resultShapeId,
+  );
+
+  put(
+    catalog.executables as Record<
+      typeof secondExecutableId,
+      CatalogV1["executables"][typeof secondExecutableId]
+    >,
+    secondExecutableId,
+    {
+      id: secondExecutableId,
+      capabilityId: secondCapabilityId,
+      scopeId,
+      adapterKey: "graphql",
+      bindingVersion: 1,
+      binding: {
+        kind: "graphql",
+        toolKind: "field",
+        toolId: "teamsSearch",
+        rawToolId: "teamsSearch",
+        group: "query",
+        leaf: "teamsSearch",
+        fieldName: "teamsSearch",
+        operationType: "query",
+        operationName: "TeamsSearchQuery",
+        operationDocument:
+          "query TeamsSearchQuery { teamsSearch { nodes { id } } }",
+        queryTypeName: "Query",
+        mutationTypeName: null,
+        subscriptionTypeName: null,
+      },
+      projection: {
+        responseSetId,
+        callShapeId,
+        resultDataShapeId: resultShapeId,
+      },
+      display: {
+        protocol: "graphql",
+        method: "query",
+        pathTemplate: "teamsSearch",
+        operationId: "teamsSearch",
+        group: "query",
+        leaf: "teamsSearch",
+        rawToolId: "teamsSearch",
+        title: "Teams Search",
+        summary: "Search teams",
+      },
+      synthetic: false,
+      provenance: baseProvenance("#/query/teamsSearch"),
     },
-    display: {
-      protocol: "graphql",
-      method: "query",
-      pathTemplate: "teamsSearch",
-      operationId: "teamsSearch",
-      group: "query",
-      leaf: "teamsSearch",
-      rawToolId: "teamsSearch",
-      title: "Teams Search",
-      summary: "Search teams",
-    },
-    synthetic: false,
-    provenance: baseProvenance("#/query/teamsSearch"),
-  });
+  );
 
   return createCatalogSnapshotV1({
     import: {
@@ -332,7 +419,7 @@ const makeTempDirectory = (prefix: string) =>
       fs.makeTempDirectory({
         directory: tmpdir(),
         prefix,
-      })
+      }),
     ),
     Effect.provide(NodeFileSystem.layer),
   );
@@ -349,394 +436,504 @@ const fileExists = (path: string) =>
     Effect.provide(NodeFileSystem.layer),
   );
 
+const makeTypeDeclarationsContext = (
+  workspaceRoot: string,
+  workspaceName: string,
+) => ({
+  cwd: workspaceRoot,
+  workspaceRoot,
+  workspaceName,
+  configDirectory: join(workspaceRoot, ".executor"),
+  projectConfigPath: join(workspaceRoot, ".executor", "executor.jsonc"),
+  homeConfigPath: join(workspaceRoot, ".executor-home.jsonc"),
+  homeStateDirectory: join(workspaceRoot, ".executor-home-state"),
+  artifactsDirectory: join(workspaceRoot, ".executor", "artifacts"),
+  stateDirectory: join(workspaceRoot, ".executor", "state"),
+});
+
 describe("source-type-declarations", () => {
-  it("writes per-source and aggregate declaration files", async () => {
-    const workspaceRoot = await Effect.runPromise(
-      makeTempDirectory("executor-types-"),
-    );
-    const context = {
-      cwd: workspaceRoot,
-      workspaceRoot,
-      workspaceName: "executor-types",
-      configDirectory: join(workspaceRoot, ".executor"),
-      projectConfigPath: join(workspaceRoot, ".executor", "executor.jsonc"),
-      homeConfigPath: join(workspaceRoot, ".executor-home.jsonc"),
-      homeStateDirectory: join(workspaceRoot, ".executor-home-state"),
-      artifactsDirectory: join(workspaceRoot, ".executor", "artifacts"),
-      stateDirectory: join(workspaceRoot, ".executor", "state"),
-    };
+  it.effect("writes per-source and aggregate declaration files", () =>
+    Effect.gen(function* () {
+      const workspaceRoot = yield* makeTempDirectory("executor-types-");
+      const context = makeTypeDeclarationsContext(
+        workspaceRoot,
+        "executor-types",
+      );
 
-    const snapshot = createSnapshot();
-    await Effect.runPromise(syncWorkspaceSourceTypeDeclarationsNode({
-      context,
-      entries: [
-        {
-          source: makeSource({ id: "src_linear" }),
-          snapshot,
-        },
-        {
-          source: makeSource({ id: "src_hidden", enabled: false }),
-          snapshot,
-        },
-      ],
-    }));
-
-    const sourceDeclaration = await Effect.runPromise(
-      readTextFile(
-        join(workspaceRoot, ".executor", "types", "sources", "src_linear.d.ts"),
-      ),
-    );
-    const aggregateDeclaration = await Effect.runPromise(
-      readTextFile(join(workspaceRoot, ".executor", "types", "index.d.ts")),
-    );
-
-    expect(sourceDeclaration).toContain("export interface SourceTools_src_linear");
-    expect(sourceDeclaration).toContain("type LinearTeamsCall = {");
-    expect(sourceDeclaration).toContain("type LinearTeamsResult = {");
-    expect(sourceDeclaration.match(/type LinearTeamsCall =/g)?.length).toBe(1);
-    expect(sourceDeclaration).not.toContain("type shape_");
-    expect(sourceDeclaration).not.toContain("= shape_");
-    expect(sourceDeclaration).toContain("linear: {");
-    expect(sourceDeclaration).toContain("teams: (args?: LinearTeamsCall) => Promise<LinearTeamsResult>;");
-    expect(sourceDeclaration).toContain("teamsSearch: (args?: LinearTeamsCall) => Promise<LinearTeamsResult>;");
-    expect(sourceDeclaration).not.toMatch(/type\s+[0-9]/);
-    expect(aggregateDeclaration).toContain('import type { SourceTools_src_linear } from "../sources/src_linear";');
-    expect(aggregateDeclaration).not.toContain("src_hidden");
-    expect(aggregateDeclaration).toContain("declare global {");
-    expect(aggregateDeclaration).toContain("const tools: ExecutorSourceTools;");
-  });
-
-  it("removes stale source declarations when the source disappears", async () => {
-    const workspaceRoot = await Effect.runPromise(
-      makeTempDirectory("executor-types-stale-"),
-    );
-    const context = {
-      cwd: workspaceRoot,
-      workspaceRoot,
-      workspaceName: "executor-types-stale",
-      configDirectory: join(workspaceRoot, ".executor"),
-      projectConfigPath: join(workspaceRoot, ".executor", "executor.jsonc"),
-      homeConfigPath: join(workspaceRoot, ".executor-home.jsonc"),
-      homeStateDirectory: join(workspaceRoot, ".executor-home-state"),
-      artifactsDirectory: join(workspaceRoot, ".executor", "artifacts"),
-      stateDirectory: join(workspaceRoot, ".executor", "state"),
-    };
-
-    const snapshot = createSnapshot();
-    await Effect.runPromise(syncWorkspaceSourceTypeDeclarationsNode({
-      context,
-      entries: [{ source: makeSource({ id: "src_linear" }), snapshot }],
-    }));
-    await Effect.runPromise(syncWorkspaceSourceTypeDeclarationsNode({
-      context,
-      entries: [],
-    }));
-
-    const aggregateDeclaration = await Effect.runPromise(
-      readTextFile(join(workspaceRoot, ".executor", "types", "index.d.ts")),
-    );
-
-    expect(aggregateDeclaration).toContain("export type ExecutorSourceTools = {};");
-    expect(
-      await Effect.runPromise(
-        fileExists(
-          join(workspaceRoot, ".executor", "types", "sources", "src_linear.d.ts"),
-        ),
-      ),
-    ).toBe(false);
-  });
-
-  it("falls back to unknown for unsupported declaration-only shape nodes", async () => {
-    const workspaceRoot = await Effect.runPromise(
-      makeTempDirectory("executor-types-unsupported-"),
-    );
-    const context = {
-      cwd: workspaceRoot,
-      workspaceRoot,
-      workspaceName: "executor-types-unsupported",
-      configDirectory: join(workspaceRoot, ".executor"),
-      projectConfigPath: join(workspaceRoot, ".executor", "executor.jsonc"),
-      homeConfigPath: join(workspaceRoot, ".executor-home.jsonc"),
-      homeStateDirectory: join(workspaceRoot, ".executor-home-state"),
-      artifactsDirectory: join(workspaceRoot, ".executor", "artifacts"),
-      stateDirectory: join(workspaceRoot, ".executor", "state"),
-    };
-
-    const snapshot = createSnapshot();
-    const unsupportedNotShapeId = ShapeSymbolIdSchema.make("shape_unsupported_not");
-    const unsupportedConditionalShapeId = ShapeSymbolIdSchema.make("shape_unsupported_conditional");
-    const executable = Object.values(snapshot.catalog.executables)[0]!;
-    const callShape = snapshot.catalog.symbols[executable.projection.callShapeId];
-    const resultShape = executable.projection.resultDataShapeId
-      ? snapshot.catalog.symbols[executable.projection.resultDataShapeId]
-      : undefined;
-
-    if (!callShape || callShape.kind !== "shape" || callShape.node.type !== "object") {
-      throw new Error("Expected object argument shape in test fixture");
-    }
-
-    if (!resultShape || resultShape.kind !== "shape" || resultShape.node.type !== "object") {
-      throw new Error("Expected object result shape in test fixture");
-    }
-
-    put(
-      snapshot.catalog.symbols as Record<typeof unsupportedNotShapeId, CatalogV1["symbols"][typeof unsupportedNotShapeId]>,
-      unsupportedNotShapeId,
-      {
-        id: unsupportedNotShapeId,
-        kind: "shape",
-        title: "UnsupportedNot",
-        node: {
-          type: "not",
-          itemShapeId: callShape.node.fields.filter!.shapeId,
-        },
-        synthetic: false,
-        provenance: baseProvenance("#/unsupported/not"),
-      },
-    );
-
-    put(
-      snapshot.catalog.symbols as Record<
-        typeof unsupportedConditionalShapeId,
-        CatalogV1["symbols"][typeof unsupportedConditionalShapeId]
-      >,
-      unsupportedConditionalShapeId,
-      {
-        id: unsupportedConditionalShapeId,
-        kind: "shape",
-        title: "UnsupportedConditional",
-        node: {
-          type: "conditional",
-          ifShapeId: callShape.node.fields.filter!.shapeId,
-          thenShapeId: resultShape.node.fields.nodes!.shapeId,
-          elseShapeId: executable.projection.resultDataShapeId!,
-        },
-        synthetic: false,
-        provenance: baseProvenance("#/unsupported/conditional"),
-      },
-    );
-
-    put(
-      snapshot.catalog.symbols as Record<typeof callShape.id, CatalogV1["symbols"][typeof callShape.id]>,
-      callShape.id,
-      {
-        ...callShape,
-        node: {
-          ...callShape.node,
-          fields: {
-            ...callShape.node.fields,
-            unsupportedNot: {
-              shapeId: unsupportedNotShapeId,
-            },
+      const snapshot = createSnapshot();
+      yield* syncWorkspaceSourceTypeDeclarationsNode({
+        context,
+        entries: [
+          {
+            source: makeSource({ id: "src_linear" }),
+            snapshot,
           },
-        },
-      },
-    );
-
-    put(
-      snapshot.catalog.symbols as Record<typeof resultShape.id, CatalogV1["symbols"][typeof resultShape.id]>,
-      resultShape.id,
-      {
-        ...resultShape,
-        node: {
-          ...resultShape.node,
-          fields: {
-            ...resultShape.node.fields,
-            unsupportedConditional: {
-              shapeId: unsupportedConditionalShapeId,
-            },
+          {
+            source: makeSource({ id: "src_hidden", enabled: false }),
+            snapshot,
           },
-        },
-      },
-    );
-
-    await Effect.runPromise(syncWorkspaceSourceTypeDeclarationsNode({
-      context,
-      entries: [{ source: makeSource({ id: "src_linear" }), snapshot }],
-    }));
-
-    const sourceDeclaration = await Effect.runPromise(
-      readTextFile(
-        join(workspaceRoot, ".executor", "types", "sources", "src_linear.d.ts"),
-      ),
-    );
-
-    expect(sourceDeclaration).toContain("unsupportedNot?: unknown;");
-    expect(sourceDeclaration).toContain("unsupportedConditional?: unknown;");
-  });
-
-  it("renders object unions as discriminated unions with shared fields", async () => {
-    const workspaceRoot = await Effect.runPromise(
-      makeTempDirectory("executor-types-union-"),
-    );
-    const context = {
-      cwd: workspaceRoot,
-      workspaceRoot,
-      workspaceName: "executor-types-union",
-      configDirectory: join(workspaceRoot, ".executor"),
-      projectConfigPath: join(workspaceRoot, ".executor", "executor.jsonc"),
-      homeConfigPath: join(workspaceRoot, ".executor-home.jsonc"),
-      homeStateDirectory: join(workspaceRoot, ".executor-home-state"),
-      artifactsDirectory: join(workspaceRoot, ".executor", "artifacts"),
-      stateDirectory: join(workspaceRoot, ".executor", "state"),
-    };
-
-    const snapshot = createSnapshot();
-    const numberShapeId = ShapeSymbolIdSchema.make("shape_number");
-    const blockedActionShapeId = ShapeSymbolIdSchema.make("shape_action_blocked");
-    const unblockedActionShapeId = ShapeSymbolIdSchema.make("shape_action_unblocked");
-    const routeBlockedActionShapeId = ShapeSymbolIdSchema.make("shape_action_route_blocked");
-    const routeShapeId = ShapeSymbolIdSchema.make("shape_route");
-    const blockedShapeId = ShapeSymbolIdSchema.make("shape_abuse_blocked");
-    const unblockedShapeId = ShapeSymbolIdSchema.make("shape_abuse_unblocked");
-    const routeBlockedShapeId = ShapeSymbolIdSchema.make("shape_abuse_route_blocked");
-    const unionShapeId = ShapeSymbolIdSchema.make("shape_abuse_union");
-    const executable = Object.values(snapshot.catalog.executables)[0]!;
-    const stringShapeId = ShapeSymbolIdSchema.make("shape_string");
-
-    put(snapshot.catalog.symbols as Record<typeof numberShapeId, CatalogV1["symbols"][typeof numberShapeId]>, numberShapeId, {
-      id: numberShapeId,
-      kind: "shape",
-      title: "Number",
-      node: {
-        type: "scalar",
-        scalar: "number",
-      },
-      synthetic: false,
-      provenance: baseProvenance("#/scalar/Number"),
-    });
-
-    for (const [shapeId, action] of [
-      [blockedActionShapeId, "blocked"],
-      [unblockedActionShapeId, "unblocked"],
-      [routeBlockedActionShapeId, "route-blocked"],
-    ] as const) {
-      put(snapshot.catalog.symbols as Record<typeof shapeId, CatalogV1["symbols"][typeof shapeId]>, shapeId, {
-        id: shapeId,
-        kind: "shape",
-        title: String(action),
-        node: {
-          type: "const",
-          value: action,
-        },
-        synthetic: false,
-        provenance: baseProvenance(`#/const/${action}`),
+        ],
       });
-    }
 
-    put(snapshot.catalog.symbols as Record<typeof routeShapeId, CatalogV1["symbols"][typeof routeShapeId]>, routeShapeId, {
-      id: routeShapeId,
-      kind: "shape",
-      title: "RouteInfo",
-      node: {
-        type: "object",
-        fields: {
-          source: {
-            shapeId: stringShapeId,
-          },
-        },
-        required: ["source"],
-        additionalProperties: false,
-      },
-      synthetic: false,
-      provenance: baseProvenance("#/route"),
-    });
-
-    put(snapshot.catalog.symbols as Record<typeof blockedShapeId, CatalogV1["symbols"][typeof blockedShapeId]>, blockedShapeId, {
-      id: blockedShapeId,
-      kind: "shape",
-      title: "BlockedHistoryItem",
-      node: {
-        type: "object",
-        fields: {
-          action: { shapeId: blockedActionShapeId },
-          actor: { shapeId: stringShapeId },
-          createdAt: { shapeId: numberShapeId },
-          reason: { shapeId: stringShapeId },
-          statusCode: { shapeId: numberShapeId },
-        },
-        required: ["action", "createdAt", "reason", "statusCode"],
-        additionalProperties: false,
-      },
-      synthetic: false,
-      provenance: baseProvenance("#/blocked"),
-    });
-
-    put(snapshot.catalog.symbols as Record<typeof unblockedShapeId, CatalogV1["symbols"][typeof unblockedShapeId]>, unblockedShapeId, {
-      id: unblockedShapeId,
-      kind: "shape",
-      title: "UnblockedHistoryItem",
-      node: {
-        type: "object",
-        fields: {
-          action: { shapeId: unblockedActionShapeId },
-          actor: { shapeId: stringShapeId },
-          createdAt: { shapeId: numberShapeId },
-        },
-        required: ["action", "createdAt"],
-        additionalProperties: false,
-      },
-      synthetic: false,
-      provenance: baseProvenance("#/unblocked"),
-    });
-
-    put(snapshot.catalog.symbols as Record<typeof routeBlockedShapeId, CatalogV1["symbols"][typeof routeBlockedShapeId]>, routeBlockedShapeId, {
-      id: routeBlockedShapeId,
-      kind: "shape",
-      title: "RouteBlockedHistoryItem",
-      node: {
-        type: "object",
-        fields: {
-          action: { shapeId: routeBlockedActionShapeId },
-          actor: { shapeId: stringShapeId },
-          createdAt: { shapeId: numberShapeId },
-          reason: { shapeId: stringShapeId },
-          route: { shapeId: routeShapeId },
-        },
-        required: ["action", "createdAt", "reason", "route"],
-        additionalProperties: false,
-      },
-      synthetic: false,
-      provenance: baseProvenance("#/routeBlocked"),
-    });
-
-    put(snapshot.catalog.symbols as Record<typeof unionShapeId, CatalogV1["symbols"][typeof unionShapeId]>, unionShapeId, {
-      id: unionShapeId,
-      kind: "shape",
-      title: "AbuseBlockHistoryItem",
-      node: {
-        type: "oneOf",
-        items: [blockedShapeId, unblockedShapeId, routeBlockedShapeId],
-      },
-      synthetic: false,
-      provenance: baseProvenance("#/union"),
-    });
-
-    put(snapshot.catalog.executables as Record<typeof executable.id, CatalogV1["executables"][typeof executable.id]>, executable.id, {
-      ...executable,
-      projection: {
-        ...executable.projection,
-        resultDataShapeId: unionShapeId,
-      },
-    });
-
-    await Effect.runPromise(syncWorkspaceSourceTypeDeclarationsNode({
-      context,
-      entries: [{ source: makeSource({ id: "src_linear" }), snapshot }],
-    }));
-
-    const sourceDeclaration = await Effect.runPromise(
-      readTextFile(
+      const sourceDeclaration = yield* readTextFile(
         join(workspaceRoot, ".executor", "types", "sources", "src_linear.d.ts"),
-      ),
-    );
+      );
+      const aggregateDeclaration = yield* readTextFile(
+        join(workspaceRoot, ".executor", "types", "index.d.ts"),
+      );
 
-    expect(sourceDeclaration).toContain("teams: (args?: LinearTeamsCall) => Promise<{");
-    expect(sourceDeclaration).toContain("actor?: string;");
-    expect(sourceDeclaration).toContain('action: "blocked";');
-    expect(sourceDeclaration).toContain('action: "unblocked";');
-    expect(sourceDeclaration).toContain('action: "route-blocked";');
-    expect(sourceDeclaration).toContain("} & (");
-    expect(sourceDeclaration).not.toContain("Member2");
-  });
+      expect(sourceDeclaration).toContain(
+        "export interface SourceTools_src_linear",
+      );
+      expect(sourceDeclaration).toContain("type LinearTeamsCall = {");
+      expect(sourceDeclaration).toContain("type LinearTeamsResult = {");
+      expect(sourceDeclaration.match(/type LinearTeamsCall =/g)?.length).toBe(
+        1,
+      );
+      expect(sourceDeclaration).not.toContain("type shape_");
+      expect(sourceDeclaration).not.toContain("= shape_");
+      expect(sourceDeclaration).toContain("linear: {");
+      expect(sourceDeclaration).toContain(
+        "teams: (args?: LinearTeamsCall) => Promise<LinearTeamsResult>;",
+      );
+      expect(sourceDeclaration).toContain(
+        "teamsSearch: (args?: LinearTeamsCall) => Promise<LinearTeamsResult>;",
+      );
+      expect(sourceDeclaration).not.toMatch(/type\s+[0-9]/);
+      expect(aggregateDeclaration).toContain(
+        'import type { SourceTools_src_linear } from "../sources/src_linear";',
+      );
+      expect(aggregateDeclaration).not.toContain("src_hidden");
+      expect(aggregateDeclaration).toContain("declare global {");
+      expect(aggregateDeclaration).toContain(
+        "const tools: ExecutorSourceTools;",
+      );
+    }),
+  );
+
+  it.effect(
+    "removes stale source declarations when the source disappears",
+    () =>
+      Effect.gen(function* () {
+        const workspaceRoot = yield* makeTempDirectory("executor-types-stale-");
+        const context = makeTypeDeclarationsContext(
+          workspaceRoot,
+          "executor-types-stale",
+        );
+
+        const snapshot = createSnapshot();
+        yield* syncWorkspaceSourceTypeDeclarationsNode({
+          context,
+          entries: [{ source: makeSource({ id: "src_linear" }), snapshot }],
+        });
+        yield* syncWorkspaceSourceTypeDeclarationsNode({
+          context,
+          entries: [],
+        });
+
+        const aggregateDeclaration = yield* readTextFile(
+          join(workspaceRoot, ".executor", "types", "index.d.ts"),
+        );
+        const hasSourceDeclaration = yield* fileExists(
+          join(
+            workspaceRoot,
+            ".executor",
+            "types",
+            "sources",
+            "src_linear.d.ts",
+          ),
+        );
+
+        expect(aggregateDeclaration).toContain(
+          "export type ExecutorSourceTools = {};",
+        );
+        expect(hasSourceDeclaration).toBe(false);
+      }),
+  );
+
+  it.effect(
+    "falls back to unknown for unsupported declaration-only shape nodes",
+    () =>
+      Effect.gen(function* () {
+        const workspaceRoot = yield* makeTempDirectory(
+          "executor-types-unsupported-",
+        );
+        const context = makeTypeDeclarationsContext(
+          workspaceRoot,
+          "executor-types-unsupported",
+        );
+
+        const snapshot = createSnapshot();
+        const unsupportedNotShapeId = ShapeSymbolIdSchema.make(
+          "shape_unsupported_not",
+        );
+        const unsupportedConditionalShapeId = ShapeSymbolIdSchema.make(
+          "shape_unsupported_conditional",
+        );
+        const executable = Object.values(snapshot.catalog.executables)[0]!;
+        const callShape =
+          snapshot.catalog.symbols[executable.projection.callShapeId];
+        const resultShape = executable.projection.resultDataShapeId
+          ? snapshot.catalog.symbols[executable.projection.resultDataShapeId]
+          : undefined;
+
+        if (
+          !callShape ||
+          callShape.kind !== "shape" ||
+          callShape.node.type !== "object"
+        ) {
+          throw new Error("Expected object argument shape in test fixture");
+        }
+
+        if (
+          !resultShape ||
+          resultShape.kind !== "shape" ||
+          resultShape.node.type !== "object"
+        ) {
+          throw new Error("Expected object result shape in test fixture");
+        }
+
+        put(
+          snapshot.catalog.symbols as Record<
+            typeof unsupportedNotShapeId,
+            CatalogV1["symbols"][typeof unsupportedNotShapeId]
+          >,
+          unsupportedNotShapeId,
+          {
+            id: unsupportedNotShapeId,
+            kind: "shape",
+            title: "UnsupportedNot",
+            node: {
+              type: "not",
+              itemShapeId: callShape.node.fields.filter!.shapeId,
+            },
+            synthetic: false,
+            provenance: baseProvenance("#/unsupported/not"),
+          },
+        );
+
+        put(
+          snapshot.catalog.symbols as Record<
+            typeof unsupportedConditionalShapeId,
+            CatalogV1["symbols"][typeof unsupportedConditionalShapeId]
+          >,
+          unsupportedConditionalShapeId,
+          {
+            id: unsupportedConditionalShapeId,
+            kind: "shape",
+            title: "UnsupportedConditional",
+            node: {
+              type: "conditional",
+              ifShapeId: callShape.node.fields.filter!.shapeId,
+              thenShapeId: resultShape.node.fields.nodes!.shapeId,
+              elseShapeId: executable.projection.resultDataShapeId!,
+            },
+            synthetic: false,
+            provenance: baseProvenance("#/unsupported/conditional"),
+          },
+        );
+
+        put(
+          snapshot.catalog.symbols as Record<
+            typeof callShape.id,
+            CatalogV1["symbols"][typeof callShape.id]
+          >,
+          callShape.id,
+          {
+            ...callShape,
+            node: {
+              ...callShape.node,
+              fields: {
+                ...callShape.node.fields,
+                unsupportedNot: {
+                  shapeId: unsupportedNotShapeId,
+                },
+              },
+            },
+          },
+        );
+
+        put(
+          snapshot.catalog.symbols as Record<
+            typeof resultShape.id,
+            CatalogV1["symbols"][typeof resultShape.id]
+          >,
+          resultShape.id,
+          {
+            ...resultShape,
+            node: {
+              ...resultShape.node,
+              fields: {
+                ...resultShape.node.fields,
+                unsupportedConditional: {
+                  shapeId: unsupportedConditionalShapeId,
+                },
+              },
+            },
+          },
+        );
+
+        yield* syncWorkspaceSourceTypeDeclarationsNode({
+          context,
+          entries: [{ source: makeSource({ id: "src_linear" }), snapshot }],
+        });
+
+        const sourceDeclaration = yield* readTextFile(
+          join(
+            workspaceRoot,
+            ".executor",
+            "types",
+            "sources",
+            "src_linear.d.ts",
+          ),
+        );
+
+        expect(sourceDeclaration).toContain("unsupportedNot?: unknown;");
+        expect(sourceDeclaration).toContain(
+          "unsupportedConditional?: unknown;",
+        );
+      }),
+  );
+
+  it.effect(
+    "renders object unions as discriminated unions with shared fields",
+    () =>
+      Effect.gen(function* () {
+        const workspaceRoot = yield* makeTempDirectory("executor-types-union-");
+        const context = makeTypeDeclarationsContext(
+          workspaceRoot,
+          "executor-types-union",
+        );
+
+        const snapshot = createSnapshot();
+        const numberShapeId = ShapeSymbolIdSchema.make("shape_number");
+        const blockedActionShapeId = ShapeSymbolIdSchema.make(
+          "shape_action_blocked",
+        );
+        const unblockedActionShapeId = ShapeSymbolIdSchema.make(
+          "shape_action_unblocked",
+        );
+        const routeBlockedActionShapeId = ShapeSymbolIdSchema.make(
+          "shape_action_route_blocked",
+        );
+        const routeShapeId = ShapeSymbolIdSchema.make("shape_route");
+        const blockedShapeId = ShapeSymbolIdSchema.make("shape_abuse_blocked");
+        const unblockedShapeId = ShapeSymbolIdSchema.make(
+          "shape_abuse_unblocked",
+        );
+        const routeBlockedShapeId = ShapeSymbolIdSchema.make(
+          "shape_abuse_route_blocked",
+        );
+        const unionShapeId = ShapeSymbolIdSchema.make("shape_abuse_union");
+        const executable = Object.values(snapshot.catalog.executables)[0]!;
+        const stringShapeId = ShapeSymbolIdSchema.make("shape_string");
+
+        put(
+          snapshot.catalog.symbols as Record<
+            typeof numberShapeId,
+            CatalogV1["symbols"][typeof numberShapeId]
+          >,
+          numberShapeId,
+          {
+            id: numberShapeId,
+            kind: "shape",
+            title: "Number",
+            node: {
+              type: "scalar",
+              scalar: "number",
+            },
+            synthetic: false,
+            provenance: baseProvenance("#/scalar/Number"),
+          },
+        );
+
+        for (const [shapeId, action] of [
+          [blockedActionShapeId, "blocked"],
+          [unblockedActionShapeId, "unblocked"],
+          [routeBlockedActionShapeId, "route-blocked"],
+        ] as const) {
+          put(
+            snapshot.catalog.symbols as Record<
+              typeof shapeId,
+              CatalogV1["symbols"][typeof shapeId]
+            >,
+            shapeId,
+            {
+              id: shapeId,
+              kind: "shape",
+              title: String(action),
+              node: {
+                type: "const",
+                value: action,
+              },
+              synthetic: false,
+              provenance: baseProvenance(`#/const/${action}`),
+            },
+          );
+        }
+
+        put(
+          snapshot.catalog.symbols as Record<
+            typeof routeShapeId,
+            CatalogV1["symbols"][typeof routeShapeId]
+          >,
+          routeShapeId,
+          {
+            id: routeShapeId,
+            kind: "shape",
+            title: "RouteInfo",
+            node: {
+              type: "object",
+              fields: {
+                source: {
+                  shapeId: stringShapeId,
+                },
+              },
+              required: ["source"],
+              additionalProperties: false,
+            },
+            synthetic: false,
+            provenance: baseProvenance("#/route"),
+          },
+        );
+
+        put(
+          snapshot.catalog.symbols as Record<
+            typeof blockedShapeId,
+            CatalogV1["symbols"][typeof blockedShapeId]
+          >,
+          blockedShapeId,
+          {
+            id: blockedShapeId,
+            kind: "shape",
+            title: "BlockedHistoryItem",
+            node: {
+              type: "object",
+              fields: {
+                action: { shapeId: blockedActionShapeId },
+                actor: { shapeId: stringShapeId },
+                createdAt: { shapeId: numberShapeId },
+                reason: { shapeId: stringShapeId },
+                statusCode: { shapeId: numberShapeId },
+              },
+              required: ["action", "createdAt", "reason", "statusCode"],
+              additionalProperties: false,
+            },
+            synthetic: false,
+            provenance: baseProvenance("#/blocked"),
+          },
+        );
+
+        put(
+          snapshot.catalog.symbols as Record<
+            typeof unblockedShapeId,
+            CatalogV1["symbols"][typeof unblockedShapeId]
+          >,
+          unblockedShapeId,
+          {
+            id: unblockedShapeId,
+            kind: "shape",
+            title: "UnblockedHistoryItem",
+            node: {
+              type: "object",
+              fields: {
+                action: { shapeId: unblockedActionShapeId },
+                actor: { shapeId: stringShapeId },
+                createdAt: { shapeId: numberShapeId },
+              },
+              required: ["action", "createdAt"],
+              additionalProperties: false,
+            },
+            synthetic: false,
+            provenance: baseProvenance("#/unblocked"),
+          },
+        );
+
+        put(
+          snapshot.catalog.symbols as Record<
+            typeof routeBlockedShapeId,
+            CatalogV1["symbols"][typeof routeBlockedShapeId]
+          >,
+          routeBlockedShapeId,
+          {
+            id: routeBlockedShapeId,
+            kind: "shape",
+            title: "RouteBlockedHistoryItem",
+            node: {
+              type: "object",
+              fields: {
+                action: { shapeId: routeBlockedActionShapeId },
+                actor: { shapeId: stringShapeId },
+                createdAt: { shapeId: numberShapeId },
+                reason: { shapeId: stringShapeId },
+                route: { shapeId: routeShapeId },
+              },
+              required: ["action", "createdAt", "reason", "route"],
+              additionalProperties: false,
+            },
+            synthetic: false,
+            provenance: baseProvenance("#/routeBlocked"),
+          },
+        );
+
+        put(
+          snapshot.catalog.symbols as Record<
+            typeof unionShapeId,
+            CatalogV1["symbols"][typeof unionShapeId]
+          >,
+          unionShapeId,
+          {
+            id: unionShapeId,
+            kind: "shape",
+            title: "AbuseBlockHistoryItem",
+            node: {
+              type: "oneOf",
+              items: [blockedShapeId, unblockedShapeId, routeBlockedShapeId],
+            },
+            synthetic: false,
+            provenance: baseProvenance("#/union"),
+          },
+        );
+
+        put(
+          snapshot.catalog.executables as Record<
+            typeof executable.id,
+            CatalogV1["executables"][typeof executable.id]
+          >,
+          executable.id,
+          {
+            ...executable,
+            projection: {
+              ...executable.projection,
+              resultDataShapeId: unionShapeId,
+            },
+          },
+        );
+
+        yield* syncWorkspaceSourceTypeDeclarationsNode({
+          context,
+          entries: [{ source: makeSource({ id: "src_linear" }), snapshot }],
+        });
+
+        const sourceDeclaration = yield* readTextFile(
+          join(
+            workspaceRoot,
+            ".executor",
+            "types",
+            "sources",
+            "src_linear.d.ts",
+          ),
+        );
+
+        expect(sourceDeclaration).toContain(
+          "teams: (args?: LinearTeamsCall) => Promise<{",
+        );
+        expect(sourceDeclaration).toContain("actor?: string;");
+        expect(sourceDeclaration).toContain('action: "blocked";');
+        expect(sourceDeclaration).toContain('action: "unblocked";');
+        expect(sourceDeclaration).toContain('action: "route-blocked";');
+        expect(sourceDeclaration).toContain("} & (");
+        expect(sourceDeclaration).not.toContain("Member2");
+      }),
+  );
 });
