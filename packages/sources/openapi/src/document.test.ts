@@ -1,5 +1,6 @@
 import { describe, expect, it } from "@effect/vitest";
 import { assertInclude, assertTrue } from "@effect/vitest/utils";
+import * as Either from "effect/Either";
 import * as Effect from "effect/Effect";
 
 import { parseOpenApiDocument } from "./document";
@@ -42,8 +43,8 @@ describe("openapi-document", () => {
         }),
       );
 
-      assertTrue(outcome._tag === "Left");
-      if (outcome._tag === "Left" && outcome.left instanceof Error) {
+      assertTrue(Either.isLeft(outcome));
+      if (Either.isLeft(outcome) && outcome.left instanceof Error) {
         assertInclude(outcome.left.message, "OpenAPI document is empty");
       }
     }),

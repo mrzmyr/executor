@@ -1,4 +1,5 @@
 import { Schema } from "effect";
+import * as Option from "effect/Option";
 
 import { TimestampMsSchema } from "../common";
 import {
@@ -39,7 +40,7 @@ export const decodeAuthLeasePlacementTemplates = (
   lease: Pick<AuthLease, "placementsTemplateJson">,
 ): ReadonlyArray<RequestPlacementTemplate> | null => {
   const decoded = decodeLeasePlacementTemplatesOption(lease.placementsTemplateJson);
-  return decoded._tag === "Some" ? decoded.value : null;
+  return Option.isSome(decoded) ? decoded.value : null;
 };
 
 export const authLeaseSecretRefs = (

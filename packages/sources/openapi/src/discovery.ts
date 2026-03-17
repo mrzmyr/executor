@@ -13,6 +13,7 @@ import {
   unknownAuthInference,
   unsupportedAuthInference,
 } from "@executor/source-core";
+import * as Either from "effect/Either";
 import * as Effect from "effect/Effect";
 
 import { parseOpenApiDocument } from "./document";
@@ -421,7 +422,7 @@ export const detectOpenApiSource = (
       headers: input.headers,
     }));
 
-    if (response._tag === "Left") {
+    if (Either.isLeft(response)) {
       console.warn(
         `[discovery] OpenAPI probe HTTP fetch failed for ${input.normalizedUrl}:`,
         response.left.message,
@@ -439,7 +440,7 @@ export const detectOpenApiSource = (
     const manifest = yield* Effect.either(
       extractOpenApiManifest(input.normalizedUrl, response.right.text),
     );
-    if (manifest._tag === "Left") {
+    if (Either.isLeft(manifest)) {
       console.warn(
         `[discovery] OpenAPI manifest extraction failed for ${input.normalizedUrl}:`,
         manifest.left instanceof Error ? manifest.left.message : String(manifest.left),
@@ -452,7 +453,7 @@ export const detectOpenApiSource = (
       catch: (cause) => cause instanceof Error ? cause : new Error(String(cause)),
     }));
 
-    const parsedDocument = document._tag === "Right" && isRecord(document.right)
+    const parsedDocument = Either.isRight(document) && isRecord(document.right)
       ? document.right
       : {};
     const endpoint = deriveOpenApiEndpoint({

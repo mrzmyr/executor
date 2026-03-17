@@ -1,4 +1,5 @@
 import { Schema } from "effect";
+import * as Option from "effect/Option";
 
 import { TimestampMsSchema } from "../common";
 import {
@@ -264,7 +265,7 @@ export const decodeProviderGrantRefAuthArtifactConfig = (
   }
 
   const decoded = decodeProviderGrantRefAuthArtifactConfigOption(artifact.configJson);
-  return decoded._tag === "Some" ? decoded.value : null;
+  return Option.isSome(decoded) ? decoded.value : null;
 };
 
 export const decodeMcpOAuthAuthArtifactConfig = (
@@ -275,7 +276,7 @@ export const decodeMcpOAuthAuthArtifactConfig = (
   }
 
   const decoded = decodeMcpOAuthAuthArtifactConfigOption(artifact.configJson);
-  return decoded._tag === "Some" ? decoded.value : null;
+  return Option.isSome(decoded) ? decoded.value : null;
 };
 
 export const decodeBuiltInAuthArtifactConfig = (
@@ -284,19 +285,19 @@ export const decodeBuiltInAuthArtifactConfig = (
   switch (artifact.artifactKind) {
     case StaticBearerAuthArtifactKind: {
       const decoded = decodeStaticBearerAuthArtifactConfigOption(artifact.configJson);
-      return decoded._tag === "Some"
+      return Option.isSome(decoded)
         ? { artifactKind: StaticBearerAuthArtifactKind, config: decoded.value }
         : null;
     }
     case StaticOAuth2AuthArtifactKind: {
       const decoded = decodeStaticOAuth2AuthArtifactConfigOption(artifact.configJson);
-      return decoded._tag === "Some"
+      return Option.isSome(decoded)
         ? { artifactKind: StaticOAuth2AuthArtifactKind, config: decoded.value }
         : null;
     }
     case StaticPlacementsAuthArtifactKind: {
       const decoded = decodeStaticPlacementsAuthArtifactConfigOption(artifact.configJson);
-      return decoded._tag === "Some"
+      return Option.isSome(decoded)
         ? { artifactKind: StaticPlacementsAuthArtifactKind, config: decoded.value }
         : null;
     }
@@ -304,7 +305,7 @@ export const decodeBuiltInAuthArtifactConfig = (
       const decoded = decodeRefreshableOAuth2AuthorizedUserAuthArtifactConfigOption(
         artifact.configJson,
       );
-      return decoded._tag === "Some"
+      return Option.isSome(decoded)
         ? {
             artifactKind: RefreshableOAuth2AuthorizedUserAuthArtifactKind,
             config: decoded.value,
@@ -328,7 +329,7 @@ export const decodeAuthArtifactGrantSet = (
   }
 
   const decoded = decodeAuthGrantSetOption(grantSetJson);
-  return decoded._tag === "Some" ? decoded.value : null;
+  return Option.isSome(decoded) ? decoded.value : null;
 };
 
 export const decodeAuthGrantSet = decodeAuthArtifactGrantSet;

@@ -8,6 +8,7 @@ import {
   type SourceDiscoveryProbeInput,
   type SourceDiscoveryResult,
 } from "@executor/source-core";
+import * as Either from "effect/Either";
 import * as Effect from "effect/Effect";
 
 import { extractGoogleDiscoveryManifest } from "./document";
@@ -53,7 +54,7 @@ export const detectGoogleDiscoverySource = (
       headers: input.headers,
     }));
 
-    if (response._tag === "Left") {
+    if (Either.isLeft(response)) {
       return null;
     }
 
@@ -64,7 +65,7 @@ export const detectGoogleDiscoverySource = (
     const manifest = yield* Effect.either(
       extractGoogleDiscoveryManifest(input.normalizedUrl, response.right.text),
     );
-    if (manifest._tag === "Left") {
+    if (Either.isLeft(manifest)) {
       return null;
     }
 

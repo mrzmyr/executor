@@ -17,6 +17,7 @@ import {
   GraphqlToolProviderDataSchema,
   type GraphqlToolProviderData,
 } from "./provider-data";
+import * as Either from "effect/Either";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import {
@@ -1419,7 +1420,7 @@ export const createGraphqlToolFromPersistedOperation = (input: {
   const decodedProviderData = decodeGraphqlToolProviderData(
     input.providerData,
   );
-  if (decodedProviderData._tag === "Left") {
+  if (Either.isLeft(decodedProviderData)) {
     throw new Error("Invalid GraphQL provider data");
   }
 

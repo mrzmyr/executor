@@ -5,6 +5,7 @@ import {
 } from "@effect/platform";
 import type { WorkspaceId } from "#schema";
 import * as Cause from "effect/Cause";
+import * as Either from "effect/Either";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 
@@ -279,7 +280,7 @@ export const ControlPlaneOAuthLive = HttpApiBuilder.group(
             }),
           );
 
-          if (completed._tag === "Right") {
+          if (Either.isRight(completed)) {
             return htmlResponse(
               sourceOAuthPopupResultDocument({
                 title: "OAuth connected",

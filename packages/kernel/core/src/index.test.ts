@@ -1,5 +1,6 @@
 import { describe, expect, it } from "@effect/vitest";
 import { assertInstanceOf, assertNone, assertTrue } from "@effect/vitest/utils";
+import * as Either from "effect/Either";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 
@@ -275,7 +276,7 @@ describe("codemode-core", () => {
         }),
       );
 
-      assertTrue(failure._tag === "Left");
+      assertTrue(Either.isLeft(failure));
       assertInstanceOf(failure.left, Error);
       expect(failure.left.message).toContain("Input validation failed");
     }),

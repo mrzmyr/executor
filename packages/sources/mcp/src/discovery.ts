@@ -7,6 +7,7 @@ import {
   type SourceDiscoveryResult,
 } from "@executor/source-core";
 import { startMcpOAuthAuthorization } from "@executor/auth-mcp-oauth";
+import * as Either from "effect/Either";
 import * as Effect from "effect/Effect";
 
 import { createSdkMcpConnector } from "./connection";
@@ -28,7 +29,7 @@ export const detectMcpSource = (
       namespace: namespaceFromSourceName(defaultNameFromEndpoint(input.normalizedUrl)),
     }));
 
-    if (discovered._tag === "Right") {
+    if (Either.isRight(discovered)) {
       const name = defaultNameFromEndpoint(input.normalizedUrl);
       return {
         detectedKind: "mcp",
@@ -53,7 +54,7 @@ export const detectMcpSource = (
       state: "source-discovery",
     }));
 
-    if (oauthProbe._tag === "Left") {
+    if (Either.isLeft(oauthProbe)) {
       return null;
     }
 

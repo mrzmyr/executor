@@ -28,6 +28,7 @@ import {
   type Source,
   type SourceAuth,
 } from "#schema";
+import * as Either from "effect/Either";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 
@@ -475,7 +476,7 @@ export const resolveAuthArtifactMaterial = (input: {
     const templatesEither = decodeRequestPlacementTemplates(
       input.lease.placementsTemplateJson,
     );
-    if (templatesEither._tag === "Left") {
+    if (Either.isLeft(templatesEither)) {
       return yield* runtimeEffectError("auth/auth-artifacts", 
         `Invalid auth lease placements for artifact ${input.artifact.id}`,
       );

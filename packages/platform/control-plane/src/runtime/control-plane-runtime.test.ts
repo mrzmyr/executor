@@ -5,6 +5,7 @@ import { FileSystem } from "@effect/platform";
 import { NodeFileSystem } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import { assertTrue } from "@effect/vitest/utils";
+import * as Either from "effect/Either";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Option from "effect/Option";
@@ -367,7 +368,7 @@ const createPersistedGoogleSource = (input: {
 const expectLeft = <A, E>(effect: Effect.Effect<A, E, never>) =>
   Effect.either(effect).pipe(
     Effect.flatMap((result) =>
-      result._tag === "Left"
+      Either.isLeft(result)
         ? Effect.succeed(result.left)
         : Effect.fail(runtimeEffectError("control-plane-runtime.test", "Expected effect to fail")),
     ),

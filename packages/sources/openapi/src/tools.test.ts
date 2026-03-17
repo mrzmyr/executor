@@ -14,6 +14,7 @@ import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
 import { describe, expect, it } from "@effect/vitest";
 import { assertInclude, assertTrue } from "@effect/vitest/utils";
 
+import * as Either from "effect/Either";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import { Schema } from "effect";
@@ -773,8 +774,8 @@ describe("openapi-tools", () => {
         }),
       );
 
-      assertTrue(missingBody._tag === "Left");
-      if (missingBody._tag === "Left" && missingBody.left instanceof Error) {
+      assertTrue(Either.isLeft(missingBody));
+      if (Either.isLeft(missingBody) && missingBody.left instanceof Error) {
         assertInclude(missingBody.left.message, "Missing required request body");
       }
 
@@ -1050,8 +1051,8 @@ describe("openapi-tools", () => {
         }),
       );
 
-      assertTrue(failure._tag === "Left");
-      if (failure._tag === "Left" && failure.left instanceof Error) {
+      assertTrue(Either.isLeft(failure));
+      if (Either.isLeft(failure) && failure.left instanceof Error) {
         assertInclude(failure.left.message, "HTTP 404");
       }
     }),

@@ -33,6 +33,7 @@ import type {
 import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
+import * as Option from "effect/Option";
 import * as Runtime from "effect/Runtime";
 import * as React from "react";
 
@@ -128,7 +129,7 @@ type MutationOptions<TInput, TOutput, TOptimistic = never> = {
 
 type InternalNode<A> = {
   setValue: (value: A) => void;
-  valueOption?: () => { _tag: "Some"; value: A } | { _tag: string };
+  valueOption?: () => Option.Option<A>;
 };
 
 let apiBaseUrl =
@@ -517,16 +518,15 @@ const getCachedAtomValue = <A>(
   }
 
   const option = node.valueOption();
-  if (option._tag !== "Some") {
+  if (Option.isNone(option)) {
     return undefined;
   }
 
-  const result = option as { _tag: "Some"; value: Result.Result<A, Error> };
-  if (!Result.isSuccess(result.value)) {
+  if (!Result.isSuccess(option.value)) {
     return undefined;
   }
 
-  return result.value.value;
+  return option.value.value;
 };
 
 const setCachedAtomValue = <A>(

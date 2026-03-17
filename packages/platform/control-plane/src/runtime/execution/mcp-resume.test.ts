@@ -12,6 +12,7 @@ import { NodeFileSystem } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import { assertTrue } from "@effect/vitest/utils";
 import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
 import { z } from "zod/v4";
 
 import { makeToolInvokerFromTools } from "@executor/codemode-core";
@@ -330,8 +331,8 @@ describe("execution-mcp-resume", () => {
         created.execution.id,
       );
 
-      assertTrue(pendingInteraction._tag === "Some");
-      if (pendingInteraction._tag === "Some") {
+      assertTrue(Option.isSome(pendingInteraction));
+      if (Option.isSome(pendingInteraction)) {
         expect(pendingInteraction.value.kind).toBe("form");
         expect(pendingInteraction.value.payloadJson).toContain("Approve gated echo");
       }

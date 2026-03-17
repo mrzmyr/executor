@@ -27,6 +27,7 @@ import type {
 import {
   GoogleDiscoveryToolProviderDataSchema,
 } from "./types";
+import * as Either from "effect/Either";
 
 const decodeGoogleDiscoveryToolProviderDataJson = Schema.decodeUnknownEither(
   GoogleDiscoveryToolProviderDataSchema,
@@ -266,7 +267,7 @@ const buildGoogleDiscoveryRequest = (input: {
   body?: string;
 } => {
   const providerData = decodeGoogleDiscoveryToolProviderDataJson(input.providerData);
-  if (providerData._tag === "Left") {
+  if (Either.isLeft(providerData)) {
     throw new Error("Invalid Google Discovery provider data");
   }
 

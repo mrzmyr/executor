@@ -10,6 +10,7 @@ import {
   type SourceDiscoveryProbeInput,
   type SourceDiscoveryResult,
 } from "@executor/source-core";
+import * as Either from "effect/Either";
 import * as Effect from "effect/Effect";
 
 import { GRAPHQL_INTROSPECTION_QUERY } from "./graphql-tools";
@@ -29,7 +30,7 @@ export const detectGraphqlSource = (
       body: JSON.stringify({ query: GRAPHQL_INTROSPECTION_QUERY }),
     }));
 
-    if (response._tag === "Left") {
+    if (Either.isLeft(response)) {
       return null;
     }
 
