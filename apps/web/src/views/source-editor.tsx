@@ -381,7 +381,7 @@ const parseJsonStringMap = (label: string, text: string): Record<string, string>
   let parsed: unknown;
   try {
     parsed = JSON.parse(trimmed);
-  } catch (error) {
+  } catch {
     throw new Error(`${label} must be valid JSON.`);
   }
 

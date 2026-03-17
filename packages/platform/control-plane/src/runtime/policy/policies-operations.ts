@@ -17,7 +17,6 @@ import {
   requireRuntimeLocalWorkspace,
 } from "../local/runtime-context";
 import type {
-  WorkspaceStorageServices,
   WorkspaceConfigStoreShape,
   WorkspaceStateStoreShape,
 } from "../local/storage";
@@ -178,7 +177,7 @@ export const createPolicy = (input: {
     );
     const now = Date.now();
     const projectConfig = cloneJson(localWorkspace.loadedConfig.projectConfig ?? {});
-    const policies = { ...(projectConfig.policies ?? {}) };
+    const policies = { ...projectConfig.policies };
     const key = derivePolicyConfigKey(
       {
         resourcePattern: input.payload.resourcePattern ?? "*",
@@ -287,7 +286,7 @@ export const updatePolicy = (input: {
     }
 
     const projectConfig = cloneJson(localWorkspace.loadedConfig.projectConfig ?? {});
-    const policies = { ...(projectConfig.policies ?? {}) };
+    const policies = { ...projectConfig.policies };
     const existingConfig = policies[existing.key]!;
 
     policies[existing.key] = {
@@ -358,7 +357,7 @@ export const removePolicy = (input: {
     }
 
     const projectConfig = cloneJson(localWorkspace.loadedConfig.projectConfig ?? {});
-    const policies = { ...(projectConfig.policies ?? {}) };
+    const policies = { ...projectConfig.policies };
     delete policies[existing.key];
 
     const { [existing.key]: _removedPolicy, ...remainingPolicies } = localWorkspace.workspaceState.policies;

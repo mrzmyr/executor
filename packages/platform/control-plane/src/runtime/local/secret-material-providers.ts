@@ -998,7 +998,7 @@ const resolveConfiguredSecretProvider = (input: {
     args: [...(provider.args ?? []), input.ref.handle],
     env: {
       ...input.runtime.env,
-      ...(provider.env ?? {}),
+      ...provider.env,
     },
     operation: `config-secret.get:${providerAlias}`,
   }).pipe(

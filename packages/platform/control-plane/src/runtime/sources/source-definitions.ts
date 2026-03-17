@@ -7,7 +7,6 @@ import type {
 import type {
   AccountId,
   AuthArtifact,
-  CredentialSlot,
   Source,
   SourceAuth,
   SourceImportAuthPolicy,

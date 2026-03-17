@@ -1,5 +1,4 @@
 import {
-  ControlPlaneBadRequestError,
   ControlPlaneNotFoundError,
   ControlPlaneStorageError,
 } from "../../api/errors";

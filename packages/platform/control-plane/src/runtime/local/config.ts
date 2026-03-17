@@ -203,8 +203,8 @@ const mergeSourceMaps = (
     return undefined;
   }
   return {
-    ...(base ?? {}),
-    ...(extra ?? {}),
+    ...base,
+    ...extra,
   };
 };
 
@@ -216,8 +216,8 @@ const mergePolicyMaps = (
     return undefined;
   }
   return {
-    ...(base ?? {}),
-    ...(extra ?? {}),
+    ...base,
+    ...extra,
   };
 };
 
@@ -229,8 +229,8 @@ const mergeSecretProviderMaps = (
     return undefined;
   }
   return {
-    ...(base ?? {}),
-    ...(extra ?? {}),
+    ...base,
+    ...extra,
   };
 };
 
@@ -245,8 +245,8 @@ export const mergeLocalExecutorConfigs = (
   return decodeLocalExecutorConfig({
     runtime: extra?.runtime ?? base?.runtime,
     workspace: {
-      ...(base?.workspace ?? {}),
-      ...(extra?.workspace ?? {}),
+      ...base?.workspace,
+      ...extra?.workspace,
     },
     sources: mergeSourceMaps(base?.sources, extra?.sources),
     policies: mergePolicyMaps(base?.policies, extra?.policies),
@@ -256,8 +256,8 @@ export const mergeLocalExecutorConfigs = (
         extra?.secrets?.providers,
       ),
       defaults: {
-        ...(base?.secrets?.defaults ?? {}),
-        ...(extra?.secrets?.defaults ?? {}),
+        ...base?.secrets?.defaults,
+        ...extra?.secrets?.defaults,
       },
     },
   });

@@ -1,0 +1,37 @@
+{
+  "sources": {
+    "vercel": {
+      "name": "Vercel API",
+      "connection": {
+        "endpoint": "https://api.vercel.com/"
+      },
+      "kind": "openapi",
+      "binding": {
+        "specUrl": "https://openapi.vercel.sh/",
+        "defaultHeaders": null
+      }
+    },
+    "linear": {
+      "name": "Linear GraphQL",
+      "connection": {
+        "endpoint": "https://api.linear.app/graphql"
+      },
+      "kind": "graphql",
+      "binding": {
+        "defaultHeaders": null
+      }
+    },
+    "axiom": {
+      "kind": "mcp",
+      "name": "Axiom MCP",
+      "connection": {
+        "endpoint": "https://mcp.axiom.co/mcp"
+      },
+      "binding": {
+        "transport": "auto",
+        "queryParams": null,
+        "headers": null
+      }
+    }
+  }
+}

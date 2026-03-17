@@ -633,15 +633,17 @@ export const createCatalogTypeProjector = (input: {
       return false;
     }
 
-    const firstKeys = Object.keys(first.node.patternProperties ?? {}).sort();
+    const firstPatternProperties = first.node.patternProperties ?? {};
+    const firstKeys = Object.keys(firstPatternProperties).sort();
     return rest.every((variant) => {
-      const keys = Object.keys(variant.node.patternProperties ?? {}).sort();
+      const variantPatternProperties = variant.node.patternProperties ?? {};
+      const keys = Object.keys(variantPatternProperties).sort();
       if (keys.length !== firstKeys.length || keys.some((key, index) => key !== firstKeys[index])) {
         return false;
       }
 
       return keys.every((key) =>
-        shapeSignature(first.node.patternProperties?.[key]!) === shapeSignature(variant.node.patternProperties?.[key]!)
+        shapeSignature(firstPatternProperties[key]) === shapeSignature(variantPatternProperties[key])
       );
     });
   };

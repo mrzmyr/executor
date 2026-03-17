@@ -24,7 +24,7 @@
     "trace:up": "docker compose -f compose.tracing.yaml up -d",
     "trace:down": "docker compose -f compose.tracing.yaml down",
     "docs:dev": "turbo run dev --filter=@executor/docs",
-    "lint": "oxlint -c .oxlintrc.jsonc .",
+    "lint": "oxlint -c .oxlintrc.jsonc . --deny-warnings",
     "lint:fix": "oxlint -c .oxlintrc.jsonc --fix .",
     "test": "turbo run test",
     "executor": "./apps/executor/bin/executor",

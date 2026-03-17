@@ -2,10 +2,6 @@ import {
   createToolCatalogFromTools,
   makeToolInvokerFromTools,
 } from "@executor/codemode-core";
-import type {
-  AccountId,
-  Source,
-} from "#schema";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";

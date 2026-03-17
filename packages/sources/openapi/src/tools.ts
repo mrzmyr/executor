@@ -454,8 +454,8 @@ const normalizeCredentialPlacements = (input: {
   credentialPlacements?: HttpRequestPlacements;
 }): HttpRequestPlacements => ({
   headers: {
-    ...(input.credentialHeaders ?? {}),
-    ...(input.credentialPlacements?.headers ?? {}),
+    ...input.credentialHeaders,
+    ...input.credentialPlacements?.headers,
   },
   queryParams: input.credentialPlacements?.queryParams,
   cookies: input.credentialPlacements?.cookies,

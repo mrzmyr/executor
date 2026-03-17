@@ -6,7 +6,6 @@ import {
 import {
   AccountId,
   type CredentialSlot,
-  ExecutionIdSchema,
   McpSourceAuthSessionDataJsonSchema,
   type McpSourceAuthSessionData,
   OAuth2PkceSourceAuthSessionDataJsonSchema,
@@ -95,9 +94,6 @@ import {
 } from "../auth/oauth2-pkce";
 import { startOauthLoopbackRedirectServer } from "../auth/oauth-loopback";
 import {
-  loadSourceById,
-  loadSourcesInWorkspace,
-  persistSource,
   type RuntimeSourceStore,
   RuntimeSourceStoreService,
 } from "./source-store";
@@ -1290,7 +1286,7 @@ const startOauth2PkceSourceCredentialSetup = (input: {
           headerName: setupConfig.headerName,
           prefix: setupConfig.prefix,
           authorizationParams: {
-            ...(setupConfig.authorizationParams ?? {}),
+            ...setupConfig.authorizationParams,
           },
           codeVerifier,
           authorizationUrl,
@@ -1397,7 +1393,7 @@ const startProviderOauthBatchCredentialSetup = (input: {
           headerName: input.setupConfig.headerName,
           prefix: input.setupConfig.prefix,
           authorizationParams: {
-            ...(input.setupConfig.authorizationParams ?? {}),
+            ...input.setupConfig.authorizationParams,
           },
           targetSources: input.targetSources.map((target) => ({
             sourceId: target.source.id,
@@ -2041,9 +2037,10 @@ const addExecutorGoogleDiscoverySource = (input: {
       trimOrNull(input.sourceInput.namespace)
       ?? existing?.namespace
       ?? defaultGoogleDiscoveryNamespace(normalizedService);
-    const chosenScopes = (input.sourceInput.scopes ?? (Array.isArray(existing?.binding.scopes)
-      ? existing?.binding.scopes as ReadonlyArray<string>
-      : []))
+    const existingScopes = Array.isArray(existing?.binding?.scopes)
+      ? existing.binding.scopes as ReadonlyArray<string>
+      : [];
+    const chosenScopes = (input.sourceInput.scopes ?? existingScopes)
       .map((scope) => scope.trim())
       .filter((scope) => scope.length > 0);
     const existingBinding = existing

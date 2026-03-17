@@ -3,7 +3,6 @@ import { Link, useNavigate } from "@tanstack/react-router";
 import {
   type CompleteSourceOAuthResult,
   type ConnectSourceBatchPayload,
-  type ConnectSourceBatchResult,
   type ConnectSourcePayload,
   type ConnectSourceResult,
   type CreateWorkspaceOauthClientPayload,
@@ -23,7 +22,6 @@ import {
   useInstanceConfig,
   useRefreshSecrets,
   useSecrets,
-  useStartSourceOAuth,
   useWorkspaceOauthClients,
 } from "@executor/react";
 import { Badge } from "../components/ui/badge";
@@ -626,7 +624,6 @@ export function AddSourcePage() {
   const invalidateExecutorQueries = useInvalidateExecutorQueries();
   const secrets = useSecrets();
   const refreshSecrets = useRefreshSecrets();
-  const startSourceOAuth = useStartSourceOAuth();
 
   // URL input
   const [url, setUrl] = useState("");
@@ -647,8 +644,6 @@ export function AddSourcePage() {
   const [phase, setPhase] = useState<FlowPhase>("idle");
 
   // Discovery result
-  const [discovery, setDiscovery] = useState<SourceDiscoveryResult | null>(null);
-
   // Editable connect form (populated after discovery)
   const [connectForm, setConnectForm] = useState<ConnectFormState>(defaultConnectForm());
 
@@ -711,7 +706,6 @@ export function AddSourcePage() {
           : {}),
       };
       const result = await discoverSource.mutateAsync(payload);
-      setDiscovery(result);
       setConnectForm(defaultConnectForm(result));
       setPhase("editing");
 
@@ -736,7 +730,6 @@ export function AddSourcePage() {
   };
 
   const handleSkipDiscovery = () => {
-    setDiscovery(null);
     setConnectForm(defaultConnectForm());
     setPhase("editing");
     setStatusBanner(null);
@@ -760,7 +753,6 @@ export function AddSourcePage() {
 
     try {
       const result = await discoverSource.mutateAsync({ url: discoveryUrl });
-      setDiscovery(result);
       const form = defaultConnectForm(result);
       // Prefer the template's own values over whatever discover returned
       form.name = template.name;
@@ -780,7 +772,6 @@ export function AddSourcePage() {
       }
     } catch (error) {
       // Discovery failed — fall back to just the template basics
-      setDiscovery(null);
       setConnectForm(connectFormFromTemplate(template));
       setPhase("editing");
       setStatusBanner({
@@ -1618,7 +1609,6 @@ export function AddSourcePage() {
                       <SecretOrTokenInput
                         instanceConfig={instanceConfig}
                         secrets={secrets}
-                        providerId={connectForm.bearerProviderId}
                         handle={connectForm.bearerHandle}
                         inlineToken={connectForm.bearerToken}
                         onSelectSecret={(providerId, handle) => {
@@ -1864,7 +1854,6 @@ const INLINE_TOKEN_VALUE = "__inline_token__";
 function SecretOrTokenInput(props: {
   instanceConfig: Loadable<InstanceConfig>;
   secrets: Loadable<ReadonlyArray<SecretListItem>>;
-  providerId: string;
   handle: string;
   inlineToken: string;
   onSelectSecret: (providerId: string, handle: string) => void;
@@ -1873,7 +1862,6 @@ function SecretOrTokenInput(props: {
   const {
     instanceConfig,
     secrets,
-    providerId,
     handle,
     inlineToken,
     onSelectSecret,

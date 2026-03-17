@@ -10,7 +10,6 @@ import { SourceIdSchema, WorkspaceIdSchema, type Source } from "#schema";
 import {
   buildLocalSourceArtifact,
   readLocalSourceArtifact,
-  removeLocalSourceArtifact,
   writeLocalSourceArtifact,
 } from "./source-artifacts";
 import type { ResolvedLocalWorkspaceContext } from "./config";

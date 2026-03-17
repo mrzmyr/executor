@@ -124,15 +124,6 @@ const toExecutionId = (value: unknown) => {
 
 const asToolPath = (value: string): ToolPath => value as ToolPath;
 
-const trimOrNull = (value: string | null | undefined): string | null => {
-  if (value === null || value === undefined) {
-    return null;
-  }
-
-  const trimmed = value.trim();
-  return trimmed.length > 0 ? trimmed : null;
-};
-
 const toSerializableValue = <A>(value: A): A =>
   JSON.parse(JSON.stringify(value)) as A;
 

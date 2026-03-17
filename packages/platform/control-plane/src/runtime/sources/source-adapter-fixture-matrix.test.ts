@@ -442,14 +442,17 @@ describe("source adapter fixture matrix", () => {
             },
           },
         });
+        const outputSchema = tool?.descriptor.outputSchema;
         const dataVariants =
-          (
-            tool?.descriptor.outputSchema as {
-              properties?: {
-                data?: { anyOf?: Array<Record<string, unknown>> };
-              };
-            }
-          ).properties?.data?.anyOf ?? [];
+          outputSchema && typeof outputSchema === "object"
+            ? (
+                outputSchema as {
+                  properties?: {
+                    data?: { anyOf?: Array<Record<string, unknown>> };
+                  };
+                }
+              ).properties?.data?.anyOf ?? []
+            : [];
         const objectDataVariant = dataVariants.find(
           (variant) => variant.type === "object",
         );

@@ -75,15 +75,15 @@ const buildInstruction = (input: {
   if (input.parsed?.mode === "url") {
     const url = input.parsed.url?.trim();
     return url && url.length > 0
-      ? `Execution paused because ${reason}. Open ${url} and complete the requested flow for \"${prompt}\", then run ${input.resumeCommand} to continue if it does not resume automatically.`
-      : `Execution paused because ${reason}. Run ${input.resumeCommand} to continue and complete the requested flow for \"${prompt}\".`;
+      ? `Execution paused because ${reason}. Open ${url} and complete the requested flow for "${prompt}", then run ${input.resumeCommand} to continue if it does not resume automatically.`
+      : `Execution paused because ${reason}. Run ${input.resumeCommand} to continue and complete the requested flow for "${prompt}".`;
   }
 
   if (input.parsed?.requestedSchema) {
-    return `Execution paused because ${reason}. The interaction prompt is \"${prompt}\". Run ${input.resumeCommand} in an interactive terminal and respond with input matching interaction.requestedSchema.`;
+    return `Execution paused because ${reason}. The interaction prompt is "${prompt}". Run ${input.resumeCommand} in an interactive terminal and respond with input matching interaction.requestedSchema.`;
   }
 
-  return `Execution paused because ${reason}. The interaction prompt is \"${prompt}\". Run ${input.resumeCommand} in an interactive terminal to continue.`;
+  return `Execution paused because ${reason}. The interaction prompt is "${prompt}". Run ${input.resumeCommand} in an interactive terminal to continue.`;
 };
 
 export const buildPausedExecutionOutput = (input: {

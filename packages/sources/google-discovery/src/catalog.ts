@@ -124,8 +124,7 @@ const createHttpCapabilityFromGoogleDiscovery = (input: {
     } satisfies SecuritySchemeSymbol;
   }
 
-  const parameterIds = input.operation.providerData.invocation.parameters.map(
-    (parameter) => {
+  input.operation.providerData.invocation.parameters.forEach((parameter) => {
       const parameterId = ParameterSymbolIdSchema.make(
         `param_${stableHash({
           capabilityId,
@@ -178,9 +177,7 @@ const createHttpCapabilityFromGoogleDiscovery = (input: {
           `#/googleDiscovery/${input.operation.providerData.toolId}/parameter/${parameter.location}/${parameter.name}`,
         ),
       } satisfies ParameterSymbol;
-      return parameterId;
-    },
-  );
+    });
 
   const requestBodyId =
     input.operation.providerData.invocation.requestSchemaId ||

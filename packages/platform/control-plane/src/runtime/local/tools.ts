@@ -502,7 +502,7 @@ const normalizeToolExport = (input: {
     return Effect.succeed({
       ...definition,
       metadata: {
-        ...(definition.metadata ?? {}),
+        ...definition.metadata,
         sourceKey,
       },
     });

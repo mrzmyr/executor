@@ -20,7 +20,6 @@ import { makeToolInvokerFromTools, toTool } from "@executor/codemode-core";
 import {
   createControlPlaneClient,
   controlPlaneOpenApiSpec,
-  type ControlPlaneClient,
   buildLocalSourceArtifact,
   catalogSyncResultFromMcpManifest,
   deriveLocalInstallation,
@@ -37,7 +36,6 @@ import { createMcpExpressApp } from "@modelcontextprotocol/sdk/server/express.js
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { ElicitRequestSchema } from "@modelcontextprotocol/sdk/types.js";
-import { z } from "zod/v4";
 
 import {
   seedDemoMcpSourceInWorkspace,
@@ -527,7 +525,7 @@ const startOAuthProtectedMcpServer = async () => {
 
   app.post("/register", (req: any, res: any) => {
     res.status(201).json({
-      ...(req.body ?? {}),
+      ...req.body,
       client_id: `client_${randomUUID()}`,
       client_id_issued_at: Math.floor(Date.now() / 1000),
     });

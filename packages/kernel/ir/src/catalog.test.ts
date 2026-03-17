@@ -16,7 +16,6 @@ import {
   DocumentIdSchema,
   ExecutableIdSchema,
   ExampleSymbolIdSchema,
-  HeaderSymbolIdSchema,
   ParameterSymbolIdSchema,
   RequestBodySymbolIdSchema,
   ResourceIdSchema,

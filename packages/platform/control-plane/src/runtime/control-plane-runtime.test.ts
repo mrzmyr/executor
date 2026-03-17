@@ -10,7 +10,6 @@ import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Option from "effect/Option";
 
-import type { AccountId } from "#schema";
 import {
   ExecutionIdSchema,
   ExecutionInteractionIdSchema,
@@ -159,7 +158,6 @@ const makeGoogleWorkspaceTestServer = Effect.acquireRelease(
         const tokenRequests: URLSearchParams[] = [];
         const discoveryAuthorizations: string[] = [];
         let baseUrl = "";
-        let currentAccessToken: string | null = null;
 
         const server = createServer(async (request, response) => {
           const requestUrl = new URL(
@@ -185,7 +183,6 @@ const makeGoogleWorkspaceTestServer = Effect.acquireRelease(
               return;
             }
 
-            currentAccessToken = nextResponse.access_token;
             response.statusCode = 200;
             response.setHeader("content-type", "application/json");
             response.end(JSON.stringify({

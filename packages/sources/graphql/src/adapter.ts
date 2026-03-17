@@ -140,7 +140,7 @@ const fetchGraphqlIntrospectionDocumentWithHeaders = (input: {
             headers: applyCookiePlacementsToHeaders({
               headers: {
                 "content-type": "application/json",
-                ...(input.headers ?? {}),
+                ...input.headers,
               },
               cookies: input.cookies,
             }),
@@ -329,7 +329,7 @@ export const graphqlSourceAdapter: SourceAdapter = {
         yield* fetchGraphqlIntrospectionDocumentWithHeaders({
           url: source.endpoint,
           headers: {
-            ...(bindingConfig.defaultHeaders ?? {}),
+            ...bindingConfig.defaultHeaders,
             ...auth.headers,
           },
           queryParams: auth.queryParams,
@@ -456,7 +456,7 @@ export const graphqlSourceAdapter: SourceAdapter = {
         const headers = applyCookiePlacementsToHeaders({
           headers: {
             "content-type": "application/json",
-            ...(bindingConfig.defaultHeaders ?? {}),
+            ...bindingConfig.defaultHeaders,
             ...input.auth.headers,
             ...asStringRecord(args.headers),
           },

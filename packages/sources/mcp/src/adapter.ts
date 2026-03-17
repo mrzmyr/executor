@@ -301,7 +301,7 @@ export const mcpSourceAdapter: SourceAdapter = {
             endpoint: source.endpoint,
             transport: bindingConfig.transport ?? undefined,
             queryParams: {
-              ...(bindingConfig.queryParams ?? {}),
+              ...bindingConfig.queryParams,
               ...auth.queryParams,
             },
             headers: headersWithAuthCookies({
@@ -358,7 +358,7 @@ export const mcpSourceAdapter: SourceAdapter = {
           endpoint: input.source.endpoint,
           transport: bindingConfig.transport ?? undefined,
           queryParams: {
-            ...(bindingConfig.queryParams ?? {}),
+            ...bindingConfig.queryParams,
             ...input.auth.queryParams,
           },
           headers: headersWithAuthCookies({

@@ -32,12 +32,9 @@ import {
   isScalarType,
   isUnionType,
   type GraphQLArgument,
-  type GraphQLField,
   type GraphQLInputObjectType,
   type GraphQLInputType,
-  type GraphQLInterfaceType,
   type GraphQLNamedType,
-  type GraphQLObjectType,
   type GraphQLOutputType,
   type GraphQLSchema,
   type IntrospectionQuery,
@@ -1563,10 +1560,10 @@ const invokeGraphqlHttpRequest = (input: GraphqlHttpInvocation) =>
     const headers = applyCookiePlacementsToHeaders({
       headers: {
         "content-type": "application/json",
-        ...(input.defaultHeaders ?? {}),
-        ...(input.requestHeaders ?? {}),
-        ...(input.credentialHeaders ?? {}),
-        ...(input.credentialPlacements?.headers ?? {}),
+        ...input.defaultHeaders,
+        ...input.requestHeaders,
+        ...input.credentialHeaders,
+        ...input.credentialPlacements?.headers,
       },
       cookies: input.credentialPlacements?.cookies,
     });

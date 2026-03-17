@@ -3,27 +3,16 @@ import * as ParseResult from "effect/ParseResult";
 import { Schema } from "effect";
 
 import {
-  CapabilityIdSchema,
   type CapabilityId,
   DiagnosticIdSchema,
   type DiagnosticId,
   DocumentIdSchema,
   type DocumentId,
-  ExecutableIdSchema,
   type ExecutableId,
-  ExampleSymbolIdSchema,
-  type ExampleSymbolId,
-  HeaderSymbolIdSchema,
-  type HeaderSymbolId,
-  ParameterSymbolIdSchema,
-  type ParameterSymbolId,
-  type RequestBodySymbolId,
   ResourceIdSchema,
   type ResourceId,
   type ResponseSymbolId,
   type ResponseSetId,
-  ScopeIdSchema,
-  type ScopeId,
   type ShapeSymbolId,
   ShapeSymbolIdSchema,
   type SymbolId,
@@ -41,12 +30,8 @@ import {
   type ImportDiagnostic,
   type ImportMetadata,
   type InteractionSpec,
-  type ParameterSymbol,
-  type HeaderSymbol,
   type ResponseSet,
   type ResponseSymbol,
-  type Scope,
-  type ScopeDefaults,
   type ShapeSymbol,
   type StatusMatch,
   type Symbol as IrSymbol,
@@ -137,14 +122,6 @@ export interface CatalogInvariantViolation {
 }
 
 export type DecodeCatalogError = Error;
-
-type MutableScopeDefaults = {
-  servers?: ScopeDefaults["servers"];
-  auth?: ScopeDefaults["auth"];
-  parameterIds?: ParameterSymbolId[];
-  headerIds?: HeaderSymbolId[];
-  variables?: Record<string, string>;
-};
 
 type CatalogSnapshotV1 = {
   version: "ir.v1.snapshot";
@@ -237,91 +214,12 @@ const authHintStrings = (catalog: CatalogV1, auth: Capability["auth"]): string[]
 const docsSummary = (docs: DocumentationBlock | undefined): string | undefined =>
   docs?.summary ?? docs?.description;
 
-const getShape = (catalog: CatalogV1, shapeId: ShapeSymbolId): ShapeSymbol | undefined => {
-  const symbol = catalog.symbols[shapeId];
-  return symbol && symbol.kind === "shape" ? symbol : undefined;
-};
-
-const getParameter = (
-  catalog: CatalogV1,
-  parameterId: ParameterSymbolId,
-): ParameterSymbol | undefined => {
-  const symbol = catalog.symbols[parameterId];
-  return symbol && symbol.kind === "parameter" ? symbol : undefined;
-};
-
 const getResponseSymbol = (
   catalog: CatalogV1,
   responseId: ResponseSymbolId,
 ): ResponseSymbol | undefined => {
   const symbol = catalog.symbols[responseId];
   return symbol && symbol.kind === "response" ? symbol : undefined;
-};
-
-const getHeader = (
-  catalog: CatalogV1,
-  headerId: HeaderSymbolId,
-): HeaderSymbol | undefined => {
-  const symbol = catalog.symbols[headerId];
-  return symbol && symbol.kind === "header" ? symbol : undefined;
-};
-
-const scopeChain = (catalog: CatalogV1, scopeId: ScopeId): Scope[] => {
-  const chain: Scope[] = [];
-  let currentId: ScopeId | undefined = scopeId;
-
-  while (currentId) {
-    const scope: Scope | undefined = catalog.scopes[currentId];
-    if (!scope) {
-      break;
-    }
-    chain.unshift(scope);
-    currentId = scope.parentId;
-  }
-
-  return chain;
-};
-
-const mergeScopeDefaults = (chain: readonly Scope[]): ScopeDefaults => {
-  const merged: MutableScopeDefaults = {};
-
-  for (const scope of chain) {
-    const defaults = scope.defaults;
-    if (!defaults) {
-      continue;
-    }
-
-    if (defaults.servers) {
-      merged.servers = [...defaults.servers];
-    }
-
-    if (defaults.auth) {
-      merged.auth = defaults.auth;
-    }
-
-    if (defaults.parameterIds) {
-      merged.parameterIds = unique([
-        ...(merged.parameterIds ?? []),
-        ...defaults.parameterIds,
-      ]);
-    }
-
-    if (defaults.headerIds) {
-      merged.headerIds = unique([
-        ...(merged.headerIds ?? []),
-        ...defaults.headerIds,
-      ]);
-    }
-
-    if (defaults.variables) {
-      merged.variables = {
-        ...(merged.variables ?? {}),
-        ...defaults.variables,
-      };
-    }
-  }
-
-  return merged as ScopeDefaults;
 };
 
 const isJsonMediaType = (mediaType: string): boolean => {
@@ -508,64 +406,6 @@ const contentShapeId = (
   });
 };
 
-const parameterShapeId = (
-  catalog: CatalogV1,
-  capability: Capability,
-  parameter: ParameterSymbol,
-): ShapeSymbolId => {
-  if (parameter.schemaShapeId) {
-    return parameter.schemaShapeId;
-  }
-
-  const contentShape = contentShapeId(
-    catalog,
-    capability,
-    parameter.content,
-    `parameter:${parameter.id}`,
-  );
-  if (contentShape) {
-    return contentShape;
-  }
-
-  return createSyntheticShape(catalog, {
-    capability,
-    label: `parameter:${parameter.id}:unknown`,
-    title: parameter.name,
-    docs: parameter.docs,
-    node: {
-      type: "unknown",
-      reason: `Missing shape for parameter ${parameter.id}`,
-    },
-    diagnostic: {
-      level: "warning",
-      code: "projection_call_shape_synthesized",
-      message: `Missing parameter shape for ${parameter.name}; using unknown`,
-      relatedSymbolIds: [parameter.id],
-    },
-  });
-};
-
-const requestBodyShapeId = (
-  catalog: CatalogV1,
-  capability: Capability,
-  requestBodyId: RequestBodySymbolId | undefined,
-): ShapeSymbolId | undefined => {
-  if (!requestBodyId) {
-    return undefined;
-  }
-
-  const requestBody = catalog.symbols[requestBodyId];
-  if (!requestBody || requestBody.kind !== "requestBody") {
-    return undefined;
-  }
-
-  return contentShapeId(
-    catalog,
-    capability,
-    requestBody.contents,
-    `requestBody:${requestBody.id}`,
-  );
-};
 
 const chooseExecutable = (catalog: CatalogV1, capability: Capability): Executable => {
   const preferredId = capability.preferredExecutableId;
@@ -821,42 +661,6 @@ const headersShape = (
   });
 };
 
-const shapeFieldShapeId = (
-  catalog: CatalogV1,
-  shapeId: ShapeSymbolId | undefined,
-  fieldName: string,
-  seen = new Set<ShapeSymbolId>(),
-): ShapeSymbolId | undefined => {
-  if (!shapeId || seen.has(shapeId)) {
-    return undefined;
-  }
-
-  const shape = getShape(catalog, shapeId);
-  if (!shape) {
-    return undefined;
-  }
-
-  const nextSeen = new Set(seen);
-  nextSeen.add(shapeId);
-
-  switch (shape.node.type) {
-    case "ref":
-      return shapeFieldShapeId(catalog, shape.node.target, fieldName, nextSeen);
-    case "object":
-      return shape.node.fields[fieldName]?.shapeId;
-    case "allOf":
-      for (const item of shape.node.items) {
-        const found = shapeFieldShapeId(catalog, item, fieldName, nextSeen);
-        if (found) {
-          return found;
-        }
-      }
-      return undefined;
-    default:
-      return undefined;
-  }
-};
-
 const projectExecutionResultShape = (
   catalog: CatalogV1,
   capability: Capability,
@@ -965,51 +769,6 @@ const projectExecutionResultShape = (
     },
   });
 };
-
-const groupFieldShape = (
-  catalog: CatalogV1,
-  capability: Capability,
-  location: "path" | "query" | "headers" | "cookies",
-  fields: Record<string, { shapeId: ShapeSymbolId; docs?: DocumentationBlock }>,
-  required: string[],
-): ShapeSymbolId =>
-  createSyntheticShape(catalog, {
-    capability,
-    label: `group:${capability.id}:${location}`,
-    title: `${location} parameters`,
-    node: {
-      type: "object",
-      fields: Object.fromEntries(
-        Object.entries(fields).map(([name, field]) => [
-          name,
-          {
-            shapeId: field.shapeId,
-            ...(field.docs ? { docs: field.docs } : {}),
-          },
-        ]),
-      ),
-      ...(required.length > 0 ? { required } : {}),
-      additionalProperties: false,
-    },
-  });
-
-const projectHttpCallShape = (
-  _catalog: CatalogV1,
-  _capability: Capability,
-  executable: Executable,
-): ShapeSymbolId => executable.projection.callShapeId;
-
-const projectGraphqlCallShape = (
-  _catalog: CatalogV1,
-  _capability: Capability,
-  executable: Executable,
-): ShapeSymbolId => executable.projection.callShapeId;
-
-const projectMcpCallShape = (
-  _catalog: CatalogV1,
-  _capability: Capability,
-  executable: Executable,
-): ShapeSymbolId => executable.projection.callShapeId;
 
 const projectCapability = (
   catalog: CatalogV1,

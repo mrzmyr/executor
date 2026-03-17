@@ -30,7 +30,6 @@ const compositeLabel = (
   key: "oneOf" | "anyOf" | "allOf",
   schema: JsonSchemaRecord,
   render: (input: unknown) => string,
-  maxLength: number,
 ): string | null => {
   const items = Array.isArray(schema[key]) ? schema[key].map(asRecord) : [];
   if (items.length === 0) {
@@ -148,9 +147,9 @@ export const schemaToTypeSignatureWithOptions = (
     }
 
     const composite =
-      compositeLabel("oneOf", schema, (value) => render(value, seenRefs, depthRemaining - 1), maxLength)
-      ?? compositeLabel("anyOf", schema, (value) => render(value, seenRefs, depthRemaining - 1), maxLength)
-      ?? compositeLabel("allOf", schema, (value) => render(value, seenRefs, depthRemaining - 1), maxLength);
+      compositeLabel("oneOf", schema, (value) => render(value, seenRefs, depthRemaining - 1))
+      ?? compositeLabel("anyOf", schema, (value) => render(value, seenRefs, depthRemaining - 1))
+      ?? compositeLabel("allOf", schema, (value) => render(value, seenRefs, depthRemaining - 1));
     if (composite) {
       return truncate(composite, maxLength);
     }

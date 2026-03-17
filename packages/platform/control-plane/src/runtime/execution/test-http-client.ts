@@ -24,10 +24,9 @@ const createClientLayer = (runtime: ControlPlaneRuntime) => {
   );
 };
 
-const createControlPlaneClient = (accountId?: string) =>
-  (void accountId,
+const createControlPlaneClient = () =>
   HttpApiClient.make(ControlPlaneApi, {
-  }));
+  });
 
 type ControlPlaneClient = Effect.Effect.Success<
   ReturnType<typeof createControlPlaneClient>
@@ -41,6 +40,6 @@ export const withControlPlaneClient = <A, E>(
   f: (client: ControlPlaneClient) => Effect.Effect<A, E, never>,
 ): Effect.Effect<A, E, never> =>
   Effect.gen(function* () {
-    const client = yield* createControlPlaneClient(input.accountId);
+    const client = yield* createControlPlaneClient();
     return yield* f(client);
   }).pipe(Effect.provide(createClientLayer(input.runtime).pipe(Layer.orDie)));

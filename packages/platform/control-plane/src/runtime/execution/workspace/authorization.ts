@@ -121,7 +121,7 @@ export const authorizePersistedToolInvocation = (input: {
         sourceKey: input.tool.source.id,
         args: input.args,
         context: {
-          ...(input.context ?? {}),
+          ...input.context,
           interactionPurpose: "tool_execution_gate",
           interactionReason: decision.reason,
           invocationDescriptor: {

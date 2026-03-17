@@ -83,40 +83,6 @@ const createToolTreeNode = (): ToolTreeNode => ({
   children: new Map(),
 });
 
-const primitiveTypeName = (value: string): string => {
-  switch (value) {
-    case "string":
-    case "boolean":
-      return value;
-    case "bytes":
-      return "string";
-    case "integer":
-    case "number":
-      return "number";
-    case "null":
-      return "null";
-    case "object":
-      return "Record<string, unknown>";
-    case "array":
-      return "Array<unknown>";
-    default:
-      throw new Error(`Unsupported JSON Schema primitive type: ${value}`);
-  }
-};
-
-const jsonLiteral = (value: unknown): string => {
-  const serialized = JSON.stringify(value);
-  if (serialized === undefined) {
-    throw new Error(`Unsupported literal value in declaration schema: ${String(value)}`);
-  }
-  return serialized;
-};
-
-const wrapCompositeType = (value: string): string =>
-  value.includes(" | ") || value.includes(" & ")
-    ? `(${value})`
-    : value;
-
 const objectTypeLiteral = (
   lines: readonly string[],
   indent: string,

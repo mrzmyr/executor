@@ -453,8 +453,7 @@ const createHttpCapabilityFromOpenApi = (input: {
     ),
   );
 
-  const parameterIds = input.operation.providerData.invocation.parameters.map(
-    (parameter) => {
+  input.operation.providerData.invocation.parameters.forEach((parameter) => {
       const parameterId = ParameterSymbolIdSchema.make(
         `param_${stableHash({
           capabilityId,
@@ -543,9 +542,7 @@ const createHttpCapabilityFromOpenApi = (input: {
           `#/openapi/${input.operation.providerData.toolId}/parameter/${parameter.location}/${parameter.name}`,
         ),
       } satisfies ParameterSymbol;
-      return parameterId;
-    },
-  );
+    });
 
   const requestBodyId = input.operation.providerData.invocation.requestBody
     ? RequestBodySymbolIdSchema.make(

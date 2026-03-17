@@ -25,7 +25,6 @@ import type {
   CatalogV1,
   Executable,
   ShapeSymbol,
-  Symbol as IrSymbol,
 } from "@executor/ir/model";
 import { LocalSourceArtifactMissingError } from "../../local/errors";
 import {
@@ -43,7 +42,6 @@ import {
   SourceArtifactStore,
   type SourceArtifactStoreShape,
 } from "../../local/storage";
-import { namespaceFromSourceName } from "../../sources/source-names";
 import {
   RuntimeSourceStoreService,
   type RuntimeSourceStore,
@@ -131,19 +129,6 @@ const asShape = (catalog: CatalogV1, shapeId: string | undefined): ShapeSymbol |
 
   const symbol = catalog.symbols[shapeId];
   return symbol?.kind === "shape" ? symbol : undefined;
-};
-
-const asJsonRecord = (value: unknown): Record<string, unknown> =>
-  typeof value === "object" && value !== null && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : {};
-
-const symbolDocsSummary = (symbol: IrSymbol | undefined): string | undefined => {
-  if (!symbol || !("docs" in symbol)) {
-    return undefined;
-  }
-
-  return symbol.docs?.summary ?? symbol.docs?.description;
 };
 
 export const shapeToJsonSchema = (catalog: CatalogV1, rootShapeId: string): unknown => {
@@ -339,7 +324,7 @@ export const shapeToJsonSchema = (catalog: CatalogV1, rootShapeId: string): unkn
           type: node.scalar === "bytes" ? "string" : node.scalar,
           ...(node.scalar === "bytes" ? { format: "binary" } : {}),
           ...(node.format ? { format: node.format } : {}),
-          ...(node.constraints ?? {}),
+          ...node.constraints,
         })),
       Match.when({ type: "ref" }, (node) =>
         shouldInlineRefTarget(node.target)

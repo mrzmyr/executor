@@ -108,9 +108,7 @@ export const createSystemToolMap = (
       outputSchema: catalogNamespacesOutputSchema,
       execute: ({ limit }: { limit?: number }) =>
         Effect.runPromise(
-          getPrimitives().catalog.namespaces({
-            ...(limit !== undefined ? { limit } : {}),
-          }),
+          getPrimitives().catalog.namespaces((limit !== undefined ? { limit } : {})),
         ),
     },
     metadata: {

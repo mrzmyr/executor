@@ -175,7 +175,7 @@ const fetchGoogleDiscoveryDocumentWithHeaders = (input: {
     const client = yield* HttpClient.HttpClient;
     const request = HttpClientRequest.get(input.url).pipe(
       HttpClientRequest.setHeaders({
-        ...(input.headers ?? {}),
+        ...input.headers,
         ...(input.cookies
           ? {
               cookie: Object.entries(input.cookies)
@@ -523,7 +523,7 @@ export const googleDiscoverySourceAdapter: SourceAdapter = {
       const discoveryDocument = yield* fetchGoogleDiscoveryDocumentWithHeaders({
         url: bindingConfig.discoveryUrl,
         headers: {
-          ...(bindingConfig.defaultHeaders ?? {}),
+          ...bindingConfig.defaultHeaders,
           ...auth.headers,
         },
         cookies: auth.cookies,
@@ -604,7 +604,7 @@ export const googleDiscoverySourceAdapter: SourceAdapter = {
           }),
         );
         const headers: Record<string, string> = {
-          ...(bindingConfig.defaultHeaders ?? {}),
+          ...bindingConfig.defaultHeaders,
         };
 
         for (const parameter of providerData.invocation.parameters) {

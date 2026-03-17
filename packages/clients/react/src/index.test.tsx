@@ -1,6 +1,6 @@
 import { createServer } from "node:http";
 
-import { HttpApiBuilder, HttpServer, OpenApi } from "@effect/platform";
+import { HttpApiBuilder, HttpServer } from "@effect/platform";
 import { NodeHttpServer } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import {
@@ -15,8 +15,6 @@ import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 import * as Scope from "effect/Scope";
-import { HttpApi, HttpApiEndpoint, HttpApiGroup, HttpApiSchema } from "@effect/platform";
-import * as Schema from "effect/Schema";
 import { JSDOM } from "jsdom";
 import * as React from "react";
 import { createRoot } from "react-dom/client";

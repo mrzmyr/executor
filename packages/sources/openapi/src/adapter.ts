@@ -485,7 +485,7 @@ export const openApiSourceAdapter: SourceAdapter = {
       const openApiDocument = yield* fetchOpenApiDocumentWithHeaders({
         url: bindingConfig.specUrl,
         headers: {
-          ...(bindingConfig.defaultHeaders ?? {}),
+          ...bindingConfig.defaultHeaders,
           ...auth.headers,
         },
         queryParams: auth.queryParams,
@@ -558,7 +558,7 @@ export const openApiSourceAdapter: SourceAdapter = {
           providerData.invocation,
         );
         const headers: Record<string, string> = {
-          ...(bindingConfig.defaultHeaders ?? {}),
+          ...bindingConfig.defaultHeaders,
         };
         const queryEntries: Array<{
           name: string;

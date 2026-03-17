@@ -752,7 +752,7 @@ const mergeRefHintTable = (
   extraRefKeys: ReadonlySet<string>,
 ): OpenApiToolManifest["refHintTable"] => {
   const merged: Record<string, string> = {
-    ...(manifest.refHintTable ?? {}),
+    ...manifest.refHintTable,
   };
   const queue = [...extraRefKeys].sort((left, right) => left.localeCompare(right));
   const seen = new Set<string>(Object.keys(merged));
@@ -843,7 +843,7 @@ const enrichManifestFromDocument = (
       ...((inputSchema !== undefined || outputSchema !== undefined)
         ? {
             typing: {
-              ...(tool.typing ?? {}),
+              ...tool.typing,
               ...(inputSchema !== undefined ? { inputSchema } : {}),
               ...(outputSchema !== undefined ? { outputSchema } : {}),
             },

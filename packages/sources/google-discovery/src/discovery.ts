@@ -1,5 +1,4 @@
 import {
-  defaultNameFromEndpoint,
   executeHttpProbe,
   namespaceFromSourceName,
   noneAuthInference,

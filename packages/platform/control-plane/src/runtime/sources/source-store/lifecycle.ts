@@ -51,7 +51,7 @@ export const removeSourceByIdWithDeps = (
 
     const projectConfig = cloneJson(localWorkspace.loadedConfig.projectConfig ?? {});
     const sources = {
-      ...(projectConfig.sources ?? {}),
+      ...projectConfig.sources,
     };
     delete sources[input.sourceId];
     yield* localWorkspace.workspaceConfigStore.writeProject({
@@ -146,7 +146,7 @@ export const persistSourceWithDeps = (
     });
     const projectConfig = cloneJson(localWorkspace.loadedConfig.projectConfig ?? {});
     const sources = {
-      ...(projectConfig.sources ?? {}),
+      ...projectConfig.sources,
     };
     const existingConfigSource = sources[nextSource.id];
     sources[nextSource.id] = configSourceFromLocalSource({

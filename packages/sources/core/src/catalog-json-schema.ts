@@ -17,7 +17,6 @@ import type {
   JsonSchemaImporter,
 } from "./catalog-types";
 import {
-  asJsonRecord,
   docsFrom,
   mutableRecord,
   provenanceFor,

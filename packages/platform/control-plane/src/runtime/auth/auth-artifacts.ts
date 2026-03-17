@@ -2,10 +2,8 @@ import type { OAuthClientProvider } from "@modelcontextprotocol/sdk/client/auth.
 import {
   type AccountId,
   AuthGrantSetJsonSchema,
-  type McpOAuthAuthArtifactConfig,
   McpOAuthAuthArtifactConfigJsonSchema,
   McpOAuthAuthArtifactKind,
-  type ProviderGrantRefAuthArtifactConfig,
   ProviderGrantRefAuthArtifactConfigJsonSchema,
   ProviderGrantRefAuthArtifactKind,
   RequestPlacementTemplatesJsonSchema,

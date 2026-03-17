@@ -11,7 +11,6 @@ import {
 } from "#schema";
 import * as Either from "effect/Either";
 import * as Effect from "effect/Effect";
-import * as Option from "effect/Option";
 
 import {
   createSourceFromPayload,
@@ -133,7 +132,7 @@ export const listSources = (input: {
   workspaceId: WorkspaceId;
   accountId: AccountId;
 }) =>
-  Effect.flatMap(ControlPlaneStore, (store) =>
+  Effect.flatMap(ControlPlaneStore, () =>
     Effect.gen(function* () {
       const sourceStore = yield* RuntimeSourceStoreService;
 
@@ -196,7 +195,7 @@ export const getSource = (input: {
   sourceId: SourceId;
   accountId: AccountId;
 }) =>
-  Effect.flatMap(ControlPlaneStore, (store) =>
+  Effect.flatMap(ControlPlaneStore, () =>
     Effect.gen(function* () {
       const sourceStore = yield* RuntimeSourceStoreService;
 
@@ -281,7 +280,7 @@ export const removeSource = (input: {
   workspaceId: WorkspaceId;
   sourceId: SourceId;
 }) =>
-  Effect.flatMap(ControlPlaneStore, (store) =>
+  Effect.flatMap(ControlPlaneStore, () =>
     Effect.gen(function* () {
       const sourceStore = yield* RuntimeSourceStoreService;
       const removed = yield* mapPersistenceError(
