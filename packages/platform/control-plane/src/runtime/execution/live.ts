@@ -2,6 +2,7 @@ import type {
   ElicitationResponse,
   OnElicitation,
 } from "@executor/codemode-core";
+import { clearMcpConnectionPoolRun } from "@executor/source-mcp";
 import {
   ExecutionInteractionIdSchema,
   type Execution,
@@ -233,15 +234,21 @@ export const createLiveExecutionManager = () => {
 
     finishRun: ({ executionId, state }) =>
       publishState({ executionId, state }).pipe(
+        Effect.zipRight(
+          clearMcpConnectionPoolRun(executionId).pipe(
+            Effect.zipRight(Effect.sync(() => {
+              runs.delete(executionId);
+            })),
+          ),
+        ),
+      ),
+
+    clearRun: (executionId) =>
+      clearMcpConnectionPoolRun(executionId).pipe(
         Effect.zipRight(Effect.sync(() => {
           runs.delete(executionId);
         })),
       ),
-
-    clearRun: (executionId) =>
-      Effect.sync(() => {
-        runs.delete(executionId);
-      }),
   } satisfies LiveExecutionManagerShape;
 
   return manager;

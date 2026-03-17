@@ -60,10 +60,10 @@ const SOURCE_OAUTH_POPUP_RESULT_TIMEOUT_MS = 2 * 60_000;
 const SOURCE_OAUTH_POPUP_RESULT_STORAGE_KEY_PREFIX = "executor:oauth-result:";
 
 const isSourceNotFoundLoadable = (loadable: Loadable<unknown>): boolean =>
-  loadable.status === "error"
-  && loadable.error.message.toLowerCase().includes("source not found");
+  loadable.status === "error" &&
+  loadable.error.message.toLowerCase().includes("source not found");
 
-type TransportValue = "" | "auto" | "streamable-http" | "sse";
+type TransportValue = "" | "auto" | "streamable-http" | "sse" | "stdio";
 
 type SourceFormState = {
   name: string;
@@ -74,6 +74,10 @@ type SourceFormState = {
   transport: TransportValue;
   queryParamsText: string;
   headersText: string;
+  command: string;
+  argsText: string;
+  envText: string;
+  cwd: string;
   specUrl: string;
   service: string;
   version: string;
@@ -87,7 +91,10 @@ type SourceFormState = {
   oauthAccessHandle: string;
   oauthRefreshProviderId: string;
   oauthRefreshHandle: string;
-  managedAuth: Extract<Source["auth"], { kind: "provider_grant_ref" | "mcp_oauth" }> | null;
+  managedAuth: Extract<
+    Source["auth"],
+    { kind: "provider_grant_ref" | "mcp_oauth" }
+  > | null;
 };
 
 const kindOptions: ReadonlyArray<Source["kind"]> = [
@@ -102,6 +109,7 @@ const transportOptions: ReadonlyArray<Exclude<TransportValue, "">> = [
   "auto",
   "streamable-http",
   "sse",
+  "stdio",
 ];
 
 const authOptions: ReadonlyArray<Source["auth"]["kind"]> = [
@@ -129,9 +137,15 @@ const namespaceFromUrl = (url: string): string => {
 };
 
 const googleDiscoveryNamespace = (service: string): string =>
-  `google.${service.trim().toLowerCase().replace(/[^a-z0-9]+/g, ".").replace(/^\.+|\.+$/g, "")}`;
+  `google.${service
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, ".")
+    .replace(/^\.+|\.+$/g, "")}`;
 
-const readStoredSourceOAuthPopupResult = (sessionId: string): SourceOAuthPopupMessage | null => {
+const readStoredSourceOAuthPopupResult = (
+  sessionId: string,
+): SourceOAuthPopupMessage | null => {
   if (typeof window === "undefined") {
     return null;
   }
@@ -155,7 +169,9 @@ const clearStoredSourceOAuthPopupResult = (sessionId: string): void => {
     return;
   }
 
-  window.localStorage.removeItem(`${SOURCE_OAUTH_POPUP_RESULT_STORAGE_KEY_PREFIX}${sessionId}`);
+  window.localStorage.removeItem(
+    `${SOURCE_OAUTH_POPUP_RESULT_STORAGE_KEY_PREFIX}${sessionId}`,
+  );
 };
 
 const startSourceOAuthPopup = async (input: {
@@ -180,110 +196,130 @@ const startSourceOAuthPopup = async (input: {
 
   popup.focus();
 
-  return await new Promise<CompleteSourceOAuthResult["auth"]>((resolve, reject) => {
-    let settled = false;
-    let closedPoll = 0;
-    let resultTimeout = 0;
+  return await new Promise<CompleteSourceOAuthResult["auth"]>(
+    (resolve, reject) => {
+      let settled = false;
+      let closedPoll = 0;
+      let resultTimeout = 0;
 
-    const cleanup = () => {
-      window.removeEventListener("message", onMessage);
-      if (closedPoll) {
-        window.clearInterval(closedPoll);
-      }
-      if (resultTimeout) {
-        window.clearTimeout(resultTimeout);
-      }
-      if (!popup.closed) {
-        popup.close();
-      }
-      clearStoredSourceOAuthPopupResult(input.sessionId);
-    };
+      const cleanup = () => {
+        window.removeEventListener("message", onMessage);
+        if (closedPoll) {
+          window.clearInterval(closedPoll);
+        }
+        if (resultTimeout) {
+          window.clearTimeout(resultTimeout);
+        }
+        if (!popup.closed) {
+          popup.close();
+        }
+        clearStoredSourceOAuthPopupResult(input.sessionId);
+      };
 
-    const settleWithError = (message: string) => {
-      if (settled) {
-        return;
-      }
+      const settleWithError = (message: string) => {
+        if (settled) {
+          return;
+        }
 
-      settled = true;
-      cleanup();
-      reject(new Error(message));
-    };
+        settled = true;
+        cleanup();
+        reject(new Error(message));
+      };
 
-    const settleFromPayload = (data: SourceOAuthPopupMessage) => {
-      if (!data.ok) {
-        settleWithError(data.error || "OAuth failed");
-        return;
-      }
+      const settleFromPayload = (data: SourceOAuthPopupMessage) => {
+        if (!data.ok) {
+          settleWithError(data.error || "OAuth failed");
+          return;
+        }
 
-      if (settled) {
-        return;
-      }
+        if (settled) {
+          return;
+        }
 
-      settled = true;
-      cleanup();
-      resolve(data.auth);
-    };
+        settled = true;
+        cleanup();
+        resolve(data.auth);
+      };
 
-    const onMessage = (event: MessageEvent) => {
-      if (event.origin !== window.location.origin) {
-        return;
-      }
+      const onMessage = (event: MessageEvent) => {
+        if (event.origin !== window.location.origin) {
+          return;
+        }
 
-      const data = event.data as SourceOAuthPopupMessage | undefined;
-      if (!data || data.type !== "executor:oauth-result") {
-        return;
-      }
+        const data = event.data as SourceOAuthPopupMessage | undefined;
+        if (!data || data.type !== "executor:oauth-result") {
+          return;
+        }
 
-      if (data.ok && data.sessionId !== input.sessionId) {
-        return;
-      }
+        if (data.ok && data.sessionId !== input.sessionId) {
+          return;
+        }
 
-      if (!data.ok && data.sessionId !== null && data.sessionId !== input.sessionId) {
-        return;
-      }
+        if (
+          !data.ok &&
+          data.sessionId !== null &&
+          data.sessionId !== input.sessionId
+        ) {
+          return;
+        }
 
-      settleFromPayload(data);
-    };
+        settleFromPayload(data);
+      };
 
-    window.addEventListener("message", onMessage);
+      window.addEventListener("message", onMessage);
 
-    resultTimeout = window.setTimeout(() => {
-      settleWithError("OAuth popup timed out before completion. Please try again.");
-    }, SOURCE_OAUTH_POPUP_RESULT_TIMEOUT_MS);
+      resultTimeout = window.setTimeout(() => {
+        settleWithError(
+          "OAuth popup timed out before completion. Please try again.",
+        );
+      }, SOURCE_OAUTH_POPUP_RESULT_TIMEOUT_MS);
 
-    closedPoll = window.setInterval(() => {
-      const stored = readStoredSourceOAuthPopupResult(input.sessionId);
-      if (stored) {
-        settleFromPayload(stored);
-        return;
-      }
-      if (popup.closed) {
-        // Stop polling — only run one final deferred check to give the
-        // callback page time to write localStorage before we give up.
-        window.clearInterval(closedPoll);
-        closedPoll = 0;
-        window.setTimeout(() => {
-          const delayedStored = readStoredSourceOAuthPopupResult(input.sessionId);
-          if (delayedStored) {
-            settleFromPayload(delayedStored);
-            return;
-          }
-          settleWithError("OAuth popup was closed before completion.");
-        }, 1500);
-      }
-    }, 300);
-  });
+      closedPoll = window.setInterval(() => {
+        const stored = readStoredSourceOAuthPopupResult(input.sessionId);
+        if (stored) {
+          settleFromPayload(stored);
+          return;
+        }
+        if (popup.closed) {
+          // Stop polling — only run one final deferred check to give the
+          // callback page time to write localStorage before we give up.
+          window.clearInterval(closedPoll);
+          closedPoll = 0;
+          window.setTimeout(() => {
+            const delayedStored = readStoredSourceOAuthPopupResult(
+              input.sessionId,
+            );
+            if (delayedStored) {
+              settleFromPayload(delayedStored);
+              return;
+            }
+            settleWithError("OAuth popup was closed before completion.");
+          }, 1500);
+        }
+      }, 300);
+    },
+  );
 };
 
 const stringMapToEditor = (value: Record<string, string> | null): string =>
   value === null ? "" : JSON.stringify(value, null, 2);
+
+const stringArrayToEditor = (
+  value: ReadonlyArray<string> | null | undefined,
+): string =>
+  !value || value.length === 0 ? "" : JSON.stringify(value, null, 2);
 
 const readBindingStringMap = (
   source: Source,
   key: string,
 ): Record<string, string> | null => {
   const candidate = source.binding[key];
-  if (candidate === null || candidate === undefined || typeof candidate !== "object" || Array.isArray(candidate)) {
+  if (
+    candidate === null ||
+    candidate === undefined ||
+    typeof candidate !== "object" ||
+    Array.isArray(candidate)
+  ) {
     return null;
   }
 
@@ -293,14 +329,77 @@ const readBindingStringMap = (
     : null;
 };
 
+const readBindingStringArray = (
+  source: Source,
+  key: string,
+): Array<string> | null => {
+  const candidate = source.binding[key];
+  return Array.isArray(candidate) &&
+    candidate.every((value) => typeof value === "string")
+    ? [...candidate]
+    : null;
+};
+
 const readBindingString = (source: Source, key: string): string =>
   typeof source.binding[key] === "string" ? String(source.binding[key]) : "";
 
 const readBindingTransport = (source: Source): TransportValue => {
   const candidate = source.binding.transport;
-  return typeof candidate === "string" && (candidate === "auto" || candidate === "streamable-http" || candidate === "sse")
+  return typeof candidate === "string" &&
+    (candidate === "auto" ||
+      candidate === "streamable-http" ||
+      candidate === "sse" ||
+      candidate === "stdio")
     ? candidate
     : "";
+};
+
+const parseJsonStringArray = (
+  label: string,
+  text: string,
+): Array<string> | null => {
+  const trimmed = text.trim();
+  if (trimmed.length === 0) {
+    return null;
+  }
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(trimmed);
+  } catch {
+    throw new Error(`${label} must be valid JSON.`);
+  }
+
+  if (
+    !Array.isArray(parsed) ||
+    !parsed.every((value) => typeof value === "string")
+  ) {
+    throw new Error(`${label} must be a JSON array of strings.`);
+  }
+
+  const normalized = parsed
+    .map((value) => value.trim())
+    .filter((value) => value.length > 0);
+
+  return normalized.length > 0 ? normalized : null;
+};
+
+const buildSyntheticMcpStdioEndpoint = (input: {
+  name?: string | null;
+  endpoint?: string | null;
+  command?: string | null;
+}): string => {
+  const label =
+    input.name?.trim() ||
+    input.endpoint?.trim() ||
+    input.command?.trim() ||
+    "mcp";
+  const slug = label
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+
+  return `stdio://local/${slug || "mcp"}`;
 };
 
 const defaultFormState = (template?: SourceTemplate): SourceFormState => ({
@@ -308,14 +407,25 @@ const defaultFormState = (template?: SourceTemplate): SourceFormState => ({
   kind: template?.kind ?? "openapi",
   endpoint: template?.endpoint ?? "",
   namespace: template
-    ? "service" in template
-      ? googleDiscoveryNamespace(template.service)
-      : namespaceFromUrl(template.endpoint)
+    ? (template.namespace ??
+      ("service" in template
+        ? googleDiscoveryNamespace(template.service)
+        : namespaceFromUrl(template.endpoint ?? "")))
     : "",
   enabled: true,
-  transport: template?.kind === "mcp" ? "auto" : "",
+  transport:
+    template?.kind === "mcp"
+      ? template.connectionType === "command"
+        ? (template.transport ?? "stdio")
+        : (template.transport ?? "auto")
+      : "",
   queryParamsText: "",
   headersText: "",
+  command: template?.kind === "mcp" ? (template.command ?? "") : "",
+  argsText: template?.kind === "mcp" ? stringArrayToEditor(template.args) : "",
+  envText:
+    template?.kind === "mcp" ? stringMapToEditor(template.env ?? null) : "",
+  cwd: template?.kind === "mcp" ? (template.cwd ?? "") : "",
   specUrl: template && "specUrl" in template ? template.specUrl : "",
   service: template && "service" in template ? template.service : "",
   version: template && "version" in template ? template.version : "",
@@ -338,13 +448,22 @@ const formStateFromSource = (source: Source): SourceFormState => ({
   endpoint: source.endpoint,
   namespace: source.namespace ?? "",
   enabled: source.enabled,
-  transport: source.kind === "mcp" ? (readBindingTransport(source) || "auto") : "",
-  queryParamsText: stringMapToEditor(readBindingStringMap(source, "queryParams")),
+  transport:
+    source.kind === "mcp" ? readBindingTransport(source) || "auto" : "",
+  queryParamsText: stringMapToEditor(
+    readBindingStringMap(source, "queryParams"),
+  ),
   headersText: stringMapToEditor(readBindingStringMap(source, "headers")),
+  command: readBindingString(source, "command"),
+  argsText: stringArrayToEditor(readBindingStringArray(source, "args")),
+  envText: stringMapToEditor(readBindingStringMap(source, "env")),
+  cwd: readBindingString(source, "cwd"),
   specUrl: readBindingString(source, "specUrl"),
   service: readBindingString(source, "service"),
   version: readBindingString(source, "version"),
-  defaultHeadersText: stringMapToEditor(readBindingStringMap(source, "defaultHeaders")),
+  defaultHeadersText: stringMapToEditor(
+    readBindingStringMap(source, "defaultHeaders"),
+  ),
   authKind: source.auth.kind,
   authHeaderName:
     source.auth.kind === "none" || source.auth.kind === "mcp_oauth"
@@ -354,10 +473,13 @@ const formStateFromSource = (source: Source): SourceFormState => ({
     source.auth.kind === "none" || source.auth.kind === "mcp_oauth"
       ? "Bearer "
       : source.auth.prefix,
-  bearerProviderId: source.auth.kind === "bearer" ? source.auth.token.providerId : "",
+  bearerProviderId:
+    source.auth.kind === "bearer" ? source.auth.token.providerId : "",
   bearerHandle: source.auth.kind === "bearer" ? source.auth.token.handle : "",
-  oauthAccessProviderId: source.auth.kind === "oauth2" ? source.auth.accessToken.providerId : "",
-  oauthAccessHandle: source.auth.kind === "oauth2" ? source.auth.accessToken.handle : "",
+  oauthAccessProviderId:
+    source.auth.kind === "oauth2" ? source.auth.accessToken.providerId : "",
+  oauthAccessHandle:
+    source.auth.kind === "oauth2" ? source.auth.accessToken.handle : "",
   oauthRefreshProviderId:
     source.auth.kind === "oauth2" && source.auth.refreshToken !== null
       ? source.auth.refreshToken.providerId
@@ -367,12 +489,16 @@ const formStateFromSource = (source: Source): SourceFormState => ({
       ? source.auth.refreshToken.handle
       : "",
   managedAuth:
-    source.auth.kind === "provider_grant_ref" || source.auth.kind === "mcp_oauth"
+    source.auth.kind === "provider_grant_ref" ||
+    source.auth.kind === "mcp_oauth"
       ? source.auth
       : null,
 });
 
-const parseJsonStringMap = (label: string, text: string): Record<string, string> | null => {
+const parseJsonStringMap = (
+  label: string,
+  text: string,
+): Record<string, string> | null => {
   const trimmed = text.trim();
   if (trimmed.length === 0) {
     return null;
@@ -401,12 +527,18 @@ const parseJsonStringMap = (label: string, text: string): Record<string, string>
   return Object.keys(normalized).length === 0 ? null : normalized;
 };
 
-const buildAuthPayload = (state: SourceFormState): CreateSourcePayload["auth"] => {
+const buildAuthPayload = (
+  state: SourceFormState,
+): CreateSourcePayload["auth"] => {
   if (state.authKind === "none") {
     return { kind: "none" };
   }
 
-  if ((state.authKind === "provider_grant_ref" || state.authKind === "mcp_oauth") && state.managedAuth !== null) {
+  if (
+    (state.authKind === "provider_grant_ref" ||
+      state.authKind === "mcp_oauth") &&
+    state.managedAuth !== null
+  ) {
     return state.managedAuth;
   }
 
@@ -417,7 +549,9 @@ const buildAuthPayload = (state: SourceFormState): CreateSourcePayload["auth"] =
     const providerId = state.bearerProviderId.trim();
     const handle = state.bearerHandle.trim();
     if (!providerId || !handle) {
-      throw new Error("Bearer auth requires a token. Select or create a secret.");
+      throw new Error(
+        "Bearer auth requires a token. Select or create a secret.",
+      );
     }
 
     return {
@@ -434,13 +568,17 @@ const buildAuthPayload = (state: SourceFormState): CreateSourcePayload["auth"] =
   const accessProviderId = state.oauthAccessProviderId.trim();
   const accessHandle = state.oauthAccessHandle.trim();
   if (!accessProviderId || !accessHandle) {
-    throw new Error("OAuth2 auth requires an access token. Select or create a secret.");
+    throw new Error(
+      "OAuth2 auth requires an access token. Select or create a secret.",
+    );
   }
 
   const refreshProviderId = trimToNull(state.oauthRefreshProviderId);
   const refreshHandle = trimToNull(state.oauthRefreshHandle);
   if ((refreshProviderId === null) !== (refreshHandle === null)) {
-    throw new Error("OAuth2 refresh token provider ID and handle must be set together.");
+    throw new Error(
+      "OAuth2 refresh token provider ID and handle must be set together.",
+    );
   }
 
   return {
@@ -461,8 +599,14 @@ const buildAuthPayload = (state: SourceFormState): CreateSourcePayload["auth"] =
   };
 };
 
-const buildRequestedSourceStatus = (state: SourceFormState): CreateSourcePayload["status"] => {
-  if (state.kind !== "mcp" && state.kind !== "openapi" && state.kind !== "graphql") {
+const buildRequestedSourceStatus = (
+  state: SourceFormState,
+): CreateSourcePayload["status"] => {
+  if (
+    state.kind !== "mcp" &&
+    state.kind !== "openapi" &&
+    state.kind !== "graphql"
+  ) {
     return undefined;
   }
 
@@ -471,7 +615,14 @@ const buildRequestedSourceStatus = (state: SourceFormState): CreateSourcePayload
 
 const buildSourcePayload = (state: SourceFormState): CreateSourcePayload => {
   const name = state.name.trim();
-  const endpoint = state.endpoint.trim();
+  const isMcpStdio = state.kind === "mcp" && state.transport === "stdio";
+  const endpoint = isMcpStdio
+    ? buildSyntheticMcpStdioEndpoint({
+        name: state.name,
+        endpoint: state.endpoint,
+        command: state.command,
+      })
+    : state.endpoint.trim();
 
   if (!name) {
     throw new Error("Source name is required.");
@@ -479,6 +630,9 @@ const buildSourcePayload = (state: SourceFormState): CreateSourcePayload => {
 
   if (!endpoint) {
     throw new Error("Source endpoint is required.");
+  }
+  if (isMcpStdio && !state.command.trim()) {
+    throw new Error("MCP stdio transport requires a command.");
   }
 
   const shared = {
@@ -488,16 +642,35 @@ const buildSourcePayload = (state: SourceFormState): CreateSourcePayload => {
     status: buildRequestedSourceStatus(state),
     enabled: state.enabled,
     namespace: trimToNull(state.namespace),
-    auth: buildAuthPayload(state),
-  } satisfies Pick<CreateSourcePayload, "name" | "kind" | "endpoint" | "status" | "enabled" | "namespace" | "auth">;
+    auth: isMcpStdio ? { kind: "none" as const } : buildAuthPayload(state),
+  } satisfies Pick<
+    CreateSourcePayload,
+    "name" | "kind" | "endpoint" | "status" | "enabled" | "namespace" | "auth"
+  >;
 
   if (state.kind === "mcp") {
     return {
       ...shared,
       binding: {
         transport: state.transport === "" ? "auto" : state.transport,
-        queryParams: parseJsonStringMap("Query params", state.queryParamsText),
-        headers: parseJsonStringMap("Request headers", state.headersText),
+        queryParams:
+          state.transport === "stdio"
+            ? null
+            : parseJsonStringMap("Query params", state.queryParamsText),
+        headers:
+          state.transport === "stdio"
+            ? null
+            : parseJsonStringMap("Request headers", state.headersText),
+        command: state.transport === "stdio" ? state.command.trim() : null,
+        args:
+          state.transport === "stdio"
+            ? parseJsonStringArray("Args", state.argsText)
+            : null,
+        env:
+          state.transport === "stdio"
+            ? parseJsonStringMap("Environment", state.envText)
+            : null,
+        cwd: state.transport === "stdio" ? trimToNull(state.cwd) : null,
       },
     };
   }
@@ -512,7 +685,10 @@ const buildSourcePayload = (state: SourceFormState): CreateSourcePayload => {
       ...shared,
       binding: {
         specUrl,
-        defaultHeaders: parseJsonStringMap("Default headers", state.defaultHeadersText),
+        defaultHeaders: parseJsonStringMap(
+          "Default headers",
+          state.defaultHeadersText,
+        ),
       },
     };
   }
@@ -521,7 +697,10 @@ const buildSourcePayload = (state: SourceFormState): CreateSourcePayload => {
     return {
       ...shared,
       binding: {
-        defaultHeaders: parseJsonStringMap("Default headers", state.defaultHeadersText),
+        defaultHeaders: parseJsonStringMap(
+          "Default headers",
+          state.defaultHeadersText,
+        ),
       },
     };
   }
@@ -542,7 +721,10 @@ const buildSourcePayload = (state: SourceFormState): CreateSourcePayload => {
         service,
         version,
         discoveryUrl: endpoint,
-        defaultHeaders: parseJsonStringMap("Default headers", state.defaultHeadersText),
+        defaultHeaders: parseJsonStringMap(
+          "Default headers",
+          state.defaultHeadersText,
+        ),
       },
     };
   }
@@ -557,9 +739,14 @@ const buildUpdatePayload = (state: SourceFormState): UpdateSourcePayload => ({
   ...buildSourcePayload(state),
 });
 
-const buildStartSourceOAuthPayload = (state: SourceFormState): StartSourceOAuthPayload => {
+const buildStartSourceOAuthPayload = (
+  state: SourceFormState,
+): StartSourceOAuthPayload => {
   if (state.kind !== "mcp") {
     throw new Error("OAuth sign-in is only available for MCP sources.");
+  }
+  if (state.transport === "stdio") {
+    throw new Error("OAuth sign-in is not available for MCP stdio sources.");
   }
 
   const endpoint = state.endpoint.trim();
@@ -585,9 +772,9 @@ export function EditSourcePage(props: { sourceId: string }) {
   const sources = useSources();
   const source = useSource(props.sourceId);
   const missingSource =
-    (sources.status === "ready"
-      && !sources.data.some((candidate) => candidate.id === props.sourceId))
-    || isSourceNotFoundLoadable(source);
+    (sources.status === "ready" &&
+      !sources.data.some((candidate) => candidate.id === props.sourceId)) ||
+    isSourceNotFoundLoadable(source);
 
   if (missingSource) {
     return <SourceNotFoundState />;
@@ -619,23 +806,35 @@ function SourceEditor(props: { mode: "create" | "edit"; source?: Source }) {
   const [formState, setFormState] = useState<SourceFormState>(() =>
     props.source ? formStateFromSource(props.source) : defaultFormState(),
   );
-  const [statusBanner, setStatusBanner] = useState<StatusBannerState | null>(null);
-  const [selectedTemplateId, setSelectedTemplateId] = useState<string | null>(null);
+  const [statusBanner, setStatusBanner] = useState<StatusBannerState | null>(
+    null,
+  );
+  const [selectedTemplateId, setSelectedTemplateId] = useState<string | null>(
+    null,
+  );
   const [oauthPopupBusy, setOauthPopupBusy] = useState(false);
-  const [expandedOauthSecretRefTarget, setExpandedOauthSecretRefTarget] = useState<string | null>(null);
+  const [expandedOauthSecretRefTarget, setExpandedOauthSecretRefTarget] =
+    useState<string | null>(null);
 
-  const isSubmitting = createSource.status === "pending" || updateSource.status === "pending";
+  const isSubmitting =
+    createSource.status === "pending" || updateSource.status === "pending";
   const isDeleting = removeSource.status === "pending";
   const isRevokingGrant = removeProviderAuthGrant.status === "pending";
-  const isOAuthSubmitting = startSourceOAuth.status === "pending" || oauthPopupBusy;
+  const isOAuthSubmitting =
+    startSourceOAuth.status === "pending" || oauthPopupBusy;
   const oauthSecretRefTarget =
-    formState.authKind === "oauth2" && formState.oauthAccessHandle.trim().length > 0
+    formState.authKind === "oauth2" &&
+    formState.oauthAccessHandle.trim().length > 0
       ? `${formState.oauthAccessProviderId}:${formState.oauthAccessHandle}:${formState.oauthRefreshProviderId}:${formState.oauthRefreshHandle}`
       : null;
   const showOauthSecretRefs =
-    oauthSecretRefTarget !== null && expandedOauthSecretRefTarget === oauthSecretRefTarget;
+    oauthSecretRefTarget !== null &&
+    expandedOauthSecretRefTarget === oauthSecretRefTarget;
 
-  const setField = <K extends keyof SourceFormState>(key: K, value: SourceFormState[K]) => {
+  const setField = <K extends keyof SourceFormState>(
+    key: K,
+    value: SourceFormState[K],
+  ) => {
     setFormState((current) => ({ ...current, [key]: value }));
   };
 
@@ -657,7 +856,9 @@ function SourceEditor(props: { mode: "create" | "edit"; source?: Source }) {
 
     try {
       if (props.mode === "create") {
-        const createdSource = await createSource.mutateAsync(buildSourcePayload(formState));
+        const createdSource = await createSource.mutateAsync(
+          buildSourcePayload(formState),
+        );
         void navigate({
           to: "/sources/$sourceId",
           params: { sourceId: createdSource.id },
@@ -691,7 +892,9 @@ function SourceEditor(props: { mode: "create" | "edit"; source?: Source }) {
     setStatusBanner(null);
 
     try {
-      const result = await startSourceOAuth.mutateAsync(buildStartSourceOAuthPayload(formState));
+      const result = await startSourceOAuth.mutateAsync(
+        buildStartSourceOAuthPayload(formState),
+      );
 
       setStatusBanner({
         tone: "info",
@@ -735,7 +938,9 @@ function SourceEditor(props: { mode: "create" | "edit"; source?: Source }) {
       return;
     }
 
-    const confirmed = window.confirm(`Remove "${props.source.name}" and its indexed tools?`);
+    const confirmed = window.confirm(
+      `Remove "${props.source.name}" and its indexed tools?`,
+    );
     if (!confirmed) {
       return;
     }
@@ -751,16 +956,17 @@ function SourceEditor(props: { mode: "create" | "edit"; source?: Source }) {
     } catch (error) {
       setStatusBanner({
         tone: "error",
-        text: error instanceof Error ? error.message : "Failed removing source.",
+        text:
+          error instanceof Error ? error.message : "Failed removing source.",
       });
     }
   };
 
   const handleRevokeProviderGrant = async () => {
     if (
-      !props.source
-      || isRevokingGrant
-      || formState.managedAuth?.kind !== "provider_grant_ref"
+      !props.source ||
+      isRevokingGrant ||
+      formState.managedAuth?.kind !== "provider_grant_ref"
     ) {
       return;
     }
@@ -775,7 +981,9 @@ function SourceEditor(props: { mode: "create" | "edit"; source?: Source }) {
     setStatusBanner(null);
 
     try {
-      const result = await removeProviderAuthGrant.mutateAsync(formState.managedAuth.grantId);
+      const result = await removeProviderAuthGrant.mutateAsync(
+        formState.managedAuth.grantId,
+      );
       if (!result.removed) {
         throw new Error("Shared provider grant was not removed.");
       }
@@ -787,14 +995,22 @@ function SourceEditor(props: { mode: "create" | "edit"; source?: Source }) {
     } catch (error) {
       setStatusBanner({
         tone: "error",
-        text: error instanceof Error ? error.message : "Failed revoking shared provider grant.",
+        text:
+          error instanceof Error
+            ? error.message
+            : "Failed revoking shared provider grant.",
       });
     }
   };
 
-  const backLink = props.mode === "edit" && props.source
-    ? { to: "/sources/$sourceId" as const, params: { sourceId: props.source.id }, search: { tab: "model" as const } }
-    : { to: "/" as const };
+  const backLink =
+    props.mode === "edit" && props.source
+      ? {
+          to: "/sources/$sourceId" as const,
+          params: { sourceId: props.source.id },
+          search: { tab: "model" as const },
+        }
+      : { to: "/" as const };
 
   return (
     <div className="flex-1 overflow-y-auto">
@@ -841,11 +1057,19 @@ function SourceEditor(props: { mode: "create" | "edit"; source?: Source }) {
                   <div className="mb-1 flex items-center justify-between gap-2">
                     <div className="flex min-w-0 items-center gap-2">
                       <div className="flex size-4 shrink-0 items-center justify-center text-muted-foreground">
-                        <SourceFavicon endpoint={template.endpoint} kind={template.kind} className="size-4" />
+                        <SourceFavicon
+                          endpoint={template.endpoint}
+                          kind={template.kind}
+                          className="size-4"
+                        />
                       </div>
-                      <span className="truncate text-[13px] font-medium text-foreground">{template.name}</span>
+                      <span className="truncate text-[13px] font-medium text-foreground">
+                        {template.name}
+                      </span>
                     </div>
-                    <Badge variant="outline" className="text-[9px]">{template.kind}</Badge>
+                    <Badge variant="outline" className="text-[9px]">
+                      {template.kind}
+                    </Badge>
                   </div>
                   <span className="text-[11px] text-muted-foreground line-clamp-1">
                     {template.summary}
@@ -870,29 +1094,35 @@ function SourceEditor(props: { mode: "create" | "edit"; source?: Source }) {
               <Field label="Kind">
                 <SelectInput
                   value={formState.kind}
-                  onChange={(value) => setField("kind", value as Source["kind"])}
-                  options={kindOptions.map((value) => ({ value, label: value }))}
-                />
-              </Field>
-              <Field
-                label="Endpoint"
-                className="sm:col-span-2"
-              >
-                <TextInput
-                  value={formState.endpoint}
-                  onChange={(value) => setField("endpoint", value)}
-                  placeholder={
-                    formState.kind === "openapi"
-                      ? "https://api.github.com"
-                      : formState.kind === "graphql"
-                        ? "https://api.linear.app/graphql"
-                        : formState.kind === "google_discovery"
-                          ? "https://www.googleapis.com/discovery/v1/apis/sheets/v4/rest"
-                        : "https://mcp.deepwiki.com/mcp"
+                  onChange={(value) =>
+                    setField("kind", value as Source["kind"])
                   }
-                  mono
+                  options={kindOptions.map((value) => ({
+                    value,
+                    label: value,
+                  }))}
                 />
               </Field>
+              {!(
+                formState.kind === "mcp" && formState.transport === "stdio"
+              ) && (
+                <Field label="Endpoint" className="sm:col-span-2">
+                  <TextInput
+                    value={formState.endpoint}
+                    onChange={(value) => setField("endpoint", value)}
+                    placeholder={
+                      formState.kind === "openapi"
+                        ? "https://api.github.com"
+                        : formState.kind === "graphql"
+                          ? "https://api.linear.app/graphql"
+                          : formState.kind === "google_discovery"
+                            ? "https://www.googleapis.com/discovery/v1/apis/sheets/v4/rest"
+                            : "https://mcp.deepwiki.com/mcp"
+                    }
+                    mono
+                  />
+                </Field>
+              )}
               <Field label="Namespace">
                 <TextInput
                   value={formState.namespace}
@@ -915,26 +1145,70 @@ function SourceEditor(props: { mode: "create" | "edit"; source?: Source }) {
                 <Field label="Transport mode">
                   <SelectInput
                     value={formState.transport || "auto"}
-                    onChange={(value) => setField("transport", value as TransportValue)}
-                    options={transportOptions.map((value) => ({ value, label: value }))}
+                    onChange={(value) =>
+                      setField("transport", value as TransportValue)
+                    }
+                    options={transportOptions.map((value) => ({
+                      value,
+                      label: value,
+                    }))}
                   />
                 </Field>
-                <div className="sm:col-span-2 grid gap-4 sm:grid-cols-2">
-                  <Field label="Query params (JSON)">
-                    <CodeEditor
-                      value={formState.queryParamsText}
-                      onChange={(value) => setField("queryParamsText", value)}
-                      placeholder={'{\n  "workspace": "demo"\n}'}
-                    />
-                  </Field>
-                  <Field label="Headers (JSON)">
-                    <CodeEditor
-                      value={formState.headersText}
-                      onChange={(value) => setField("headersText", value)}
-                      placeholder={'{\n  "x-api-key": "..."\n}'}
-                    />
-                  </Field>
-                </div>
+                {formState.transport === "stdio" ? (
+                  <div className="sm:col-span-2 grid gap-4 sm:grid-cols-2">
+                    <Field label="Command">
+                      <TextInput
+                        value={formState.command}
+                        onChange={(value) => setField("command", value)}
+                        placeholder="npx"
+                        mono
+                      />
+                    </Field>
+                    <Field label="Working directory (optional)">
+                      <TextInput
+                        value={formState.cwd}
+                        onChange={(value) => setField("cwd", value)}
+                        placeholder="/path/to/project"
+                        mono
+                      />
+                    </Field>
+                    <Field label="Args (JSON)" className="sm:col-span-2">
+                      <CodeEditor
+                        value={formState.argsText}
+                        onChange={(value) => setField("argsText", value)}
+                        placeholder={
+                          '[\n  "-y",\n  "chrome-devtools-mcp@latest"\n]'
+                        }
+                      />
+                    </Field>
+                    <Field label="Environment (JSON)" className="sm:col-span-2">
+                      <CodeEditor
+                        value={formState.envText}
+                        onChange={(value) => setField("envText", value)}
+                        placeholder={
+                          '{\n  "CHROME_PATH": "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"\n}'
+                        }
+                      />
+                    </Field>
+                  </div>
+                ) : (
+                  <div className="sm:col-span-2 grid gap-4 sm:grid-cols-2">
+                    <Field label="Query params (JSON)">
+                      <CodeEditor
+                        value={formState.queryParamsText}
+                        onChange={(value) => setField("queryParamsText", value)}
+                        placeholder={'{\n  "workspace": "demo"\n}'}
+                      />
+                    </Field>
+                    <Field label="Headers (JSON)">
+                      <CodeEditor
+                        value={formState.headersText}
+                        onChange={(value) => setField("headersText", value)}
+                        placeholder={'{\n  "x-api-key": "..."\n}'}
+                      />
+                    </Field>
+                  </div>
+                )}
               </div>
             </Section>
           )}
@@ -1005,20 +1279,38 @@ function SourceEditor(props: { mode: "create" | "edit"; source?: Source }) {
 
           <Section title="Authentication">
             <div className="grid gap-4 sm:grid-cols-2">
-              {formState.kind === "mcp" && (
+              {formState.kind === "mcp" && formState.transport !== "stdio" && (
                 <div className="sm:col-span-2 rounded-xl border border-border bg-gradient-to-b from-card/90 to-card/50 overflow-hidden">
                   <div className="flex items-start gap-3 px-4 py-3.5">
                     <div className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-primary/8 text-primary mt-0.5">
-                      <svg className="size-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-                        <rect x="3" y="11" width="18" height="11" rx="2" ry="2" />
+                      <svg
+                        className="size-4"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth="1.5"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                      >
+                        <rect
+                          x="3"
+                          y="11"
+                          width="18"
+                          height="11"
+                          rx="2"
+                          ry="2"
+                        />
                         <path d="M7 11V7a5 5 0 0110 0v4" />
                       </svg>
                     </div>
                     <div className="flex-1 min-w-0 space-y-2">
                       <div className="space-y-0.5">
-                        <p className="text-[12px] font-medium text-foreground">MCP OAuth</p>
+                        <p className="text-[12px] font-medium text-foreground">
+                          MCP OAuth
+                        </p>
                         <p className="text-[11px] text-muted-foreground">
-                          Opens the server's built-in OAuth flow to authenticate this source.
+                          Opens the server's built-in OAuth flow to authenticate
+                          this source.
                         </p>
                       </div>
                       <Button
@@ -1026,155 +1318,219 @@ function SourceEditor(props: { mode: "create" | "edit"; source?: Source }) {
                         variant="outline"
                         size="sm"
                         onClick={handleMcpOAuthConnect}
-                        disabled={isSubmitting || isDeleting || isOAuthSubmitting}
+                        disabled={
+                          isSubmitting || isDeleting || isOAuthSubmitting
+                        }
                       >
-                        {isOAuthSubmitting ? <IconSpinner className="size-3" /> : null}
-                        {formState.authKind === "oauth2" && formState.oauthAccessHandle.trim().length > 0
+                        {isOAuthSubmitting ? (
+                          <IconSpinner className="size-3" />
+                        ) : null}
+                        {formState.authKind === "oauth2" &&
+                        formState.oauthAccessHandle.trim().length > 0
                           ? "Reconnect"
                           : "Sign in with OAuth"}
                       </Button>
                     </div>
                   </div>
-                  {formState.authKind === "oauth2" && formState.oauthAccessHandle.trim().length > 0 && (
-                    <div className="flex items-center justify-between gap-3 border-t border-border/50 px-4 py-2.5">
-                      <p className="text-[11px] text-muted-foreground/70">
-                        Token refs attached to this draft
-                      </p>
-                      <button
-                        type="button"
-                        className="text-[11px] font-medium text-muted-foreground/60 transition-colors hover:text-foreground"
-                        onClick={() =>
-                          setExpandedOauthSecretRefTarget((current) =>
-                            current === oauthSecretRefTarget ? null : oauthSecretRefTarget,
-                          )}
-                      >
-                        {showOauthSecretRefs ? "Hide refs" : "Show refs"}
-                      </button>
-                    </div>
-                  )}
+                  {formState.authKind === "oauth2" &&
+                    formState.oauthAccessHandle.trim().length > 0 && (
+                      <div className="flex items-center justify-between gap-3 border-t border-border/50 px-4 py-2.5">
+                        <p className="text-[11px] text-muted-foreground/70">
+                          Token refs attached to this draft
+                        </p>
+                        <button
+                          type="button"
+                          className="text-[11px] font-medium text-muted-foreground/60 transition-colors hover:text-foreground"
+                          onClick={() =>
+                            setExpandedOauthSecretRefTarget((current) =>
+                              current === oauthSecretRefTarget
+                                ? null
+                                : oauthSecretRefTarget,
+                            )
+                          }
+                        >
+                          {showOauthSecretRefs ? "Hide refs" : "Show refs"}
+                        </button>
+                      </div>
+                    )}
                 </div>
               )}
-              <Field label="Auth mode">
-                <SelectInput
-                  value={formState.authKind}
-                  onChange={(value) => setField("authKind", value as Source["auth"]["kind"])}
-                  disabled={formState.managedAuth !== null}
-                  options={authOptions.map((value) => ({ value, label: value }))}
-                />
-              </Field>
-              {formState.managedAuth !== null && (
-                <div className="sm:col-span-2 rounded-xl border border-border bg-gradient-to-b from-muted/40 to-transparent overflow-hidden">
-                  <div className="flex items-start gap-3 px-4 py-3.5">
-                    <div className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-primary/8 text-primary mt-0.5">
-                      {formState.managedAuth.kind === "provider_grant_ref" ? (
-                        <svg className="size-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-                          <path d="M10 13a5 5 0 007.54.54l3-3a5 5 0 00-7.07-7.07l-1.72 1.71" />
-                          <path d="M14 11a5 5 0 00-7.54-.54l-3 3a5 5 0 007.07 7.07l1.71-1.71" />
-                        </svg>
-                      ) : (
-                        <svg className="size-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-                          <rect x="3" y="11" width="18" height="11" rx="2" ry="2" />
-                          <path d="M7 11V7a5 5 0 0110 0v4" />
-                        </svg>
-                      )}
-                    </div>
-                    <div className="flex-1 min-w-0 space-y-1">
-                      <p className="text-[12px] font-medium text-foreground">
-                        {formState.managedAuth.kind === "provider_grant_ref"
-                          ? "Shared provider grant"
-                          : "Managed MCP OAuth"}
-                      </p>
-                      <p className="text-[11px] leading-relaxed text-muted-foreground">
-                        {formState.managedAuth.kind === "provider_grant_ref"
-                          ? "This source uses a shared Google auth grant. Reconnect from Add Source to change the linked account or scopes."
-                          : "Authenticated through a persisted MCP OAuth session. Reconnect the source to refresh or replace the binding."}
-                      </p>
-                    </div>
-                  </div>
-                  {formState.managedAuth.kind === "provider_grant_ref" && props.mode === "edit" && (
-                    <div className="flex items-center justify-end border-t border-border/50 px-4 py-2.5">
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="sm"
-                        className="text-destructive/70 hover:text-destructive hover:bg-destructive/8"
-                        onClick={handleRevokeProviderGrant}
-                        disabled={isRevokingGrant}
-                      >
-                        <IconTrash className="size-3" />
-                        {isRevokingGrant ? "Revoking\u2026" : "Revoke shared auth"}
-                      </Button>
-                    </div>
-                  )}
+              {formState.kind === "mcp" && formState.transport === "stdio" ? (
+                <div className="sm:col-span-2 rounded-xl border border-border bg-muted/40 px-4 py-3 text-[12px] text-muted-foreground">
+                  Local MCP stdio sources do not use executor-managed HTTP or
+                  OAuth credentials.
                 </div>
-              )}
-              {formState.authKind !== "none" && formState.managedAuth === null && (
-                <>
-                  <Field label="Header name">
-                    <TextInput
-                      value={formState.authHeaderName}
-                      onChange={(value) => setField("authHeaderName", value)}
-                      placeholder="Authorization"
-                    />
-                  </Field>
-                  <Field label="Prefix">
-                    <TextInput
-                      value={formState.authPrefix}
-                      onChange={(value) => setField("authPrefix", value)}
-                      placeholder="Bearer "
-                    />
-                  </Field>
-                </>
-              )}
-
-              {formState.authKind === "bearer" && formState.managedAuth === null && (
-                <Field label="Token" className="sm:col-span-2">
-                  <SecretPicker
-                    instanceConfig={instanceConfig}
-                    secrets={secrets}
-                    providerId={formState.bearerProviderId}
-                    handle={formState.bearerHandle}
-                    onSelect={(providerId, handle) => {
-                      setField("bearerProviderId", providerId);
-                      setField("bearerHandle", handle);
-                    }}
+              ) : (
+                <Field label="Auth mode">
+                  <SelectInput
+                    value={formState.authKind}
+                    onChange={(value) =>
+                      setField("authKind", value as Source["auth"]["kind"])
+                    }
+                    disabled={formState.managedAuth !== null}
+                    options={authOptions.map((value) => ({
+                      value,
+                      label: value,
+                    }))}
                   />
                 </Field>
               )}
+              {formState.managedAuth !== null &&
+                !(
+                  formState.kind === "mcp" && formState.transport === "stdio"
+                ) && (
+                  <div className="sm:col-span-2 rounded-xl border border-border bg-gradient-to-b from-muted/40 to-transparent overflow-hidden">
+                    <div className="flex items-start gap-3 px-4 py-3.5">
+                      <div className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-primary/8 text-primary mt-0.5">
+                        {formState.managedAuth.kind === "provider_grant_ref" ? (
+                          <svg
+                            className="size-4"
+                            viewBox="0 0 24 24"
+                            fill="none"
+                            stroke="currentColor"
+                            strokeWidth="1.5"
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                          >
+                            <path d="M10 13a5 5 0 007.54.54l3-3a5 5 0 00-7.07-7.07l-1.72 1.71" />
+                            <path d="M14 11a5 5 0 00-7.54-.54l-3 3a5 5 0 007.07 7.07l1.71-1.71" />
+                          </svg>
+                        ) : (
+                          <svg
+                            className="size-4"
+                            viewBox="0 0 24 24"
+                            fill="none"
+                            stroke="currentColor"
+                            strokeWidth="1.5"
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                          >
+                            <rect
+                              x="3"
+                              y="11"
+                              width="18"
+                              height="11"
+                              rx="2"
+                              ry="2"
+                            />
+                            <path d="M7 11V7a5 5 0 0110 0v4" />
+                          </svg>
+                        )}
+                      </div>
+                      <div className="flex-1 min-w-0 space-y-1">
+                        <p className="text-[12px] font-medium text-foreground">
+                          {formState.managedAuth.kind === "provider_grant_ref"
+                            ? "Shared provider grant"
+                            : "Managed MCP OAuth"}
+                        </p>
+                        <p className="text-[11px] leading-relaxed text-muted-foreground">
+                          {formState.managedAuth.kind === "provider_grant_ref"
+                            ? "This source uses a shared Google auth grant. Reconnect from Add Source to change the linked account or scopes."
+                            : "Authenticated through a persisted MCP OAuth session. Reconnect the source to refresh or replace the binding."}
+                        </p>
+                      </div>
+                    </div>
+                    {formState.managedAuth.kind === "provider_grant_ref" &&
+                      props.mode === "edit" && (
+                        <div className="flex items-center justify-end border-t border-border/50 px-4 py-2.5">
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="sm"
+                            className="text-destructive/70 hover:text-destructive hover:bg-destructive/8"
+                            onClick={handleRevokeProviderGrant}
+                            disabled={isRevokingGrant}
+                          >
+                            <IconTrash className="size-3" />
+                            {isRevokingGrant
+                              ? "Revoking\u2026"
+                              : "Revoke shared auth"}
+                          </Button>
+                        </div>
+                      )}
+                  </div>
+                )}
+              {formState.authKind !== "none" &&
+                formState.managedAuth === null &&
+                !(
+                  formState.kind === "mcp" && formState.transport === "stdio"
+                ) && (
+                  <>
+                    <Field label="Header name">
+                      <TextInput
+                        value={formState.authHeaderName}
+                        onChange={(value) => setField("authHeaderName", value)}
+                        placeholder="Authorization"
+                      />
+                    </Field>
+                    <Field label="Prefix">
+                      <TextInput
+                        value={formState.authPrefix}
+                        onChange={(value) => setField("authPrefix", value)}
+                        placeholder="Bearer "
+                      />
+                    </Field>
+                  </>
+                )}
 
-              {formState.authKind === "oauth2"
-                && formState.managedAuth === null
-                && (formState.kind !== "mcp"
-                  || formState.oauthAccessHandle.trim().length === 0
-                  || showOauthSecretRefs) && (
-                <>
-                  <Field label="Access token" className="sm:col-span-2">
+              {formState.authKind === "bearer" &&
+                formState.managedAuth === null &&
+                !(
+                  formState.kind === "mcp" && formState.transport === "stdio"
+                ) && (
+                  <Field label="Token" className="sm:col-span-2">
                     <SecretPicker
                       instanceConfig={instanceConfig}
                       secrets={secrets}
-                      providerId={formState.oauthAccessProviderId}
-                      handle={formState.oauthAccessHandle}
+                      providerId={formState.bearerProviderId}
+                      handle={formState.bearerHandle}
                       onSelect={(providerId, handle) => {
-                        setField("oauthAccessProviderId", providerId);
-                        setField("oauthAccessHandle", handle);
+                        setField("bearerProviderId", providerId);
+                        setField("bearerHandle", handle);
                       }}
                     />
                   </Field>
-                  <Field label="Refresh token (optional)" className="sm:col-span-2">
-                    <SecretPicker
-                      instanceConfig={instanceConfig}
-                      secrets={secrets}
-                      providerId={formState.oauthRefreshProviderId}
-                      handle={formState.oauthRefreshHandle}
-                      onSelect={(providerId, handle) => {
-                        setField("oauthRefreshProviderId", providerId);
-                        setField("oauthRefreshHandle", handle);
-                      }}
-                      allowEmpty
-                    />
-                  </Field>
-                </>
-              )}
+                )}
+
+              {formState.authKind === "oauth2" &&
+                formState.managedAuth === null &&
+                !(
+                  formState.kind === "mcp" && formState.transport === "stdio"
+                ) &&
+                (formState.kind !== "mcp" ||
+                  formState.oauthAccessHandle.trim().length === 0 ||
+                  showOauthSecretRefs) && (
+                  <>
+                    <Field label="Access token" className="sm:col-span-2">
+                      <SecretPicker
+                        instanceConfig={instanceConfig}
+                        secrets={secrets}
+                        providerId={formState.oauthAccessProviderId}
+                        handle={formState.oauthAccessHandle}
+                        onSelect={(providerId, handle) => {
+                          setField("oauthAccessProviderId", providerId);
+                          setField("oauthAccessHandle", handle);
+                        }}
+                      />
+                    </Field>
+                    <Field
+                      label="Refresh token (optional)"
+                      className="sm:col-span-2"
+                    >
+                      <SecretPicker
+                        instanceConfig={instanceConfig}
+                        secrets={secrets}
+                        providerId={formState.oauthRefreshProviderId}
+                        handle={formState.oauthRefreshHandle}
+                        onSelect={(providerId, handle) => {
+                          setField("oauthRefreshProviderId", providerId);
+                          setField("oauthRefreshHandle", handle);
+                        }}
+                        allowEmpty
+                      />
+                    </Field>
+                  </>
+                )}
             </div>
           </Section>
 
@@ -1196,10 +1552,19 @@ function SourceEditor(props: { mode: "create" | "edit"; source?: Source }) {
           {/* Actions */}
           <div className="flex items-center justify-end gap-3 border-t border-border pt-5">
             <Link {...backLink} className="inline-flex">
-              <Button variant="ghost" type="button">Cancel</Button>
+              <Button variant="ghost" type="button">
+                Cancel
+              </Button>
             </Link>
-            <Button onClick={handleSubmit} disabled={isSubmitting || isRevokingGrant}>
-              {props.mode === "edit" ? <IconPencil className="size-3.5" /> : <IconPlus className="size-3.5" />}
+            <Button
+              onClick={handleSubmit}
+              disabled={isSubmitting || isRevokingGrant}
+            >
+              {props.mode === "edit" ? (
+                <IconPencil className="size-3.5" />
+              ) : (
+                <IconPlus className="size-3.5" />
+              )}
               {isSubmitting
                 ? props.mode === "edit"
                   ? "Saving\u2026"
@@ -1219,9 +1584,18 @@ function SourceEditor(props: { mode: "create" | "edit"; source?: Source }) {
 // Form building blocks
 // ---------------------------------------------------------------------------
 
-function Section(props: { title: string; children: ReactNode; className?: string }) {
+function Section(props: {
+  title: string;
+  children: ReactNode;
+  className?: string;
+}) {
   return (
-    <section className={cn("rounded-xl border border-border bg-card/80", props.className)}>
+    <section
+      className={cn(
+        "rounded-xl border border-border bg-card/80",
+        props.className,
+      )}
+    >
       <div className="border-b border-border px-5 py-3">
         <h2 className="text-sm font-semibold text-foreground">{props.title}</h2>
       </div>
@@ -1237,7 +1611,9 @@ function Field(props: {
 }) {
   return (
     <label className={cn("block space-y-1.5", props.className)}>
-      <span className="text-[12px] font-medium text-foreground">{props.label}</span>
+      <span className="text-[12px] font-medium text-foreground">
+        {props.label}
+      </span>
       {props.children}
     </label>
   );
@@ -1300,7 +1676,10 @@ function CodeEditor(props: {
   );
 }
 
-function ToggleButton(props: { checked: boolean; onChange: (checked: boolean) => void }) {
+function ToggleButton(props: {
+  checked: boolean;
+  onChange: (checked: boolean) => void;
+}) {
   return (
     <button
       type="button"
@@ -1328,9 +1707,12 @@ function StatusBanner(props: { state: StatusBannerState; className?: string }) {
     <div
       className={cn(
         "rounded-lg border px-4 py-3 text-[13px]",
-        props.state.tone === "success" && "border-primary/30 bg-primary/8 text-foreground",
-        props.state.tone === "info" && "border-border bg-card text-muted-foreground",
-        props.state.tone === "error" && "border-destructive/30 bg-destructive/8 text-destructive",
+        props.state.tone === "success" &&
+          "border-primary/30 bg-primary/8 text-foreground",
+        props.state.tone === "info" &&
+          "border-border bg-card text-muted-foreground",
+        props.state.tone === "error" &&
+          "border-destructive/30 bg-destructive/8 text-destructive",
         props.className,
       )}
     >
@@ -1349,7 +1731,8 @@ function SecretPicker(props: {
   onSelect: (providerId: string, handle: string) => void;
   allowEmpty?: boolean;
 }) {
-  const { instanceConfig, secrets, providerId, handle, onSelect, allowEmpty } = props;
+  const { instanceConfig, secrets, providerId, handle, onSelect, allowEmpty } =
+    props;
   const createSecret = useCreateSecret();
   const [showCreate, setShowCreate] = useState(false);
   const [newName, setNewName] = useState("");
@@ -1358,7 +1741,9 @@ function SecretPicker(props: {
   const [createError, setCreateError] = useState<string | null>(null);
   const storableProviders =
     instanceConfig.status === "ready"
-      ? instanceConfig.data.secretProviders.filter((provider) => provider.canStore)
+      ? instanceConfig.data.secretProviders.filter(
+          (provider) => provider.canStore,
+        )
       : [];
 
   useEffect(() => {
@@ -1390,9 +1775,10 @@ function SecretPicker(props: {
       onSelect("", "");
       return;
     }
-    const matchedSecret = secrets.status === "ready"
-      ? secrets.data.find((secret) => secret.id === value)
-      : null;
+    const matchedSecret =
+      secrets.status === "ready"
+        ? secrets.data.find((secret) => secret.id === value)
+        : null;
     onSelect(matchedSecret?.providerId ?? "local", value);
   };
 
@@ -1417,7 +1803,9 @@ function SecretPicker(props: {
       onSelect(result.providerId, result.id);
       setShowCreate(false);
     } catch (err) {
-      setCreateError(err instanceof Error ? err.message : "Failed creating secret.");
+      setCreateError(
+        err instanceof Error ? err.message : "Failed creating secret.",
+      );
     }
   };
 
@@ -1446,7 +1834,9 @@ function SecretPicker(props: {
         className="h-9 w-full rounded-lg border border-input bg-background px-3 text-[13px] text-foreground outline-none transition-colors focus:border-ring focus:ring-1 focus:ring-ring/25"
       >
         {allowEmpty && <option value="">None</option>}
-        {!allowEmpty && !selectedValue && <option value="">Select a secret…</option>}
+        {!allowEmpty && !selectedValue && (
+          <option value="">Select a secret…</option>
+        )}
         {items.map((secret) => (
           <option key={secret.id} value={secret.id}>
             {secret.name || secret.id} ({secret.providerId})
@@ -1469,7 +1859,9 @@ function SecretPicker(props: {
           )}
           <div className="grid gap-3 sm:grid-cols-2">
             <label className="block space-y-1">
-              <span className="text-[11px] font-medium text-muted-foreground">Name</span>
+              <span className="text-[11px] font-medium text-muted-foreground">
+                Name
+              </span>
               <input
                 value={newName}
                 onChange={(e) => setNewName(e.target.value)}
@@ -1479,7 +1871,9 @@ function SecretPicker(props: {
               />
             </label>
             <label className="block space-y-1">
-              <span className="text-[11px] font-medium text-muted-foreground">Value</span>
+              <span className="text-[11px] font-medium text-muted-foreground">
+                Value
+              </span>
               <input
                 type="password"
                 value={newValue}
@@ -1489,7 +1883,9 @@ function SecretPicker(props: {
               />
             </label>
             <label className="block space-y-1">
-              <span className="text-[11px] font-medium text-muted-foreground">Store in</span>
+              <span className="text-[11px] font-medium text-muted-foreground">
+                Store in
+              </span>
               <select
                 value={newProviderId}
                 onChange={(e) => setNewProviderId(e.target.value)}
@@ -1516,7 +1912,9 @@ function SecretPicker(props: {
               onClick={handleCreate}
               disabled={createSecret.status === "pending"}
             >
-              {createSecret.status === "pending" && <IconSpinner className="size-3" />}
+              {createSecret.status === "pending" && (
+                <IconSpinner className="size-3" />
+              )}
               Store & use
             </Button>
           </div>

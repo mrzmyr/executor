@@ -2,33 +2,71 @@ import type { OAuthClientProvider } from "@modelcontextprotocol/sdk/client/auth.
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { SSEClientTransport } from "@modelcontextprotocol/sdk/client/sse.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
+import * as Data from "effect/Data";
+import * as Effect from "effect/Effect";
 
 import type { McpConnection, McpConnector } from "./tools";
 
-export type McpTransportPreference = "auto" | "streamable-http" | "sse";
+export type McpTransportPreference = "auto" | "streamable-http" | "sse" | "stdio";
 
 export type CreateSdkMcpConnectorInput = {
-  endpoint: string;
+  endpoint?: string;
   transport?: McpTransportPreference;
   queryParams?: Record<string, string>;
   headers?: Record<string, string>;
   authProvider?: OAuthClientProvider;
   clientName?: string;
   clientVersion?: string;
+  command?: string;
+  args?: ReadonlyArray<string>;
+  env?: Record<string, string>;
+  cwd?: string;
 };
 
-const createEndpoint = (
-  endpoint: string,
-  queryParams: Record<string, string>,
-): URL => {
-  const url = new URL(endpoint);
+export class McpConnectionError extends Data.TaggedError("McpConnectionError")<{
+  readonly transport: McpTransportPreference;
+  readonly message: string;
+  readonly cause: unknown;
+}> {}
 
-  for (const [key, value] of Object.entries(queryParams)) {
-    url.searchParams.set(key, value);
-  }
+export const isMcpStdioTransport = (
+  input: Pick<CreateSdkMcpConnectorInput, "transport" | "command">,
+): boolean =>
+  input.transport === "stdio"
+  || (typeof input.command === "string" && input.command.trim().length > 0);
 
-  return url;
-};
+const mcpConnectionError = (input: {
+  transport: McpTransportPreference;
+  message: string;
+  cause: unknown;
+}): McpConnectionError => new McpConnectionError(input);
+
+const createEndpoint = (input: {
+  endpoint: string | undefined;
+  queryParams: Record<string, string>;
+  transport: Exclude<McpTransportPreference, "stdio">;
+}): Effect.Effect<URL, McpConnectionError, never> =>
+  Effect.try({
+    try: () => {
+      if (!input.endpoint) {
+        throw new Error("MCP endpoint is required for HTTP/SSE transports");
+      }
+
+      const url = new URL(input.endpoint);
+
+      for (const [key, value] of Object.entries(input.queryParams)) {
+        url.searchParams.set(key, value);
+      }
+
+      return url;
+    },
+    catch: (cause) =>
+      mcpConnectionError({
+        transport: input.transport,
+        message: "Failed building MCP endpoint URL",
+        cause,
+      }),
+  });
 
 type FetchInput = Parameters<typeof fetch>[0];
 type FetchInit = Parameters<typeof fetch>[1];
@@ -55,12 +93,72 @@ const connectionFromClient = (client: Client): McpConnection => ({
   close: () => client.close(),
 });
 
+const closeClient = (client: Client): Effect.Effect<void, never, never> =>
+  Effect.tryPromise({
+    try: () => client.close(),
+    catch: (cause) =>
+      mcpConnectionError({
+        transport: "auto",
+        message: "Failed closing MCP client",
+        cause,
+      }),
+  }).pipe(Effect.ignore);
+
+type DynamicImport = <TModule>(specifier: string) => Promise<TModule>;
+
+const dynamicImport = new Function(
+  "specifier",
+  "return import(specifier)",
+) as DynamicImport;
+
+const loadStdioClientTransport = (): Effect.Effect<
+  typeof import("@modelcontextprotocol/sdk/client/stdio.js").StdioClientTransport,
+  McpConnectionError,
+  never
+> =>
+  Effect.tryPromise({
+    try: async () =>
+      (await dynamicImport<typeof import("@modelcontextprotocol/sdk/client/stdio.js")>(
+        "@modelcontextprotocol/sdk/client/stdio.js",
+      )).StdioClientTransport,
+    catch: (cause) =>
+      mcpConnectionError({
+        transport: "stdio",
+        message: "Failed loading MCP stdio transport",
+        cause,
+      }),
+  });
+
+const connectClient = (input: {
+  createClient: () => Client;
+  transport: McpTransportPreference;
+  createTransport: () => Parameters<Client["connect"]>[0];
+}): Effect.Effect<McpConnection, McpConnectionError, never> =>
+  Effect.gen(function* () {
+    const client = input.createClient();
+    const transportInstance = input.createTransport();
+
+    return yield* Effect.tryPromise({
+      try: () => client.connect(transportInstance),
+      catch: (cause) =>
+        mcpConnectionError({
+          transport: input.transport,
+          message: `Failed connecting to MCP server via ${input.transport}`,
+          cause,
+        }),
+    }).pipe(
+      Effect.as(connectionFromClient(client)),
+      Effect.onError(() => closeClient(client)),
+    );
+  });
+
 export const createSdkMcpConnector = (
   input: CreateSdkMcpConnectorInput,
 ): McpConnector => {
-  const endpoint = createEndpoint(input.endpoint, input.queryParams ?? {});
   const headers = input.headers ?? {};
-  const transport = input.transport ?? "auto";
+  const transport = isMcpStdioTransport(input)
+    ? "stdio"
+    : (input.transport ?? "auto");
   const requestInit = Object.keys(headers).length > 0
     ? { headers }
     : undefined;
@@ -74,49 +172,75 @@ export const createSdkMcpConnector = (
       { capabilities: { elicitation: { form: {}, url: {} } } },
     );
 
-  return async () => {
-    const client = createClient();
+  return Effect.gen(function* () {
+    if (transport === "stdio") {
+      const command = input.command?.trim();
+      if (!command) {
+        return yield* Effect.fail(
+          mcpConnectionError({
+            transport: "stdio",
+            message: "MCP stdio transport requires a command",
+            cause: new Error("Missing MCP stdio command"),
+          }),
+        );
+      }
+
+      const StdioClientTransport = yield* loadStdioClientTransport();
+      return yield* connectClient({
+        createClient,
+        transport: "stdio",
+        createTransport: () =>
+          new StdioClientTransport({
+            command,
+            args: input.args ? [...input.args] : undefined,
+            env: input.env,
+            cwd: input.cwd?.trim().length ? input.cwd.trim() : undefined,
+          }),
+      });
+    }
+
+    const endpoint = yield* createEndpoint({
+      endpoint: input.endpoint,
+      queryParams: input.queryParams ?? {},
+      transport,
+    });
+
+    const connectStreamableHttp = connectClient({
+      createClient,
+      transport: "streamable-http",
+      createTransport: () =>
+        new StreamableHTTPClientTransport(endpoint, {
+          requestInit,
+          authProvider: input.authProvider,
+        }),
+    });
 
     if (transport === "streamable-http") {
-      await client.connect(new StreamableHTTPClientTransport(endpoint, {
-        requestInit,
-        authProvider: input.authProvider,
-      }));
-      return connectionFromClient(client);
+      return yield* connectStreamableHttp;
     }
+
+    const connectSse = connectClient({
+      createClient,
+      transport: "sse",
+      createTransport: () =>
+        new SSEClientTransport(endpoint, {
+          authProvider: input.authProvider,
+          requestInit,
+          eventSourceInit: requestInit
+            ? {
+                fetch: (requestInput: FetchInput, requestOptions: FetchInit) =>
+                  mergeHeadersForFetch(requestInput, requestOptions, headers),
+              }
+            : undefined,
+        }),
+    });
 
     if (transport === "sse") {
-      await client.connect(new SSEClientTransport(endpoint, {
-        authProvider: input.authProvider,
-        requestInit,
-        eventSourceInit: requestInit
-          ? {
-              fetch: (requestInput: FetchInput, requestOptions: FetchInit) =>
-                mergeHeadersForFetch(requestInput, requestOptions, headers),
-            }
-          : undefined,
-      }));
-      return connectionFromClient(client);
+      return yield* connectSse;
     }
 
-    try {
-      await client.connect(new StreamableHTTPClientTransport(endpoint, {
-        requestInit,
-        authProvider: input.authProvider,
-      }));
-      return connectionFromClient(client);
-    } catch {
-      await client.connect(new SSEClientTransport(endpoint, {
-        authProvider: input.authProvider,
-        requestInit,
-        eventSourceInit: requestInit
-          ? {
-              fetch: (requestInput: FetchInput, requestOptions: FetchInit) =>
-                mergeHeadersForFetch(requestInput, requestOptions, headers),
-            }
-          : undefined,
-      }));
-      return connectionFromClient(client);
-    }
-  };
+    return yield* connectStreamableHttp.pipe(
+      Effect.catchAll(() => connectSse),
+    );
+  });
 };

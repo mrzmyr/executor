@@ -165,10 +165,10 @@ const createSyntheticMcpStdioEndpoint = (input: {
   command?: string | null;
 }): string => {
   const label =
-    trimOrNull(input.name)
-    ?? trimOrNull(input.endpoint)
-    ?? trimOrNull(input.command)
-    ?? "mcp";
+    trimOrNull(input.name) ??
+    trimOrNull(input.endpoint) ??
+    trimOrNull(input.command) ??
+    "mcp";
 
   return `stdio://local/${slugifySourceLabel(label)}`;
 };
@@ -287,20 +287,15 @@ const probeMcpSourceWithoutAuth = (
     }
     const bindingState = yield* sourceBindingStateFromSource(source);
 
-    const connector = yield* Effect.try({
-      try: () =>
-        createSdkMcpConnector({
-          endpoint: source.endpoint,
-          transport: bindingState.transport ?? undefined,
-          queryParams: bindingState.queryParams ?? undefined,
-          headers: bindingState.headers ?? undefined,
-          command: bindingState.command ?? undefined,
-          args: bindingState.args ?? undefined,
-          env: bindingState.env ?? undefined,
-          cwd: bindingState.cwd ?? undefined,
-        }),
-      catch: (cause) =>
-        cause instanceof Error ? cause : new Error(String(cause)),
+    const connector = createSdkMcpConnector({
+      endpoint: source.endpoint,
+      transport: bindingState.transport ?? undefined,
+      queryParams: bindingState.queryParams ?? undefined,
+      headers: bindingState.headers ?? undefined,
+      command: bindingState.command ?? undefined,
+      args: bindingState.args ?? undefined,
+      env: bindingState.env ?? undefined,
+      cwd: bindingState.cwd ?? undefined,
     });
 
     return yield* discoverMcpToolsFromConnector({
@@ -1647,6 +1642,14 @@ const connectMcpSourceInternal = (input: {
   resolveSecretMaterial: ResolveSecretMaterial;
 }): Effect.Effect<McpSourceConnectResult, Error, WorkspaceStorageServices> =>
   Effect.gen(function* () {
+    const lookupEndpoint = input.sourceId
+      ? null
+      : normalizeMcpEndpoint({
+          endpoint: input.endpoint ?? null,
+          transport: input.transport ?? null,
+          command: input.command ?? null,
+          name: input.name ?? null,
+        });
     const existing = yield* (
       input.sourceId
         ? input.sourceStore.loadSourceById({
@@ -1667,7 +1670,8 @@ const connectMcpSourceInternal = (input: {
               sources.find(
                 (source) =>
                   sourceAdapterRequiresInteractiveConnect(source.kind)
-                  && normalizeEndpoint(source.endpoint) === normalizedEndpoint,
+                  && lookupEndpoint !== null
+                  && normalizeEndpoint(source.endpoint) === lookupEndpoint,
               ),
             ),
           )

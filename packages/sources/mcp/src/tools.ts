@@ -53,7 +53,7 @@ export type McpConnection = {
   close?: () => Promise<void>;
 };
 
-export type McpConnector = () => Promise<McpConnection>;
+export type McpConnector = Effect.Effect<McpConnection, unknown, never>;
 
 export type McpDiscoveryElicitationContext = {
   onElicitation: NonNullable<ToolExecutionContext["onElicitation"]>;
@@ -127,10 +127,7 @@ const withConnectionEffect = <A, E>(input: {
   run: (connection: McpConnection) => Effect.Effect<A, E>;
 }): Effect.Effect<A, E | McpToolsError> =>
   Effect.acquireUseRelease(
-    Effect.tryPromise({
-      try: input.connect,
-      catch: input.onConnectError,
-    }),
+    input.connect.pipe(Effect.mapError(input.onConnectError)),
     input.run,
     closeConnection,
   );
@@ -447,7 +444,7 @@ const runMcpToolCallEffect = (input: {
 export const createMcpConnectorFromClient = (
   client: McpClientLike,
 ): McpConnector =>
-  async () => ({
+  Effect.succeed({
     client,
     close: async () => undefined,
   });

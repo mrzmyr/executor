@@ -1,7 +1,15 @@
 export {
+  clearAllMcpConnectionPools,
+  clearMcpConnectionPoolRun,
+  createPooledMcpConnector,
+  McpConnectionPoolError,
+} from "./connection-pool";
+export {
   createSdkMcpConnector,
   type CreateSdkMcpConnectorInput,
+  McpConnectionError,
   type McpTransportPreference,
+  isMcpStdioTransport,
 } from "./connection";
 export { detectMcpSource } from "./discovery";
 export { McpLocalConfigBindingSchema } from "./local-config";

@@ -244,24 +244,28 @@ const makeMcpExecutionResolver = (
   ({ onElicitation }) =>
     (Effect.gen(function* () {
       const discovered = yield* discoverMcpToolsFromConnector({
-        connect: async () => {
-          const client = new Client(
-            {
-              name: "control-plane-mcp-execution-client",
-              version: "1.0.0",
-            },
-            { capabilities: { elicitation: { form: {} } } },
-          );
-          const transport = new StreamableHTTPClientTransport(new URL(endpoint));
-          await client.connect(transport);
+        connect: Effect.tryPromise({
+          try: async () => {
+            const client = new Client(
+              {
+                name: "control-plane-mcp-execution-client",
+                version: "1.0.0",
+              },
+              { capabilities: { elicitation: { form: {} } } },
+            );
+            const transport = new StreamableHTTPClientTransport(new URL(endpoint));
+            await client.connect(transport);
 
-          return {
-            client,
-            close: async () => {
-              await client.close();
-            },
-          };
-        },
+            return {
+              client,
+              close: async () => {
+                await client.close();
+              },
+            };
+          },
+          catch: (cause) =>
+            cause instanceof Error ? cause : new Error(String(cause)),
+        }),
         namespace: "source.form",
         sourceKey: "mcp.form",
       });

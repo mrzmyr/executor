@@ -32,13 +32,21 @@ const graphqlBinding = (defaultHeaders: Record<string, string> | null = null) =>
 });
 
 const mcpBinding = (input: {
-  transport?: "auto" | "streamable-http" | "sse" | null;
+  transport?: "auto" | "streamable-http" | "sse" | "stdio" | null;
   queryParams?: Record<string, string> | null;
   headers?: Record<string, string> | null;
+  command?: string | null;
+  args?: ReadonlyArray<string> | null;
+  env?: Record<string, string> | null;
+  cwd?: string | null;
 } = {}) => ({
   transport: input.transport ?? null,
   queryParams: input.queryParams ?? null,
   headers: input.headers ?? null,
+  command: input.command ?? null,
+  args: input.args ?? null,
+  env: input.env ?? null,
+  cwd: input.cwd ?? null,
 });
 
 const makeSource = (overrides: Partial<Source> = {}): Source => ({

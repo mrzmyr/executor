@@ -26,6 +26,7 @@ export const SourceTransportSchema = Schema.Literal(
   "auto",
   "streamable-http",
   "sse",
+  "stdio",
 );
 
 export const SourceImportAuthPolicySchema = Schema.Literal(
@@ -38,6 +39,8 @@ export const StringMapSchema = Schema.Record({
   key: Schema.String,
   value: Schema.String,
 });
+
+export const StringArraySchema = Schema.Array(Schema.String);
 
 export type JsonValue =
   | string
@@ -177,6 +180,7 @@ export type SourceStatus = typeof SourceStatusSchema.Type;
 export type SourceTransport = typeof SourceTransportSchema.Type;
 export type SourceImportAuthPolicy = typeof SourceImportAuthPolicySchema.Type;
 export type StringMap = typeof StringMapSchema.Type;
+export type StringArray = typeof StringArraySchema.Type;
 export type SourceAuth = typeof SourceAuthSchema.Type;
 export type SourceBinding = typeof SourceBindingSchema.Type;
 export type Source = typeof SourceSchema.Type;

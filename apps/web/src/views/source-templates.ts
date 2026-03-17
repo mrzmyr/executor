@@ -1,13 +1,22 @@
-import type { Source } from "@executor/react";
-
 type SourceTemplateBase = {
   id: string;
   name: string;
   summary: string;
-  endpoint: string;
+  endpoint?: string;
+  namespace?: string;
   groupId?: string;
   groupLabel?: string;
   batchable?: boolean;
+};
+
+export type McpSourceTemplate = SourceTemplateBase & {
+  kind: "mcp";
+  connectionType?: "endpoint" | "command";
+  transport?: "auto" | "streamable-http" | "sse" | "stdio";
+  command?: string;
+  args?: ReadonlyArray<string>;
+  env?: Record<string, string>;
+  cwd?: string;
 };
 
 export type OpenApiSourceTemplate = SourceTemplateBase & {
@@ -22,14 +31,22 @@ export type GoogleDiscoverySourceTemplate = SourceTemplateBase & {
   discoveryUrl: string;
 };
 
-export type NonOpenApiSourceTemplate = SourceTemplateBase & {
-  kind: Exclude<Source["kind"], "openapi" | "google_discovery" | "internal">;
+export type GraphqlSourceTemplate = SourceTemplateBase & {
+  kind: "graphql";
 };
 
 export type SourceTemplate =
+  | McpSourceTemplate
   | OpenApiSourceTemplate
   | GoogleDiscoverySourceTemplate
-  | NonOpenApiSourceTemplate;
+  | GraphqlSourceTemplate;
+
+export const isStdioMcpSourceTemplate = (
+  template: SourceTemplate,
+): template is McpSourceTemplate & { transport: "stdio" } =>
+  template.kind === "mcp" &&
+  template.connectionType === "command" &&
+  template.transport === "stdio";
 
 const googleDiscoveryUrl = (service: string, version: string): string =>
   `https://www.googleapis.com/discovery/v1/apis/${encodeURIComponent(service)}/${encodeURIComponent(version)}/rest`;
@@ -42,7 +59,8 @@ const googleDiscoveryTemplate = (input: {
   version: string;
   discoveryUrl?: string;
 }): GoogleDiscoverySourceTemplate => {
-  const discoveryUrl = input.discoveryUrl ?? googleDiscoveryUrl(input.service, input.version);
+  const discoveryUrl =
+    input.discoveryUrl ?? googleDiscoveryUrl(input.service, input.version);
   return {
     id: input.id,
     name: input.name,
@@ -81,6 +99,18 @@ export const sourceTemplates: ReadonlyArray<SourceTemplate> = [
     endpoint: "https://mcp.neon.tech/mcp",
   },
   {
+    id: "chrome-devtools-mcp",
+    name: "Chrome DevTools MCP",
+    summary:
+      "Debug a live Chrome browser session over a local MCP stdio transport.",
+    kind: "mcp",
+    namespace: "chrome.devtools",
+    connectionType: "command",
+    transport: "stdio",
+    command: "npx",
+    args: ["-y", "chrome-devtools-mcp@latest"],
+  },
+  {
     id: "neon-api",
     name: "Neon API",
     summary: "Projects, branches, endpoints, databases, and API keys.",
@@ -94,7 +124,8 @@ export const sourceTemplates: ReadonlyArray<SourceTemplate> = [
     summary: "Repos, issues, pull requests, actions, and org settings.",
     kind: "openapi",
     endpoint: "https://api.github.com",
-    specUrl: "https://raw.githubusercontent.com/github/rest-api-description/main/descriptions/api.github.com/api.github.com.yaml",
+    specUrl:
+      "https://raw.githubusercontent.com/github/rest-api-description/main/descriptions/api.github.com/api.github.com.yaml",
     groupId: "github",
     groupLabel: "GitHub",
     batchable: false,
@@ -102,7 +133,8 @@ export const sourceTemplates: ReadonlyArray<SourceTemplate> = [
   {
     id: "github-graphql",
     name: "GitHub GraphQL",
-    summary: "Issues, pull requests, discussions, and repository objects via GraphQL.",
+    summary:
+      "Issues, pull requests, discussions, and repository objects via GraphQL.",
     kind: "graphql",
     endpoint: "https://api.github.com/graphql",
     groupId: "github",
@@ -122,7 +154,8 @@ export const sourceTemplates: ReadonlyArray<SourceTemplate> = [
     summary: "Models, files, responses, and fine-tuning.",
     kind: "openapi",
     endpoint: "https://api.openai.com/v1",
-    specUrl: "https://app.stainless.com/api/spec/documented/openai/openapi.documented.yml",
+    specUrl:
+      "https://app.stainless.com/api/spec/documented/openai/openapi.documented.yml",
   },
   {
     id: "vercel-api",
@@ -138,7 +171,8 @@ export const sourceTemplates: ReadonlyArray<SourceTemplate> = [
     summary: "Payments, billing, subscriptions, and invoices.",
     kind: "openapi",
     endpoint: "https://api.stripe.com",
-    specUrl: "https://raw.githubusercontent.com/stripe/openapi/master/openapi/spec3.json",
+    specUrl:
+      "https://raw.githubusercontent.com/stripe/openapi/master/openapi/spec3.json",
   },
   {
     id: "linear-graphql",
@@ -167,7 +201,8 @@ export const sourceTemplates: ReadonlyArray<SourceTemplate> = [
     summary: "Calendars, events, ACLs, and scheduling workflows.",
     service: "calendar",
     version: "v3",
-    discoveryUrl: "https://calendar-json.googleapis.com/$discovery/rest?version=v3",
+    discoveryUrl:
+      "https://calendar-json.googleapis.com/$discovery/rest?version=v3",
   }),
   googleDiscoveryTemplate({
     id: "google-drive",
@@ -219,10 +254,12 @@ export const sourceTemplates: ReadonlyArray<SourceTemplate> = [
   googleDiscoveryTemplate({
     id: "google-search-console",
     name: "Google Search Console",
-    summary: "Sites, sitemaps, URL inspection, and search and Discover performance.",
+    summary:
+      "Sites, sitemaps, URL inspection, and search and Discover performance.",
     service: "searchconsole",
     version: "v1",
-    discoveryUrl: "https://searchconsole.googleapis.com/$discovery/rest?version=v1",
+    discoveryUrl:
+      "https://searchconsole.googleapis.com/$discovery/rest?version=v1",
   }),
   googleDiscoveryTemplate({
     id: "google-people",
@@ -270,7 +307,8 @@ export const sourceTemplates: ReadonlyArray<SourceTemplate> = [
     summary: "Users, groups, org units, roles, and domain directory resources.",
     service: "admin",
     version: "directory_v1",
-    discoveryUrl: "https://admin.googleapis.com/$discovery/rest?version=directory_v1",
+    discoveryUrl:
+      "https://admin.googleapis.com/$discovery/rest?version=directory_v1",
   }),
   googleDiscoveryTemplate({
     id: "google-admin-reports",
@@ -278,12 +316,14 @@ export const sourceTemplates: ReadonlyArray<SourceTemplate> = [
     summary: "Audit events, usage reports, and admin activity logs.",
     service: "admin",
     version: "reports_v1",
-    discoveryUrl: "https://admin.googleapis.com/$discovery/rest?version=reports_v1",
+    discoveryUrl:
+      "https://admin.googleapis.com/$discovery/rest?version=reports_v1",
   }),
   googleDiscoveryTemplate({
     id: "google-apps-script",
     name: "Google Apps Script",
-    summary: "Projects, deployments, script execution, and Apps Script metadata.",
+    summary:
+      "Projects, deployments, script execution, and Apps Script metadata.",
     service: "script",
     version: "v1",
     discoveryUrl: "https://script.googleapis.com/$discovery/rest?version=v1",
@@ -291,7 +331,8 @@ export const sourceTemplates: ReadonlyArray<SourceTemplate> = [
   googleDiscoveryTemplate({
     id: "google-bigquery",
     name: "Google BigQuery",
-    summary: "Datasets, tables, jobs, routines, and analytical query workflows.",
+    summary:
+      "Datasets, tables, jobs, routines, and analytical query workflows.",
     service: "bigquery",
     version: "v2",
     discoveryUrl: "https://bigquery.googleapis.com/$discovery/rest?version=v2",
@@ -299,10 +340,12 @@ export const sourceTemplates: ReadonlyArray<SourceTemplate> = [
   googleDiscoveryTemplate({
     id: "google-cloud-resource-manager",
     name: "Google Cloud Resource Manager",
-    summary: "Projects, folders, organizations, and IAM-oriented resource hierarchy.",
+    summary:
+      "Projects, folders, organizations, and IAM-oriented resource hierarchy.",
     service: "cloudresourcemanager",
     version: "v3",
-    discoveryUrl: "https://cloudresourcemanager.googleapis.com/$discovery/rest?version=v3",
+    discoveryUrl:
+      "https://cloudresourcemanager.googleapis.com/$discovery/rest?version=v3",
   }),
   googleDiscoveryTemplate({
     id: "google-youtube-data",

@@ -335,6 +335,233 @@ const makeAuthenticatedMcpServer = (expectedAuthorization: string) =>
       }).pipe(Effect.orDie),
   );
 
+const makeStatefulMcpServer = Effect.acquireRelease(
+  Effect.promise<RealMcpServer>(
+    () =>
+      new Promise<RealMcpServer>((resolve, reject) => {
+        const transports: Record<string, StreamableHTTPServerTransport> = {};
+        const servers: Record<string, McpServer> = {};
+
+        const createServer = () => {
+          let counter = 0;
+          const mcp = new McpServer(
+            {
+              name: "mcp-stateful-test-server",
+              version: "1.0.0",
+            },
+            {
+              capabilities: {
+                tools: {
+                  listChanged: true,
+                },
+              },
+            },
+          );
+
+          mcp.registerTool(
+            "increment_session",
+            {
+              title: "Increment Session",
+              description: "Increment session state",
+              inputSchema: {},
+            },
+            async () => {
+              counter += 1;
+              return {
+                content: [{
+                  type: "text",
+                  text: String(counter),
+                }],
+              };
+            },
+          );
+
+          mcp.registerTool(
+            "read_session",
+            {
+              title: "Read Session",
+              description: "Read current session state",
+              inputSchema: {},
+            },
+            async () => ({
+              content: [{
+                type: "text",
+                text: String(counter),
+              }],
+            }),
+          );
+
+          return mcp;
+        };
+
+        const app = createMcpExpressApp({ host: "127.0.0.1" });
+
+        app.post("/mcp", async (req: any, res: any) => {
+          const sessionIdHeader = req.headers["mcp-session-id"];
+          const sessionId =
+            typeof sessionIdHeader === "string"
+              ? sessionIdHeader
+              : Array.isArray(sessionIdHeader)
+                ? sessionIdHeader[0]
+                : undefined;
+
+          try {
+            let transport: StreamableHTTPServerTransport;
+
+            if (sessionId && transports[sessionId]) {
+              transport = transports[sessionId];
+            } else {
+              transport = new StreamableHTTPServerTransport({
+                sessionIdGenerator: () => randomUUID(),
+                onsessioninitialized: (newSessionId) => {
+                  transports[newSessionId] = transport;
+                },
+              });
+
+              transport.onclose = () => {
+                const closedSessionId = transport.sessionId;
+                if (closedSessionId && transports[closedSessionId]) {
+                  delete transports[closedSessionId];
+                }
+                if (closedSessionId && servers[closedSessionId]) {
+                  void servers[closedSessionId].close().catch(() => undefined);
+                  delete servers[closedSessionId];
+                }
+              };
+
+              const server = createServer();
+              await server.connect(transport);
+              const newSessionId = transport.sessionId;
+              if (newSessionId) {
+                servers[newSessionId] = server;
+              }
+            }
+
+            await transport.handleRequest(req, res, req.body);
+          } catch (error) {
+            if (!res.headersSent) {
+              res.status(500).json({
+                jsonrpc: "2.0",
+                error: {
+                  code: -32603,
+                  message: error instanceof Error ? error.message : "Internal server error",
+                },
+                id: null,
+              });
+            }
+          }
+        });
+
+        app.get("/mcp", async (req: any, res: any) => {
+          const sessionIdHeader = req.headers["mcp-session-id"];
+          const sessionId =
+            typeof sessionIdHeader === "string"
+              ? sessionIdHeader
+              : Array.isArray(sessionIdHeader)
+                ? sessionIdHeader[0]
+                : undefined;
+
+          if (!sessionId || !transports[sessionId]) {
+            res.status(400).send("Invalid or missing session ID");
+            return;
+          }
+
+          await transports[sessionId].handleRequest(req, res);
+        });
+
+        app.delete("/mcp", async (req: any, res: any) => {
+          const sessionIdHeader = req.headers["mcp-session-id"];
+          const sessionId =
+            typeof sessionIdHeader === "string"
+              ? sessionIdHeader
+              : Array.isArray(sessionIdHeader)
+                ? sessionIdHeader[0]
+                : undefined;
+
+          if (!sessionId || !transports[sessionId]) {
+            res.status(400).send("Invalid or missing session ID");
+            return;
+          }
+
+          const transport = transports[sessionId];
+          await transport.handleRequest(req, res, req.body);
+          await transport.close();
+          delete transports[sessionId];
+
+          if (servers[sessionId]) {
+            await servers[sessionId].close().catch(() => undefined);
+            delete servers[sessionId];
+          }
+        });
+
+        const listener = app.listen(0, "127.0.0.1", () => {
+          const address = listener.address();
+          if (!address || typeof address === "string") {
+            reject(new Error("failed to resolve stateful MCP test server address"));
+            return;
+          }
+
+          resolve({
+            endpoint: `http://127.0.0.1:${address.port}/mcp`,
+            close: async () => {
+              for (const transport of Object.values(transports)) {
+                await transport.close().catch(() => undefined);
+              }
+              for (const server of Object.values(servers)) {
+                await server.close().catch(() => undefined);
+              }
+              await new Promise<void>((closeResolve, closeReject) => {
+                listener.close((error: Error | undefined) => {
+                  if (error) {
+                    closeReject(error);
+                    return;
+                  }
+                  closeResolve();
+                });
+              });
+            },
+          });
+        });
+
+        listener.once("error", reject);
+      }),
+  ),
+  (server: RealMcpServer) =>
+    Effect.tryPromise({
+      try: () => server.close(),
+      catch: (error: unknown) =>
+        error instanceof Error ? error : new Error(String(error)),
+    }).pipe(Effect.orDie),
+);
+
+const STDIO_TEST_SERVER_SCRIPT = `
+import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
+import { z } from "zod/v4";
+
+const server = new McpServer(
+  { name: "mcp-stdio-test-server", version: "1.0.0" },
+  { capabilities: { tools: { listChanged: true } } },
+);
+
+server.registerTool(
+  "echo_stdio",
+  {
+    title: "Echo Stdio",
+    description: "Echo a value over stdio",
+    inputSchema: {
+      value: z.string(),
+    },
+  },
+  async ({ value }) => ({
+    content: [{ type: "text", text: "stdio:" + value }],
+  }),
+);
+
+const transport = new StdioServerTransport();
+await server.connect(transport);
+`;
+
 const makeStaticAuthProvider = (accessToken: string): OAuthClientProvider => ({
   get redirectUrl() {
     return "http://127.0.0.1/oauth/callback";
@@ -609,6 +836,220 @@ describe("mcp source adapter", () => {
           content: [{
             type: "text",
             text: "secure:ok",
+          }],
+        },
+        error: null,
+        headers: {},
+        status: null,
+      });
+    }),
+  );
+
+  it.scoped("reuses a stateful MCP session across invocations in the same run", () =>
+    Effect.gen(function* () {
+      const realServer = yield* makeStatefulMcpServer;
+      const source = yield* createSourceFromPayload({
+        workspaceId: "ws_test" as any,
+        sourceId: SourceIdSchema.make(`src_${randomUUID()}`),
+        payload: {
+          name: "Stateful MCP Demo",
+          kind: "mcp",
+          endpoint: realServer.endpoint,
+          namespace: "mcp.stateful.demo",
+          binding: {
+            transport: "streamable-http",
+            queryParams: null,
+            headers: null,
+          },
+          importAuthPolicy: "reuse_runtime",
+          importAuth: { kind: "none" },
+          auth: { kind: "none" },
+          status: "connected",
+          enabled: true,
+        },
+        now: Date.now(),
+      });
+
+      const syncResult = yield* mcpSourceAdapter.syncCatalog({
+        source,
+        resolveSecretMaterial: () =>
+          Effect.fail(runtimeEffectError("sources/source-adapters/mcp.test", "unexpected secret lookup")),
+        resolveAuthMaterialForSlot: () =>
+          Effect.succeed({
+            placements: [],
+            headers: {},
+            queryParams: {},
+            cookies: {},
+            bodyValues: {},
+            expiresAt: null,
+            refreshAfter: null,
+          }),
+      });
+      const snapshot = snapshotFromSourceCatalogSyncResult(syncResult);
+      const catalog = makeLoadedCatalog({
+        source,
+        snapshot,
+      });
+
+      const incrementTool = yield* expandCatalogToolByPath({
+        catalogs: [catalog],
+        path: "mcp.stateful.demo.increment_session",
+      });
+      const readTool = yield* expandCatalogToolByPath({
+        catalogs: [catalog],
+        path: "mcp.stateful.demo.read_session",
+      });
+
+      if (!incrementTool || !readTool) {
+        throw new Error("Expected stateful MCP tools to resolve");
+      }
+
+      const incrementResult = yield* invokeIrTool({
+        workspaceId: source.workspaceId,
+        accountId: "acct_test" as any,
+        tool: incrementTool,
+        auth: {
+          placements: [],
+          headers: {},
+          queryParams: {},
+          cookies: {},
+          bodyValues: {},
+          expiresAt: null,
+          refreshAfter: null,
+        },
+        args: {},
+        context: {
+          runId: "exec_mcp_stateful",
+        },
+      });
+
+      const readResult = yield* invokeIrTool({
+        workspaceId: source.workspaceId,
+        accountId: "acct_test" as any,
+        tool: readTool,
+        auth: {
+          placements: [],
+          headers: {},
+          queryParams: {},
+          cookies: {},
+          bodyValues: {},
+          expiresAt: null,
+          refreshAfter: null,
+        },
+        args: {},
+        context: {
+          runId: "exec_mcp_stateful",
+        },
+      });
+
+      expect(incrementResult).toEqual({
+        data: {
+          content: [{
+            type: "text",
+            text: "1",
+          }],
+        },
+        error: null,
+        headers: {},
+        status: null,
+      });
+      expect(readResult).toEqual({
+        data: {
+          content: [{
+            type: "text",
+            text: "1",
+          }],
+        },
+        error: null,
+        headers: {},
+        status: null,
+      });
+    }),
+  );
+
+  it.scoped("supports stdio MCP sources", () =>
+    Effect.gen(function* () {
+      const source = yield* createSourceFromPayload({
+        workspaceId: "ws_test" as any,
+        sourceId: SourceIdSchema.make(`src_${randomUUID()}`),
+        payload: {
+          name: "Stdio MCP Demo",
+          kind: "mcp",
+          endpoint: "stdio://local/mcp-stdio-demo",
+          namespace: "mcp.stdio.demo",
+          binding: {
+            transport: "stdio",
+            queryParams: null,
+            headers: null,
+            command: "node",
+            args: ["--input-type=module", "-e", STDIO_TEST_SERVER_SCRIPT],
+            env: null,
+            cwd: process.cwd(),
+          },
+          importAuthPolicy: "reuse_runtime",
+          importAuth: { kind: "none" },
+          auth: { kind: "none" },
+          status: "connected",
+          enabled: true,
+        },
+        now: Date.now(),
+      });
+
+      const syncResult = yield* mcpSourceAdapter.syncCatalog({
+        source,
+        resolveSecretMaterial: () =>
+          Effect.fail(runtimeEffectError("sources/source-adapters/mcp.test", "unexpected secret lookup")),
+        resolveAuthMaterialForSlot: () =>
+          Effect.succeed({
+            placements: [],
+            headers: {},
+            queryParams: {},
+            cookies: {},
+            bodyValues: {},
+            expiresAt: null,
+            refreshAfter: null,
+          }),
+      });
+      const snapshot = snapshotFromSourceCatalogSyncResult(syncResult);
+
+      const tool = yield* expandCatalogToolByPath({
+        catalogs: [makeLoadedCatalog({
+          source,
+          snapshot,
+        })],
+        path: "mcp.stdio.demo.echo_stdio",
+      });
+
+      if (!tool) {
+        throw new Error("Expected stdio MCP tool to resolve");
+      }
+
+      const result = yield* invokeIrTool({
+        workspaceId: source.workspaceId,
+        accountId: "acct_test" as any,
+        tool,
+        auth: {
+          placements: [],
+          headers: {},
+          queryParams: {},
+          cookies: {},
+          bodyValues: {},
+          expiresAt: null,
+          refreshAfter: null,
+        },
+        args: {
+          value: "ok",
+        },
+        context: {
+          runId: "exec_mcp_stdio",
+        },
+      });
+
+      expect(result).toEqual({
+        data: {
+          content: [{
+            type: "text",
+            text: "stdio:ok",
           }],
         },
         error: null,

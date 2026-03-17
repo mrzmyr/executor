@@ -8,11 +8,13 @@ import {
   SourceBindingVersionSchema,
   SourceImportAuthPolicySchema,
   SourceOauthClientInputSchema,
+  StringArraySchema,
   SourceTransportSchema,
   StringMapSchema,
   type CredentialSlot,
   type SecretRef,
   type SourceBinding,
+  type StringArray,
   type SourceTransport,
   type StringMap,
 } from "./source-models";
@@ -72,6 +74,10 @@ export const McpConnectFieldsSchema = Schema.Struct({
   transport: Schema.optional(Schema.NullOr(SourceTransportSchema)),
   queryParams: Schema.optional(Schema.NullOr(StringMapSchema)),
   headers: Schema.optional(Schema.NullOr(StringMapSchema)),
+  command: Schema.optional(Schema.NullOr(Schema.String)),
+  args: Schema.optional(Schema.NullOr(StringArraySchema)),
+  env: Schema.optional(Schema.NullOr(StringMapSchema)),
+  cwd: Schema.optional(Schema.NullOr(Schema.String)),
 });
 
 export const parseJsonValue = <T>(input: {
@@ -111,12 +117,20 @@ export const emptySourceBindingState = {
   transport: null,
   queryParams: null,
   headers: null,
+  command: null,
+  args: null,
+  env: null,
+  cwd: null,
   specUrl: null,
   defaultHeaders: null,
 } satisfies {
   transport: SourceTransport | null;
   queryParams: StringMap | null;
   headers: StringMap | null;
+  command: string | null;
+  args: StringArray | null;
+  env: StringMap | null;
+  cwd: string | null;
   specUrl: string | null;
   defaultHeaders: StringMap | null;
 };

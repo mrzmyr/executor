@@ -71,6 +71,14 @@ const namespaceFromSourceName = (name: string): string => {
   return normalized.length > 0 ? normalized : "source";
 };
 
+const mcpAdapterError = (message: string, cause?: unknown): Error =>
+  sourceCoreEffectError(
+    "mcp/adapter",
+    cause === undefined
+      ? message
+      : `${message}: ${cause instanceof Error ? cause.message : String(cause)}`,
+  );
+
 const OptionalNullableStringArraySchema = Schema.optional(
   Schema.NullOr(StringArraySchema),
 );
@@ -208,9 +216,13 @@ const normalizeMcpBindingConfig = (
         cwd: trimOrNull(bindingConfig.cwd),
       } satisfies McpBindingConfig;
     }
-
-    if (command !== null || bindingConfig.args || bindingConfig.env || trimOrNull(bindingConfig.cwd) !== null) {
-      return yield* sourceCoreEffectError("mcp/adapter", "MCP process settings require transport: \"stdio\"");
+    if (
+      command !== null ||
+      bindingConfig.args ||
+      bindingConfig.env ||
+      trimOrNull(bindingConfig.cwd) !== null
+    ) {
+      return yield* sourceCoreEffectError("mcp/adapter", 'MCP process settings require transport: "stdio"');
     }
 
     return {
@@ -400,28 +412,23 @@ export const mcpSourceAdapter: SourceAdapter = {
     Effect.gen(function* () {
       const bindingConfig = yield* mcpBindingConfigFromSource(source);
       const auth = yield* resolveAuthMaterialForSlot("import");
-      const connector = yield* Effect.try({
-        try: () =>
-          createSdkMcpConnector({
-            endpoint: source.endpoint,
-            transport: bindingConfig.transport ?? undefined,
-            queryParams: {
-              ...bindingConfig.queryParams,
-              ...auth.queryParams,
-            },
-            headers: headersWithAuthCookies({
-              headers: bindingConfig.headers ?? {},
-              authHeaders: auth.headers,
-              authCookies: auth.cookies,
-            }),
-            authProvider: auth.authProvider,
-            command: bindingConfig.command ?? undefined,
-            args: bindingConfig.args ?? undefined,
-            env: bindingConfig.env ?? undefined,
-            cwd: bindingConfig.cwd ?? undefined,
-          }),
-        catch: (cause) =>
-          cause instanceof Error ? cause : new Error(String(cause)),
+      const connector = createSdkMcpConnector({
+        endpoint: source.endpoint,
+        transport: bindingConfig.transport ?? undefined,
+        queryParams: {
+          ...bindingConfig.queryParams,
+          ...auth.queryParams,
+        },
+        headers: headersWithAuthCookies({
+          headers: bindingConfig.headers ?? {},
+          authHeaders: auth.headers,
+          authCookies: auth.cookies,
+        }),
+        authProvider: auth.authProvider,
+        command: bindingConfig.command ?? undefined,
+        args: bindingConfig.args ?? undefined,
+        env: bindingConfig.env ?? undefined,
+        cwd: bindingConfig.cwd ?? undefined,
       });
 
       const discovered = yield* discoverMcpToolsFromConnector({
@@ -444,25 +451,28 @@ export const mcpSourceAdapter: SourceAdapter = {
       });
     }),
   invoke: (input) =>
-    Effect.tryPromise({
-      try: async () => {
+    Effect.gen(function* () {
         if (input.executable.adapterKey !== "mcp") {
-          throw new Error(
+          return yield* sourceCoreEffectError(
+            "mcp/adapter",
             `Expected MCP executable binding, got ${input.executable.adapterKey}`,
           );
         }
-        const providerData = decodeExecutableBindingPayload({
-          executableId: input.executable.id,
-          label: "MCP",
-          version: input.executable.bindingVersion,
-          expectedVersion: EXECUTABLE_BINDING_VERSION,
-          schema: McpExecutableBindingSchema,
-          value: input.executable.binding,
-        }) as McpExecutableBinding;
+        const providerData = (yield* Effect.try({
+          try: () =>
+            decodeExecutableBindingPayload({
+              executableId: input.executable.id,
+              label: "MCP",
+              version: input.executable.bindingVersion,
+              expectedVersion: EXECUTABLE_BINDING_VERSION,
+              schema: McpExecutableBindingSchema,
+              value: input.executable.binding,
+            }) as McpExecutableBinding,
+          catch: (cause) =>
+            mcpAdapterError("Failed decoding MCP executable binding", cause),
+        })) as McpExecutableBinding;
 
-        const bindingConfig = Effect.runSync(
-          mcpBindingConfigFromSource(input.source),
-        );
+        const bindingConfig = yield* mcpBindingConfigFromSource(input.source);
         const connector = createPooledMcpConnector({
           connect: createSdkMcpConnector({
             endpoint: input.source.endpoint,
@@ -531,7 +541,8 @@ export const mcpSourceAdapter: SourceAdapter = {
             : entry;
 
         if (!definition) {
-          throw new Error(
+          return yield* sourceCoreEffectError(
+            "mcp/adapter",
             `Missing MCP tool definition for ${providerData.toolName}`,
           );
         }
@@ -566,10 +577,18 @@ export const mcpSourceAdapter: SourceAdapter = {
                 onElicitation: input.onElicitation,
               }
             : undefined;
-        const result = await definition.execute(
-          asRecord(payload),
-          executionContext,
-        );
+        const result = yield* Effect.tryPromise({
+          try: async () =>
+            await definition.execute(
+              asRecord(payload),
+              executionContext,
+            ),
+          catch: (cause) =>
+            mcpAdapterError(
+              `Failed invoking MCP tool ${providerData.toolName}`,
+              cause,
+            ),
+        });
         const resultRecord = asRecord(result);
         const isError = resultRecord.isError === true;
 
@@ -579,8 +598,5 @@ export const mcpSourceAdapter: SourceAdapter = {
           headers: {},
           status: null,
         };
-      },
-      catch: (cause) =>
-        cause instanceof Error ? cause : new Error(String(cause)),
     }),
 };

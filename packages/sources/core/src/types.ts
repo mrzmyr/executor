@@ -17,6 +17,7 @@ import type {
   SourceCatalogKind,
   SourceImportAuthPolicy,
   SourceOauthClientInput,
+  StringArray,
   SourceTransport,
   StoredSourceRecord,
   StringMap,
@@ -77,6 +78,10 @@ export type SourceBindingState = {
   transport: SourceTransport | null;
   queryParams: StringMap | null;
   headers: StringMap | null;
+  command: string | null;
+  args: StringArray | null;
+  env: StringMap | null;
+  cwd: string | null;
   specUrl: string | null;
   defaultHeaders: StringMap | null;
 };

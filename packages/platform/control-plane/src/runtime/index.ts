@@ -283,7 +283,7 @@ export const createControlPlaneRuntime = (
       managedRuntime,
       runtimeLayer: concreteRuntimeLayer as RuntimeControlPlaneLayer,
       close: async () => {
-        await clearAllMcpConnectionPools().catch(() => undefined);
+        await Effect.runPromise(clearAllMcpConnectionPools()).catch(() => undefined);
         await managedRuntime.dispose().catch(() => undefined);
       },
     };

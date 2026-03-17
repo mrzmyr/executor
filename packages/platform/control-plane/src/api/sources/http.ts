@@ -687,6 +687,10 @@ export const ControlPlaneSourcesLive = HttpApiBuilder.group(
                   transport: payload.transport,
                   queryParams: payload.queryParams,
                   headers: payload.headers,
+                  command: payload.command,
+                  args: payload.args,
+                  env: payload.env,
+                  cwd: payload.cwd,
                   baseUrl,
                 });
               }

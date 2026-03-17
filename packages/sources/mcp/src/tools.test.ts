@@ -306,7 +306,7 @@ describe("codemode-mcp", () => {
       let closeCalls = 0;
       const callInputs: Array<{ name: string; arguments: Record<string, unknown> }> = [];
 
-      const connect = async () => {
+      const connect = Effect.sync(() => {
         connectCalls += 1;
 
         return {
@@ -360,7 +360,7 @@ describe("codemode-mcp", () => {
             closeCalls += 1;
           },
         };
-      };
+      });
 
       const discovered = yield* discoverMcpToolsFromConnector({
         connect,
@@ -432,7 +432,7 @@ describe("codemode-mcp", () => {
     Effect.gen(function* () {
       const outcome = yield* Effect.either(
         discoverMcpToolsFromConnector({
-          connect: async () => ({
+          connect: Effect.succeed({
             client: {
               listTools: async () => {
                 throw new Error("nope");
@@ -456,7 +456,7 @@ describe("codemode-mcp", () => {
       const elicitationMessages: Array<string> = [];
 
       const discovered = yield* discoverMcpToolsFromConnector({
-        connect: async () => ({
+        connect: Effect.succeed({
           client: {
             listTools: async () => {
               attempts += 1;
