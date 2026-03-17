@@ -420,12 +420,26 @@ export function toolDescriptorsFromTools(input: {
     const metadata = entry.metadata;
     const definition = entry.tool;
     const inputSchema =
-      metadata?.inputSchema
+      metadata?.contract?.inputSchema
       ?? deriveSchemaValue(definition.inputSchema)
       ?? deriveSchemaValue(definition.parameters);
     const outputSchema =
-      metadata?.outputSchema
+      metadata?.contract?.outputSchema
       ?? deriveSchemaValue(definition.outputSchema);
+    const contract = {
+      inputTypePreview:
+        metadata?.contract?.inputTypePreview ?? inferTypeFromSchemaValue(inputSchema, "unknown"),
+      outputTypePreview:
+        metadata?.contract?.outputTypePreview ?? inferTypeFromSchemaValue(outputSchema, "unknown"),
+      ...(inputSchema !== undefined ? { inputSchema } : {}),
+      ...(outputSchema !== undefined ? { outputSchema } : {}),
+      ...(metadata?.contract?.exampleInput !== undefined
+        ? { exampleInput: metadata.contract.exampleInput }
+        : {}),
+      ...(metadata?.contract?.exampleOutput !== undefined
+        ? { exampleOutput: metadata.contract.exampleOutput }
+        : {}),
+    } satisfies NonNullable<ToolDescriptor["contract"]>;
 
     return {
       path: entry.path,
@@ -433,18 +447,7 @@ export function toolDescriptorsFromTools(input: {
       description: definition.description,
       interaction: metadata?.interaction,
       elicitation: metadata?.elicitation,
-      inputTypePreview:
-        metadata?.inputTypePreview ?? inferTypeFromSchemaValue(inputSchema, "unknown"),
-      outputTypePreview:
-        metadata?.outputTypePreview ?? inferTypeFromSchemaValue(outputSchema, "unknown"),
-      ...(inputSchema !== undefined ? { inputSchema } : {}),
-      ...(outputSchema !== undefined ? { outputSchema } : {}),
-      ...(metadata?.exampleInput !== undefined
-        ? { exampleInput: metadata.exampleInput }
-        : {}),
-      ...(metadata?.exampleOutput !== undefined
-        ? { exampleOutput: metadata.exampleOutput }
-        : {}),
+      contract,
       ...(metadata?.providerKind ? { providerKind: metadata.providerKind } : {}),
       ...(metadata?.providerData !== undefined
         ? { providerData: metadata.providerData }

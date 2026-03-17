@@ -3,7 +3,7 @@ import parserBabel from "prettier/plugins/babel";
 import parserEstree from "prettier/plugins/estree";
 import parserTypescript from "prettier/plugins/typescript";
 
-export type PrettierParser = "json" | "typescript";
+export type PrettierParser = "json" | "typescript" | "typescript-module";
 
 const plugins = [parserBabel, parserEstree, parserTypescript];
 
@@ -31,7 +31,7 @@ export async function formatWithPrettier(
     }
 
     const result = await format(input, {
-      parser,
+      parser: parser === "typescript-module" ? "typescript" : parser,
       plugins,
       printWidth: 60,
       tabWidth: 2,

@@ -75,15 +75,28 @@ export type OnElicitation = (
   input: ToolElicitationRequest,
 ) => Effect.Effect<ElicitationResponse, unknown>;
 
-export type ToolMetadata = {
-  interaction?: "auto" | "required";
-  elicitation?: ElicitationRequest;
+export type ToolContract = {
   inputTypePreview?: string;
   outputTypePreview?: string;
   inputSchema?: unknown;
   outputSchema?: unknown;
   exampleInput?: unknown;
   exampleOutput?: unknown;
+};
+
+export const ToolContractSchema = Schema.Struct({
+  inputTypePreview: Schema.optional(Schema.String),
+  outputTypePreview: Schema.optional(Schema.String),
+  inputSchema: Schema.optional(Schema.Unknown),
+  outputSchema: Schema.optional(Schema.Unknown),
+  exampleInput: Schema.optional(Schema.Unknown),
+  exampleOutput: Schema.optional(Schema.Unknown),
+});
+
+export type ToolMetadata = {
+  interaction?: "auto" | "required";
+  elicitation?: ElicitationRequest;
+  contract?: ToolContract;
   sourceKey?: string;
   providerKind?: string;
   providerData?: unknown;
@@ -131,12 +144,7 @@ export type ToolDescriptor = {
   description?: string;
   interaction?: "auto" | "required";
   elicitation?: ElicitationRequest;
-  inputTypePreview?: string;
-  outputTypePreview?: string;
-  inputSchema?: unknown;
-  outputSchema?: unknown;
-  exampleInput?: unknown;
-  exampleOutput?: unknown;
+  contract?: ToolContract;
   providerKind?: string;
   providerData?: unknown;
 };
@@ -149,12 +157,7 @@ export const ToolDescriptorSchema = Schema.Struct({
     Schema.Union(Schema.Literal("auto"), Schema.Literal("required")),
   ),
   elicitation: Schema.optional(Schema.Unknown),
-  inputTypePreview: Schema.optional(Schema.String),
-  outputTypePreview: Schema.optional(Schema.String),
-  inputSchema: Schema.optional(Schema.Unknown),
-  outputSchema: Schema.optional(Schema.Unknown),
-  exampleInput: Schema.optional(Schema.Unknown),
-  exampleOutput: Schema.optional(Schema.Unknown),
+  contract: Schema.optional(ToolContractSchema),
   providerKind: Schema.optional(Schema.String),
   providerData: Schema.optional(Schema.Unknown),
 });

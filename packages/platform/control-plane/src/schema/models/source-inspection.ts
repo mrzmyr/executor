@@ -56,6 +56,26 @@ export const SourceInspectionSectionSchema = Schema.Union(
 export const SourceInspectionToolListItemSchema = Schema.Struct({
   path: Schema.String,
   method: Schema.NullOr(Schema.String),
+  inputTypePreview: Schema.optional(Schema.String),
+  outputTypePreview: Schema.optional(Schema.String),
+});
+
+export const SourceInspectionToolContractSideSchema = Schema.Struct({
+  shapeId: Schema.NullOr(Schema.String),
+  typePreview: Schema.NullOr(Schema.String),
+  typeDeclaration: Schema.NullOr(Schema.String),
+  schemaJson: Schema.NullOr(Schema.String),
+  exampleJson: Schema.NullOr(Schema.String),
+});
+
+export const SourceInspectionToolContractSchema = Schema.Struct({
+  callSignature: Schema.String,
+  callDeclaration: Schema.String,
+  callShapeId: Schema.String,
+  resultShapeId: Schema.NullOr(Schema.String),
+  responseSetId: Schema.String,
+  input: SourceInspectionToolContractSideSchema,
+  output: SourceInspectionToolContractSideSchema,
 });
 
 export const SourceInspectionSchema = Schema.Struct({
@@ -68,6 +88,7 @@ export const SourceInspectionSchema = Schema.Struct({
 
 export const SourceInspectionToolDetailSchema = Schema.Struct({
   summary: SourceInspectionToolSummarySchema,
+  contract: SourceInspectionToolContractSchema,
   sections: Schema.Array(SourceInspectionSectionSchema),
 });
 
@@ -109,6 +130,10 @@ export type SourceInspectionSection =
   typeof SourceInspectionSectionSchema.Type;
 export type SourceInspectionToolListItem =
   typeof SourceInspectionToolListItemSchema.Type;
+export type SourceInspectionToolContractSide =
+  typeof SourceInspectionToolContractSideSchema.Type;
+export type SourceInspectionToolContract =
+  typeof SourceInspectionToolContractSchema.Type;
 export type SourceInspection = typeof SourceInspectionSchema.Type;
 export type SourceInspectionToolDetail =
   typeof SourceInspectionToolDetailSchema.Type;

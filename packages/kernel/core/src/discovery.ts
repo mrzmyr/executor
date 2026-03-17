@@ -27,11 +27,40 @@ const searchableTextForTool = (tool: ToolDescriptor): string =>
     tool.path,
     tool.sourceKey,
     tool.description ?? "",
-    tool.inputTypePreview ?? "",
-    tool.outputTypePreview ?? "",
+    tool.contract?.inputTypePreview ?? "",
+    tool.contract?.outputTypePreview ?? "",
   ]
     .join(" ")
     .toLowerCase();
+
+const descriptorContract = (
+  descriptor: ToolDescriptor,
+  includeSchemas: boolean,
+): ToolDescriptor["contract"] | undefined => {
+  const contract = descriptor.contract;
+  if (!contract) {
+    return undefined;
+  }
+
+  if (includeSchemas) {
+    return contract;
+  }
+
+  return {
+    ...(contract.inputTypePreview !== undefined
+      ? { inputTypePreview: contract.inputTypePreview }
+      : {}),
+    ...(contract.outputTypePreview !== undefined
+      ? { outputTypePreview: contract.outputTypePreview }
+      : {}),
+    ...(contract.exampleInput !== undefined
+      ? { exampleInput: contract.exampleInput }
+      : {}),
+    ...(contract.exampleOutput !== undefined
+      ? { exampleOutput: contract.exampleOutput }
+      : {}),
+  };
+};
 
 const projectDescriptor = (input: {
   descriptor: ToolDescriptor;
@@ -45,8 +74,9 @@ const projectDescriptor = (input: {
 
   return {
     ...descriptor,
-    inputSchema: undefined,
-    outputSchema: undefined,
+    ...(descriptorContract(descriptor, false)
+      ? { contract: descriptorContract(descriptor, false) }
+      : {}),
   };
 };
 
@@ -383,13 +413,8 @@ export function createDiscoveryPrimitivesFromToolCatalog(input: {
             score: hit.score,
             description: descriptor.description,
             interaction: descriptor.interaction ?? "auto",
-            inputTypePreview: descriptor.inputTypePreview,
-            outputTypePreview: descriptor.outputTypePreview,
-            ...(includeSchemas
-              ? {
-                  inputSchema: descriptor.inputSchema,
-                  outputSchema: descriptor.outputSchema,
-                }
+            ...(descriptorContract(descriptor, includeSchemas)
+              ? { contract: descriptorContract(descriptor, includeSchemas) }
               : {}),
           };
         })
@@ -451,7 +476,7 @@ export function buildDynamicExecuteDescription(input: {
       "Workflow:",
       '1) const matches = await tools.discover({ query: "<intent>", limit: 12 });',
       "2) const details = await tools.describe.tool({ path, includeSchemas: true });",
-      "3) Read details.inputSchema/details.outputSchema when you need the projected shape.",
+      "3) Read details.contract?.inputSchema/details.contract?.outputSchema when you need the projected shape.",
       "4) Call selected tools.<path>(input).",
       "Do not use fetch; use tools.* only.",
     ].join("\n");

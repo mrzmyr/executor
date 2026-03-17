@@ -4,7 +4,8 @@ import {
   type ToolInput,
   type ToolPath,
 } from "@executor/codemode-core";
-import { createSdkMcpConnector } from "./connection";
+import { createPooledMcpConnector } from "./connection-pool";
+import { createSdkMcpConnector, isMcpStdioTransport } from "./connection";
 import {
   createMcpToolsFromManifest,
   discoverMcpToolsFromConnector,
@@ -26,8 +27,8 @@ import {
   encodeBindingConfig,
   McpConnectFieldsSchema,
   OptionalNullableStringSchema,
-  SourceConnectCommonFieldsSchema,
   SourceTransportSchema,
+  StringArraySchema,
   StringMapSchema,
   createCatalogImportMetadata,
   EXECUTABLE_BINDING_VERSION,
@@ -35,6 +36,7 @@ import {
   type Source,
   type SourceAdapter,
   type SourceCatalogSyncResult,
+  type SourceTransport,
 } from "@executor/source-core";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
@@ -69,27 +71,38 @@ const namespaceFromSourceName = (name: string): string => {
   return normalized.length > 0 ? normalized : "source";
 };
 
-const McpConnectPayloadSchema = Schema.extend(
-  SourceConnectCommonFieldsSchema,
-  Schema.extend(
-    McpConnectFieldsSchema,
-    Schema.Struct({
-      kind: Schema.Literal("mcp"),
-    }),
-  ),
+const OptionalNullableStringArraySchema = Schema.optional(
+  Schema.NullOr(StringArraySchema),
 );
 
-const McpExecutorAddInputSchema = Schema.Struct({
-  kind: Schema.optional(Schema.Literal("mcp")),
-  endpoint: Schema.String,
-  name: OptionalNullableStringSchema,
-  namespace: OptionalNullableStringSchema,
-});
+const McpConnectPayloadSchema = Schema.extend(
+  McpConnectFieldsSchema,
+  Schema.Struct({
+    kind: Schema.Literal("mcp"),
+    endpoint: OptionalNullableStringSchema,
+    name: OptionalNullableStringSchema,
+    namespace: OptionalNullableStringSchema,
+  }),
+);
+
+const McpExecutorAddInputSchema = Schema.extend(
+  McpConnectFieldsSchema,
+  Schema.Struct({
+    kind: Schema.optional(Schema.Literal("mcp")),
+    endpoint: OptionalNullableStringSchema,
+    name: OptionalNullableStringSchema,
+    namespace: OptionalNullableStringSchema,
+  }),
+);
 
 const McpBindingConfigSchema = Schema.Struct({
   transport: Schema.NullOr(SourceTransportSchema),
   queryParams: Schema.NullOr(StringMapSchema),
   headers: Schema.NullOr(StringMapSchema),
+  command: Schema.NullOr(Schema.String),
+  args: Schema.NullOr(StringArraySchema),
+  env: Schema.NullOr(StringMapSchema),
+  cwd: Schema.NullOr(Schema.String),
 });
 
 type McpBindingConfig = typeof McpBindingConfigSchema.Type;
@@ -98,6 +111,10 @@ const McpSourceBindingPayloadSchema = Schema.Struct({
   transport: Schema.optional(Schema.NullOr(SourceTransportSchema)),
   queryParams: Schema.optional(Schema.NullOr(StringMapSchema)),
   headers: Schema.optional(Schema.NullOr(StringMapSchema)),
+  command: Schema.optional(Schema.NullOr(Schema.String)),
+  args: OptionalNullableStringArraySchema,
+  env: Schema.optional(Schema.NullOr(StringMapSchema)),
+  cwd: Schema.optional(Schema.NullOr(Schema.String)),
 });
 
 const McpExecutableBindingSchema = Schema.Struct({
@@ -127,6 +144,86 @@ const bindingHasAnyField = (
   !Array.isArray(value) &&
   fields.some((field) => Object.prototype.hasOwnProperty.call(value, field));
 
+const trimOrNull = (value: string | null | undefined): string | null => {
+  if (value === null || value === undefined) {
+    return null;
+  }
+
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : null;
+};
+
+const normalizeStringArray = (
+  value: ReadonlyArray<string> | null | undefined,
+): string[] | null => {
+  if (!value || value.length === 0) {
+    return null;
+  }
+
+  const normalized = value
+    .map((entry) => entry.trim())
+    .filter((entry) => entry.length > 0);
+
+  return normalized.length > 0 ? normalized : null;
+};
+
+const normalizeMcpBindingConfig = (
+  bindingConfig: {
+    transport?: SourceTransport | null | undefined;
+    queryParams?: Record<string, string> | null | undefined;
+    headers?: Record<string, string> | null | undefined;
+    command?: string | null | undefined;
+    args?: ReadonlyArray<string> | null | undefined;
+    env?: Record<string, string> | null | undefined;
+    cwd?: string | null | undefined;
+  },
+): Effect.Effect<McpBindingConfig, Error, never> =>
+  Effect.gen(function* () {
+    const command = trimOrNull(bindingConfig.command);
+    const isStdio = isMcpStdioTransport({
+      transport: bindingConfig.transport ?? undefined,
+      command: command ?? undefined,
+    });
+
+    if (isStdio) {
+      if (command === null) {
+        return yield* sourceCoreEffectError("mcp/adapter", "MCP stdio transport requires a command");
+      }
+
+      if (bindingConfig.queryParams && Object.keys(bindingConfig.queryParams).length > 0) {
+        return yield* sourceCoreEffectError("mcp/adapter", "MCP stdio transport does not support query params");
+      }
+
+      if (bindingConfig.headers && Object.keys(bindingConfig.headers).length > 0) {
+        return yield* sourceCoreEffectError("mcp/adapter", "MCP stdio transport does not support request headers");
+      }
+
+      return {
+        transport: "stdio",
+        queryParams: null,
+        headers: null,
+        command,
+        args: normalizeStringArray(bindingConfig.args),
+        env: bindingConfig.env ?? null,
+        cwd: trimOrNull(bindingConfig.cwd),
+      } satisfies McpBindingConfig;
+    }
+
+    if (command !== null || bindingConfig.args || bindingConfig.env || trimOrNull(bindingConfig.cwd) !== null) {
+      return yield* sourceCoreEffectError("mcp/adapter", "MCP process settings require transport: \"stdio\"");
+    }
+
+    return {
+      transport: bindingConfig.transport ?? null,
+      queryParams: bindingConfig.queryParams ?? null,
+      headers: bindingConfig.headers ?? null,
+      command: null,
+      args: null,
+      env: null,
+      cwd: null,
+    } satisfies McpBindingConfig;
+  });
+
 const mcpBindingConfigFromSource = (
   source: Pick<Source, "id" | "bindingVersion" | "binding">,
 ): Effect.Effect<McpBindingConfig, Error, never> =>
@@ -145,14 +242,10 @@ const mcpBindingConfigFromSource = (
       expectedVersion: MCP_BINDING_CONFIG_VERSION,
       schema: McpSourceBindingPayloadSchema,
       value: source.binding,
-      allowedKeys: ["transport", "queryParams", "headers"],
+      allowedKeys: ["transport", "queryParams", "headers", "command", "args", "env", "cwd"],
     });
 
-    return {
-      transport: bindingConfig.transport ?? null,
-      queryParams: bindingConfig.queryParams ?? null,
-      headers: bindingConfig.headers ?? null,
-    } satisfies McpBindingConfig;
+    return yield* normalizeMcpBindingConfig(bindingConfig);
   });
 
 const effectFromMcpManifestEntry = (
@@ -233,7 +326,8 @@ export const mcpSourceAdapter: SourceAdapter = {
   connectPayloadSchema: McpConnectPayloadSchema,
   executorAddInputSchema: McpExecutorAddInputSchema,
   executorAddHelpText: [
-    'Omit kind or set kind: "mcp". endpoint is the MCP server URL.',
+    'Omit kind or set kind: "mcp". For remote servers, provide endpoint plus optional transport/queryParams/headers.',
+    'For local servers, set transport: "stdio" and provide command plus optional args/env/cwd.',
   ],
   executorAddInputSignatureWidth: 240,
   serializeBindingConfig: (source) =>
@@ -264,6 +358,10 @@ export const mcpSourceAdapter: SourceAdapter = {
       transport: bindingConfig.transport,
       queryParams: bindingConfig.queryParams,
       headers: bindingConfig.headers,
+      command: bindingConfig.command,
+      args: bindingConfig.args,
+      env: bindingConfig.env,
+      cwd: bindingConfig.cwd,
     })),
   sourceConfigFromSource: (source) =>
     Effect.runSync(
@@ -273,6 +371,10 @@ export const mcpSourceAdapter: SourceAdapter = {
         transport: bindingConfig.transport,
         queryParams: bindingConfig.queryParams,
         headers: bindingConfig.headers,
+        command: bindingConfig.command,
+        args: bindingConfig.args,
+        env: bindingConfig.env,
+        cwd: bindingConfig.cwd,
       })),
     ),
   validateSource: (source) =>
@@ -286,6 +388,10 @@ export const mcpSourceAdapter: SourceAdapter = {
           transport: bindingConfig.transport,
           queryParams: bindingConfig.queryParams,
           headers: bindingConfig.headers,
+          command: bindingConfig.command,
+          args: bindingConfig.args,
+          env: bindingConfig.env,
+          cwd: bindingConfig.cwd,
         },
       };
     }),
@@ -309,6 +415,10 @@ export const mcpSourceAdapter: SourceAdapter = {
               authCookies: auth.cookies,
             }),
             authProvider: auth.authProvider,
+            command: bindingConfig.command ?? undefined,
+            args: bindingConfig.args ?? undefined,
+            env: bindingConfig.env ?? undefined,
+            cwd: bindingConfig.cwd ?? undefined,
           }),
         catch: (cause) =>
           cause instanceof Error ? cause : new Error(String(cause)),
@@ -353,19 +463,30 @@ export const mcpSourceAdapter: SourceAdapter = {
         const bindingConfig = Effect.runSync(
           mcpBindingConfigFromSource(input.source),
         );
-        const connector = createSdkMcpConnector({
-          endpoint: input.source.endpoint,
-          transport: bindingConfig.transport ?? undefined,
-          queryParams: {
-            ...bindingConfig.queryParams,
-            ...input.auth.queryParams,
-          },
-          headers: headersWithAuthCookies({
-            headers: bindingConfig.headers ?? {},
-            authHeaders: input.auth.headers,
-            authCookies: input.auth.cookies,
+        const connector = createPooledMcpConnector({
+          connect: createSdkMcpConnector({
+            endpoint: input.source.endpoint,
+            transport: bindingConfig.transport ?? undefined,
+            queryParams: {
+              ...bindingConfig.queryParams,
+              ...input.auth.queryParams,
+            },
+            headers: headersWithAuthCookies({
+              headers: bindingConfig.headers ?? {},
+              authHeaders: input.auth.headers,
+              authCookies: input.auth.cookies,
+            }),
+            authProvider: input.auth.authProvider,
+            command: bindingConfig.command ?? undefined,
+            args: bindingConfig.args ?? undefined,
+            env: bindingConfig.env ?? undefined,
+            cwd: bindingConfig.cwd ?? undefined,
           }),
-          authProvider: input.auth.authProvider,
+          runId:
+            typeof input.context?.runId === "string" && input.context.runId.length > 0
+              ? input.context.runId
+              : undefined,
+          sourceKey: input.source.id,
         });
         const tools = createMcpToolsFromManifest({
           manifest: {
@@ -392,8 +513,8 @@ export const mcpSourceAdapter: SourceAdapter = {
                 icons: null,
                 meta: null,
                 rawTool: null,
-                inputSchema: input.descriptor.inputSchema,
-                outputSchema: input.descriptor.outputSchema,
+                inputSchema: input.descriptor.contract?.inputSchema,
+                outputSchema: input.descriptor.contract?.outputSchema,
               },
             ],
           },
@@ -430,8 +551,14 @@ export const mcpSourceAdapter: SourceAdapter = {
                 metadata: {
                   sourceKey: input.source.id,
                   interaction: input.descriptor.interaction,
-                  inputSchema: input.descriptor.inputSchema,
-                  outputSchema: input.descriptor.outputSchema,
+                  contract: {
+                    ...(input.descriptor.contract?.inputSchema !== undefined
+                      ? { inputSchema: input.descriptor.contract.inputSchema }
+                      : {}),
+                    ...(input.descriptor.contract?.outputSchema !== undefined
+                      ? { outputSchema: input.descriptor.contract.outputSchema }
+                      : {}),
+                  },
                   providerKind: input.descriptor.providerKind,
                   providerData: input.descriptor.providerData,
                 },

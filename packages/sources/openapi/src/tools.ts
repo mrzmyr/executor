@@ -541,20 +541,22 @@ export const createOpenApiToolFromDefinition = (
     },
     metadata: {
       sourceKey: input.sourceKey,
-      inputTypePreview: presentation.inputTypePreview,
-      outputTypePreview: presentation.outputTypePreview,
-      ...((presentation.inputSchema ?? input.definition.typing?.inputSchema) !== undefined
-        ? { inputSchema: presentation.inputSchema ?? input.definition.typing?.inputSchema }
-        : {}),
-      ...((presentation.outputSchema ?? input.definition.typing?.outputSchema) !== undefined
-        ? { outputSchema: presentation.outputSchema ?? input.definition.typing?.outputSchema }
-        : {}),
-      ...(presentation.exampleInput !== undefined
-        ? { exampleInput: presentation.exampleInput }
-        : {}),
-      ...(presentation.exampleOutput !== undefined
-        ? { exampleOutput: presentation.exampleOutput }
-        : {}),
+      contract: {
+        inputTypePreview: presentation.inputTypePreview,
+        outputTypePreview: presentation.outputTypePreview,
+        ...((presentation.inputSchema ?? input.definition.typing?.inputSchema) !== undefined
+          ? { inputSchema: presentation.inputSchema ?? input.definition.typing?.inputSchema }
+          : {}),
+        ...((presentation.outputSchema ?? input.definition.typing?.outputSchema) !== undefined
+          ? { outputSchema: presentation.outputSchema ?? input.definition.typing?.outputSchema }
+          : {}),
+        ...(presentation.exampleInput !== undefined
+          ? { exampleInput: presentation.exampleInput }
+          : {}),
+        ...(presentation.exampleOutput !== undefined
+          ? { exampleOutput: presentation.exampleOutput }
+          : {}),
+      },
       providerKind: "openapi",
       providerData: presentation.providerData,
     },

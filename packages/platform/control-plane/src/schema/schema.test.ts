@@ -25,6 +25,27 @@ describe("control-plane-schema", () => {
         method: "GET",
         pathTemplate: "/issues",
       },
+      contract: {
+        callSignature: "(args: GithubIssuesListCall) => Promise<GithubIssuesListResult>",
+        callDeclaration: "declare function githubIssuesList(args: GithubIssuesListCall): Promise<GithubIssuesListResult>;",
+        callShapeId: "shape_call",
+        resultShapeId: "shape_result",
+        responseSetId: "response_set_1",
+        input: {
+          shapeId: "shape_call",
+          typePreview: "{ owner: string; repo: string }",
+          typeDeclaration: "type GithubIssuesListCall = { owner: string; repo: string };",
+          schemaJson: "{}",
+          exampleJson: null,
+        },
+        output: {
+          shapeId: "shape_result",
+          typePreview: "{ data: unknown; error: unknown; headers: Record<string, string>; status: number | null }",
+          typeDeclaration: "type GithubIssuesListResult = { data: unknown; error: unknown; headers: Record<string, string>; status: number | null };",
+          schemaJson: "{}",
+          exampleJson: null,
+        },
+      },
       sections: [{
         kind: "facts",
         title: "Overview",

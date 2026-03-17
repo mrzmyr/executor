@@ -111,7 +111,7 @@ describe("openapi-extraction real specs", () => {
 
       for (const expectedTool of expectedTools) {
         const resolved = resolveToolDefinition(tools[expectedTool.expectedPath]!);
-        const inputSchema = parseInputSchema(resolved.metadata?.inputSchema);
+        const inputSchema = parseInputSchema(resolved.metadata?.contract?.inputSchema);
 
         expect(inputSchema?.type).toBe("object");
         expect(Object.keys(inputSchema?.properties ?? {})).toEqual(

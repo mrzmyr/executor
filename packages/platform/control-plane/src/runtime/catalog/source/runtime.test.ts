@@ -353,7 +353,7 @@ describe("source-catalog-runtime", () => {
       });
 
       expect(tool).toBeDefined();
-      expect(tool?.descriptor.inputSchema).toMatchObject({
+      expect(tool?.descriptor.contract?.inputSchema).toMatchObject({
         type: "object",
         properties: {
           filter: {
@@ -368,11 +368,11 @@ describe("source-catalog-runtime", () => {
         },
       });
 
-      const serializedInput = JSON.stringify(tool?.descriptor.inputSchema);
+      const serializedInput = JSON.stringify(tool?.descriptor.contract?.inputSchema);
       expect(serializedInput).not.toContain("\"$ref\":\"#/$defs/shape_");
       expect(serializedInput).not.toContain("\"shape_");
-      expect(tool?.descriptor.inputTypePreview).toContain("filter?: {");
-      expect(tool?.descriptor.outputTypePreview).toContain("nodes?: {");
+      expect(tool?.descriptor.contract?.inputTypePreview).toContain("filter?: {");
+      expect(tool?.descriptor.contract?.outputTypePreview).toContain("nodes?: {");
     }));
 
   it.effect("can skip type previews when only list metadata is needed", () =>
@@ -384,10 +384,10 @@ describe("source-catalog-runtime", () => {
       });
 
       expect(tool).toBeDefined();
-      expect(tool?.descriptor.inputSchema).toBeUndefined();
-      expect(tool?.descriptor.outputSchema).toBeUndefined();
-      expect(tool?.descriptor.inputTypePreview).toBeUndefined();
-      expect(tool?.descriptor.outputTypePreview).toBeUndefined();
+      expect(tool?.descriptor.contract?.inputSchema).toBeUndefined();
+      expect(tool?.descriptor.contract?.outputSchema).toBeUndefined();
+      expect(tool?.descriptor.contract?.inputTypePreview).toBeUndefined();
+      expect(tool?.descriptor.contract?.outputTypePreview).toBeUndefined();
     }));
 
   it.effect("projects a single tool by path without expanding the whole catalog", () =>
@@ -400,7 +400,7 @@ describe("source-catalog-runtime", () => {
 
       expect(tool).not.toBeNull();
       expect(tool?.path).toBe("linear.teams");
-      expect(tool?.descriptor.inputSchema).toMatchObject({
+      expect(tool?.descriptor.contract?.inputSchema).toMatchObject({
         type: "object",
         properties: {
           filter: {
@@ -569,12 +569,12 @@ describe("source-catalog-runtime", () => {
       });
 
       expect(tool).not.toBeNull();
-      expect(tool?.descriptor.outputTypePreview).toContain("actor?: string;");
-      expect(tool?.descriptor.outputTypePreview).toContain('action: "blocked";');
-      expect(tool?.descriptor.outputTypePreview).toContain('action: "unblocked";');
-      expect(tool?.descriptor.outputTypePreview).toContain('action: "route-blocked";');
-      expect(tool?.descriptor.outputTypePreview).toContain("& (");
-      expect(tool?.descriptor.outputTypePreview).not.toContain("Member2");
+      expect(tool?.descriptor.contract?.outputTypePreview).toContain("actor?: string;");
+      expect(tool?.descriptor.contract?.outputTypePreview).toContain('action: "blocked";');
+      expect(tool?.descriptor.contract?.outputTypePreview).toContain('action: "unblocked";');
+      expect(tool?.descriptor.contract?.outputTypePreview).toContain('action: "route-blocked";');
+      expect(tool?.descriptor.contract?.outputTypePreview).toContain("& (");
+      expect(tool?.descriptor.contract?.outputTypePreview).not.toContain("Member2");
     }));
 
   it.effect("uses the shared TS projector for unsupported preview shapes", () =>
@@ -622,6 +622,6 @@ describe("source-catalog-runtime", () => {
       });
 
       expect(tool).not.toBeNull();
-      expect(tool?.descriptor.inputTypePreview).toContain("unsupported?: unknown;");
+      expect(tool?.descriptor.contract?.inputTypePreview).toContain("unsupported?: unknown;");
     }));
 });

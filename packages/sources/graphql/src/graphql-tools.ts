@@ -1437,25 +1437,27 @@ export const createGraphqlToolFromPersistedOperation = (input: {
         : providerData.operationType === "query"
           ? "auto"
           : "required",
-    inputTypePreview: typeSignatureFromSchema(
-      input.inputSchema,
-      "unknown",
-      GRAPHQL_PRESENTATION_TYPE_MAX_LENGTH,
-    ),
-    outputTypePreview: typeSignatureFromSchema(
-      input.outputSchema,
-      "unknown",
-      GRAPHQL_PRESENTATION_TYPE_MAX_LENGTH,
-    ),
-    ...(input.inputSchema !== undefined
-      ? { inputSchema: input.inputSchema }
-      : {}),
-    ...(input.outputSchema !== undefined
-      ? { outputSchema: input.outputSchema }
-      : {}),
-    ...(input.exampleInput !== undefined
-      ? { exampleInput: input.exampleInput }
-      : {}),
+    contract: {
+      inputTypePreview: typeSignatureFromSchema(
+        input.inputSchema,
+        "unknown",
+        GRAPHQL_PRESENTATION_TYPE_MAX_LENGTH,
+      ),
+      outputTypePreview: typeSignatureFromSchema(
+        input.outputSchema,
+        "unknown",
+        GRAPHQL_PRESENTATION_TYPE_MAX_LENGTH,
+      ),
+      ...(input.inputSchema !== undefined
+        ? { inputSchema: input.inputSchema }
+        : {}),
+      ...(input.outputSchema !== undefined
+        ? { outputSchema: input.outputSchema }
+        : {}),
+      ...(input.exampleInput !== undefined
+        ? { exampleInput: input.exampleInput }
+        : {}),
+    },
     sourceKey: input.sourceKey,
     providerKind: "graphql",
     providerData,
@@ -1524,17 +1526,19 @@ export const graphqlToolDescriptorFromDefinition = (input: {
     description: input.definition.description,
     interaction:
       input.definition.operationType === "query" ? "auto" : "required",
-    inputTypePreview: presentation.inputTypePreview,
-    outputTypePreview: presentation.outputTypePreview,
-    ...(input.includeSchemas && presentation.inputSchema !== undefined
-      ? { inputSchema: presentation.inputSchema }
-      : {}),
-    ...(input.includeSchemas && presentation.outputSchema !== undefined
-      ? { outputSchema: presentation.outputSchema }
-      : {}),
-    ...(presentation.exampleInput !== undefined
-      ? { exampleInput: presentation.exampleInput }
-      : {}),
+    contract: {
+      inputTypePreview: presentation.inputTypePreview,
+      outputTypePreview: presentation.outputTypePreview,
+      ...(input.includeSchemas && presentation.inputSchema !== undefined
+        ? { inputSchema: presentation.inputSchema }
+        : {}),
+      ...(input.includeSchemas && presentation.outputSchema !== undefined
+        ? { outputSchema: presentation.outputSchema }
+        : {}),
+      ...(presentation.exampleInput !== undefined
+        ? { exampleInput: presentation.exampleInput }
+        : {}),
+    },
     providerKind: "graphql",
     providerData: presentation.providerData,
   };

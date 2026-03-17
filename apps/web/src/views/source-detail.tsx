@@ -81,9 +81,9 @@ const readBindingStringArray = (source: Source, key: string): Array<string> | un
     : undefined;
 };
 
-const readBindingTransport = (source: Source): "auto" | "streamable-http" | "sse" | undefined => {
+const readBindingTransport = (source: Source): "auto" | "streamable-http" | "sse" | "stdio" | undefined => {
   const candidate = source.binding.transport;
-  return candidate === "auto" || candidate === "streamable-http" || candidate === "sse"
+  return candidate === "auto" || candidate === "streamable-http" || candidate === "sse" || candidate === "stdio"
     ? candidate
     : undefined;
 };
@@ -106,6 +106,10 @@ const refreshPayloadFromSource = (source: Source): ConnectSourcePayload | null =
         ...(readBindingTransport(source) ? { transport: readBindingTransport(source) } : {}),
         queryParams: readBindingStringMap(source, "queryParams"),
         headers: readBindingStringMap(source, "headers"),
+        command: readBindingString(source, "command"),
+        args: readBindingStringArray(source, "args"),
+        env: readBindingStringMap(source, "env"),
+        cwd: readBindingString(source, "cwd"),
       };
     case "openapi": {
       const specUrl = readBindingString(source, "specUrl");
@@ -364,7 +368,12 @@ function ModelView(props: {
 
   const filteredTools = props.bundle.tools.filter((tool) => {
     if (terms.length === 0) return true;
-    const corpus = [tool.path, tool.method ?? ""]
+    const corpus = [
+      tool.path,
+      tool.method ?? "",
+      tool.inputTypePreview ?? "",
+      tool.outputTypePreview ?? "",
+    ]
       .join(" ")
       .toLowerCase();
     return terms.every((t) => corpus.includes(t));
@@ -733,6 +742,14 @@ function ToolDetailPanel(props: { detail: SourceInspectionToolDetail }) {
                 </span>
               )}
             </div>
+            <div className="mt-2 rounded-md border border-border bg-card/70 px-2.5 py-2">
+              <div className="mb-1 text-[10px] font-medium uppercase tracking-wider text-muted-foreground/60">
+                TypeScript Signature
+              </div>
+              <pre className="overflow-x-auto whitespace-pre-wrap font-mono text-[12px] text-foreground">
+                {detail.contract.callDeclaration}
+              </pre>
+            </div>
           </div>
         </div>
       </div>
@@ -740,6 +757,66 @@ function ToolDetailPanel(props: { detail: SourceInspectionToolDetail }) {
       {/* Body */}
       <div className="flex-1 overflow-y-auto">
         <div className="px-5 py-4 space-y-4">
+          <section className="overflow-hidden rounded-lg border border-border bg-card/60">
+            <div className="border-b border-border px-3 py-2 text-[11px] font-medium uppercase tracking-wider text-muted-foreground/70">
+              Contract
+            </div>
+            <div className="grid grid-cols-1 gap-3 p-3 xl:grid-cols-2">
+              <DocumentPanel
+                title="Input Type"
+                body={detail.contract.input.typeDeclaration}
+                lang="typescript"
+                empty="No input type."
+              />
+              <DocumentPanel
+                title="Output Type"
+                body={detail.contract.output.typeDeclaration}
+                lang="typescript"
+                empty="No output type."
+              />
+            </div>
+          </section>
+
+          <section className="overflow-hidden rounded-lg border border-border bg-card/60">
+            <div className="border-b border-border px-3 py-2 text-[11px] font-medium uppercase tracking-wider text-muted-foreground/70">
+              Schemas
+            </div>
+            <div className="grid grid-cols-1 gap-3 p-3 xl:grid-cols-2">
+              <DocumentPanel
+                title="Input Schema"
+                body={detail.contract.input.schemaJson}
+                lang="json"
+                empty="No input schema."
+                compact
+              />
+              <DocumentPanel
+                title="Output Schema"
+                body={detail.contract.output.schemaJson}
+                lang="json"
+                empty="No output schema."
+                compact
+              />
+              {detail.contract.input.exampleJson && (
+                <DocumentPanel
+                  title="Example Request"
+                  body={detail.contract.input.exampleJson}
+                  lang="json"
+                  empty=""
+                  compact
+                />
+              )}
+              {detail.contract.output.exampleJson && (
+                <DocumentPanel
+                  title="Example Response"
+                  body={detail.contract.output.exampleJson}
+                  lang="json"
+                  empty=""
+                  compact
+                />
+              )}
+            </div>
+          </section>
+
           {detail.sections.map((section, index) => {
             if (section.kind === "facts") {
               return (
@@ -884,6 +961,30 @@ function DiscoveryView(props: {
                       <p className="text-[12px] text-muted-foreground leading-relaxed line-clamp-2">
                         {item.description}
                       </p>
+                    )}
+                    {(item.inputTypePreview || item.outputTypePreview) && (
+                      <div className="mt-2 grid grid-cols-1 gap-2 md:grid-cols-2">
+                        {item.inputTypePreview && (
+                          <div className="rounded-md border border-border/70 bg-background/70 px-2.5 py-2">
+                            <div className="mb-1 text-[10px] font-medium uppercase tracking-wider text-muted-foreground/55">
+                              Input
+                            </div>
+                            <div className="font-mono text-[11px] text-foreground/85 line-clamp-3">
+                              {item.inputTypePreview}
+                            </div>
+                          </div>
+                        )}
+                        {item.outputTypePreview && (
+                          <div className="rounded-md border border-border/70 bg-background/70 px-2.5 py-2">
+                            <div className="mb-1 text-[10px] font-medium uppercase tracking-wider text-muted-foreground/55">
+                              Output
+                            </div>
+                            <div className="font-mono text-[11px] text-foreground/85 line-clamp-3">
+                              {item.outputTypePreview}
+                            </div>
+                          </div>
+                        )}
+                      </div>
                     )}
                   </button>
                 ))}

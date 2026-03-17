@@ -19,6 +19,7 @@ import * as Effect from "effect/Effect";
 import { LocalSourceArtifactMissingError } from "../local/errors";
 import { operationErrors } from "../policy/operation-errors";
 import {
+  buildLoadedSourceCatalogToolContract,
   expandCatalogToolByPath,
   expandCatalogTools,
   loadSourceWithCatalog,
@@ -107,6 +108,12 @@ const executableDetails = (tool: LoadedSourceCatalogTool) => {
 const inspectionToolListItemFromTool = (tool: LoadedSourceCatalogTool): SourceInspectionToolListItem => ({
   path: tool.path,
   method: executableDetails(tool).method,
+  ...(tool.descriptor.contract?.inputTypePreview
+    ? { inputTypePreview: tool.descriptor.contract.inputTypePreview }
+    : {}),
+  ...(tool.descriptor.contract?.outputTypePreview
+    ? { outputTypePreview: tool.descriptor.contract.outputTypePreview }
+    : {}),
 });
 
 const persistedToolSummaryFromTool = (tool: LoadedSourceCatalogTool): SourceInspectionToolSummary => {
@@ -128,11 +135,11 @@ const persistedToolSummaryFromTool = (tool: LoadedSourceCatalogTool): SourceInsp
     tags: [...details.tags],
     method: details.method,
     pathTemplate: details.pathTemplate,
-    ...(tool.descriptor.inputTypePreview
-      ? { inputTypePreview: tool.descriptor.inputTypePreview }
+    ...(tool.descriptor.contract?.inputTypePreview
+      ? { inputTypePreview: tool.descriptor.contract.inputTypePreview }
       : {}),
-    ...(tool.descriptor.outputTypePreview
-      ? { outputTypePreview: tool.descriptor.outputTypePreview }
+    ...(tool.descriptor.contract?.outputTypePreview
+      ? { outputTypePreview: tool.descriptor.contract.outputTypePreview }
       : {}),
   };
 };
@@ -157,85 +164,89 @@ const jsonSection = (
 
 export const inspectionToolDetailFromTool = (
   tool: LoadedSourceCatalogTool,
-): SourceInspectionToolDetail => {
-  const summary = persistedToolSummaryFromTool(tool);
-  const details = executableDetails(tool);
-  const overviewItems = [
-    { label: "Protocol", value: details.protocol },
-    ...(details.method ? [{ label: "Method", value: details.method, mono: true }] : []),
-    ...(details.pathTemplate ? [{ label: "Target", value: details.pathTemplate, mono: true }] : []),
-    ...(details.operationId ? [{ label: "Operation", value: details.operationId, mono: true }] : []),
-    ...(details.group ? [{ label: "Group", value: details.group, mono: true }] : []),
-    ...(details.leaf ? [{ label: "Leaf", value: details.leaf, mono: true }] : []),
-    ...(details.rawToolId ? [{ label: "Raw tool", value: details.rawToolId, mono: true }] : []),
-    { label: "Call shape", value: tool.projectedDescriptor.callShapeId, mono: true },
-    ...(tool.projectedDescriptor.resultShapeId
-      ? [{ label: "Result shape", value: tool.projectedDescriptor.resultShapeId, mono: true }]
-      : []),
-  ];
-  const nativeSections = [
-    ...(tool.capability.native ?? []).map((blob, index) => ({
-      kind: "code" as const,
-      title: `Capability native ${String(index + 1)}: ${blob.kind}`,
-      language: nativeEncodingLanguage(blob.encoding),
-      body:
-        typeof blob.value === "string"
-          ? blob.value
-          : JSON.stringify(blob.value ?? null, null, 2),
-    })),
-    ...(tool.executable.native ?? []).map((blob, index) => ({
-      kind: "code" as const,
-      title: `Executable native ${String(index + 1)}: ${blob.kind}`,
-      language: nativeEncodingLanguage(blob.encoding),
-      body:
-        typeof blob.value === "string"
-          ? blob.value
-          : JSON.stringify(blob.value ?? null, null, 2),
-    })),
-  ];
-  const sections = [
-    {
-      kind: "facts" as const,
-      title: "Overview",
-      items: overviewItems,
-    },
-    ...(summary.description
-      ? [{
-          kind: "markdown" as const,
-          title: "Description",
-          body: summary.description,
-        }]
-      : []),
-    ...([
-      jsonSection("Input Schema", tool.descriptor.inputSchema),
-      jsonSection("Output Schema", tool.descriptor.outputSchema),
-      jsonSection("Capability", tool.capability),
-      jsonSection("Executable", {
-        id: tool.executable.id,
-        adapterKey: tool.executable.adapterKey,
-        bindingVersion: tool.executable.bindingVersion,
-        binding: tool.executable.binding,
-        projection: tool.executable.projection,
-        display: tool.executable.display ?? null,
-      }),
-      jsonSection("Documentation", {
-        summary: tool.capability.surface.summary,
-        description: tool.capability.surface.description,
-      }),
-    ].filter((section) => section !== null) as Array<SourceInspectionToolDetail["sections"][number]>),
-    ...nativeSections,
-  ];
+): Effect.Effect<SourceInspectionToolDetail, Error, never> =>
+  Effect.gen(function* () {
+    const summary = persistedToolSummaryFromTool(tool);
+    const details = executableDetails(tool);
+    const contract = yield* buildLoadedSourceCatalogToolContract(tool);
+    const overviewItems = [
+      { label: "Protocol", value: details.protocol },
+      ...(details.method ? [{ label: "Method", value: details.method, mono: true }] : []),
+      ...(details.pathTemplate ? [{ label: "Target", value: details.pathTemplate, mono: true }] : []),
+      ...(details.operationId ? [{ label: "Operation", value: details.operationId, mono: true }] : []),
+      ...(details.group ? [{ label: "Group", value: details.group, mono: true }] : []),
+      ...(details.leaf ? [{ label: "Leaf", value: details.leaf, mono: true }] : []),
+      ...(details.rawToolId ? [{ label: "Raw tool", value: details.rawToolId, mono: true }] : []),
+      { label: "Signature", value: contract.callSignature, mono: true },
+      { label: "Call shape", value: contract.callShapeId, mono: true },
+      ...(contract.resultShapeId
+        ? [{ label: "Result shape", value: contract.resultShapeId, mono: true }]
+        : []),
+      { label: "Response set", value: contract.responseSetId, mono: true },
+    ];
+    const nativeSections = [
+      ...(tool.capability.native ?? []).map((blob, index) => ({
+        kind: "code" as const,
+        title: `Capability native ${String(index + 1)}: ${blob.kind}`,
+        language: nativeEncodingLanguage(blob.encoding),
+        body:
+          typeof blob.value === "string"
+            ? blob.value
+            : JSON.stringify(blob.value ?? null, null, 2),
+      })),
+      ...(tool.executable.native ?? []).map((blob, index) => ({
+        kind: "code" as const,
+        title: `Executable native ${String(index + 1)}: ${blob.kind}`,
+        language: nativeEncodingLanguage(blob.encoding),
+        body:
+          typeof blob.value === "string"
+            ? blob.value
+            : JSON.stringify(blob.value ?? null, null, 2),
+      })),
+    ];
+    const sections = [
+      {
+        kind: "facts" as const,
+        title: "Overview",
+        items: overviewItems,
+      },
+      ...(summary.description
+        ? [{
+            kind: "markdown" as const,
+            title: "Description",
+            body: summary.description,
+          }]
+        : []),
+      ...([
+        jsonSection("Capability", tool.capability),
+        jsonSection("Executable", {
+          id: tool.executable.id,
+          adapterKey: tool.executable.adapterKey,
+          bindingVersion: tool.executable.bindingVersion,
+          binding: tool.executable.binding,
+          projection: tool.executable.projection,
+          display: tool.executable.display ?? null,
+        }),
+        jsonSection("Documentation", {
+          summary: tool.capability.surface.summary,
+          description: tool.capability.surface.description,
+        }),
+      ].filter((section) => section !== null) as Array<SourceInspectionToolDetail["sections"][number]>),
+      ...nativeSections,
+    ];
 
-  return ({
-    summary,
-    sections,
+    return {
+      summary,
+      contract,
+      sections,
+    } satisfies SourceInspectionToolDetail;
   });
-};
 
 const resolveSourceInspection = (input: {
   workspaceId: WorkspaceId;
   sourceId: SourceId;
   includeSchemas: boolean;
+  includeTypePreviews: boolean;
 }) =>
   Effect.gen(function* () {
     const loaded = yield* loadSourceCatalogOrEmpty({
@@ -255,7 +266,7 @@ const resolveSourceInspection = (input: {
     const tools = yield* expandCatalogTools({
       catalogs: [loaded.catalogEntry],
       includeSchemas: input.includeSchemas,
-      includeTypePreviews: input.includeSchemas,
+      includeTypePreviews: input.includeTypePreviews,
     });
 
     return {
@@ -289,8 +300,8 @@ const resolveSourceInspectionTool = (input: {
     const tool = yield* expandCatalogToolByPath({
       catalogs: [loaded.catalogEntry],
       path: input.toolPath,
-      includeSchemas: false,
-      includeTypePreviews: false,
+      includeSchemas: true,
+      includeTypePreviews: true,
     });
 
     return {
@@ -382,6 +393,7 @@ export const getSourceInspection = (input: {
     const inspection = yield* resolveSourceInspection({
       ...input,
       includeSchemas: false,
+      includeTypePreviews: true,
     });
 
     return {
@@ -420,7 +432,7 @@ export const getSourceInspectionToolDetail = (input: {
         );
     }
 
-    return inspectionToolDetailFromTool(tool);
+    return yield* inspectionToolDetailFromTool(tool);
   }).pipe(
     Effect.mapError((cause) =>
       mapInspectionError(
@@ -440,6 +452,7 @@ export const discoverSourceInspectionTools = (input: {
       workspaceId: input.workspaceId,
       sourceId: input.sourceId,
       includeSchemas: false,
+      includeTypePreviews: true,
     });
     const queryTokens = tokenize(input.payload.query);
     const results = inspection.tools

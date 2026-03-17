@@ -362,10 +362,10 @@ describe("source adapter fixture matrix", () => {
           Object.keys(snapshot.catalog.capabilities).length,
         ).toBeGreaterThan(250);
         expect(tool).toBeDefined();
-        expect(tool?.descriptor.inputTypePreview).not.toContain("unknown");
-        expect(tool?.descriptor.outputTypePreview).toContain("data:");
-        expect(tool?.descriptor.outputTypePreview).toContain("status:");
-        expect(tool?.descriptor.inputSchema).toMatchObject({
+        expect(tool?.descriptor.contract?.inputTypePreview).not.toContain("unknown");
+        expect(tool?.descriptor.contract?.outputTypePreview).toContain("data:");
+        expect(tool?.descriptor.contract?.outputTypePreview).toContain("status:");
+        expect(tool?.descriptor.contract?.inputSchema).toMatchObject({
           type: "object",
           properties: {
             idOrName: {
@@ -428,8 +428,8 @@ describe("source adapter fixture matrix", () => {
 
         expect(manifest.tools.length).toBeGreaterThan(50);
         expect(tool).toBeDefined();
-        expect(tool?.descriptor.inputTypePreview).toContain("key_name");
-        expect(tool?.descriptor.inputSchema).toMatchObject({
+        expect(tool?.descriptor.contract?.inputTypePreview).toContain("key_name");
+        expect(tool?.descriptor.contract?.inputSchema).toMatchObject({
           type: "object",
           properties: {
             body: {
@@ -444,7 +444,7 @@ describe("source adapter fixture matrix", () => {
           },
           required: ["body"],
         });
-        expect(tool?.descriptor.outputSchema).toMatchObject({
+        expect(tool?.descriptor.contract?.outputSchema).toMatchObject({
           type: "object",
           properties: {
             data: {
@@ -452,7 +452,7 @@ describe("source adapter fixture matrix", () => {
             },
           },
         });
-        const outputSchema = tool?.descriptor.outputSchema;
+        const outputSchema = tool?.descriptor.contract?.outputSchema;
         const dataVariants =
           outputSchema && typeof outputSchema === "object"
             ? (
@@ -979,10 +979,10 @@ describe("source adapter fixture matrix", () => {
           Object.keys(snapshot.catalog.capabilities).length,
         ).toBeGreaterThan(10);
         expect(tool).toBeDefined();
-        expect(tool?.descriptor.inputTypePreview).not.toContain("unknown");
-        expect(tool?.descriptor.outputTypePreview).toContain("data:");
-        expect(tool?.descriptor.outputTypePreview).toContain("status:");
-        expect(tool?.descriptor.inputSchema).toMatchObject({
+        expect(tool?.descriptor.contract?.inputTypePreview).not.toContain("unknown");
+        expect(tool?.descriptor.contract?.outputTypePreview).toContain("data:");
+        expect(tool?.descriptor.contract?.outputTypePreview).toContain("status:");
+        expect(tool?.descriptor.contract?.inputSchema).toMatchObject({
           type: "object",
           properties: {
             spreadsheetId: {
@@ -1001,7 +1001,7 @@ describe("source adapter fixture matrix", () => {
             },
           },
         });
-        expect(JSON.stringify(tool?.descriptor.outputSchema)).toContain(
+        expect(JSON.stringify(tool?.descriptor.contract?.outputSchema)).toContain(
           '"gridProperties"',
         );
         expect(
@@ -1111,11 +1111,11 @@ describe("source adapter fixture matrix", () => {
           ),
         ).toEqual([]);
         expect(tool).toBeDefined();
-        expect(tool?.descriptor.inputTypePreview).toContain("{");
-        expect(tool?.descriptor.inputTypePreview).toContain("input: {");
-        expect(tool?.descriptor.outputTypePreview).toContain("data:");
-        expect(tool?.descriptor.outputTypePreview).not.toContain("unknown[]");
-        expect(tool?.descriptor.inputSchema).toMatchObject({
+        expect(tool?.descriptor.contract?.inputTypePreview).toContain("{");
+        expect(tool?.descriptor.contract?.inputTypePreview).toContain("input: {");
+        expect(tool?.descriptor.contract?.outputTypePreview).toContain("data:");
+        expect(tool?.descriptor.contract?.outputTypePreview).not.toContain("unknown[]");
+        expect(tool?.descriptor.contract?.inputSchema).toMatchObject({
           type: "object",
           required: ["input"],
           properties: {
@@ -1303,7 +1303,7 @@ describe("source adapter fixture matrix", () => {
             );
           }
 
-          expect(tool.descriptor.outputSchema).toMatchObject({
+          expect(tool.descriptor.contract?.outputSchema).toMatchObject({
             type: "object",
             properties: {
               data: {

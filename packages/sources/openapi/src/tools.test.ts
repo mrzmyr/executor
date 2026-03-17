@@ -354,7 +354,7 @@ describe("openapi-tools", () => {
       expect(resolvedGet.metadata?.sourceKey).toBe("api.demo");
       expect(resolvedGet.metadata?.providerKind).toBe("openapi");
       expect(resolvedGet.metadata?.providerData).toMatchObject({ group: "repos" });
-      expect(resolvedGet.metadata?.inputSchema).toBeDefined();
+      expect(resolvedGet.metadata?.contract?.inputSchema).toBeDefined();
     }),
   );
 

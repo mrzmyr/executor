@@ -2,7 +2,12 @@ import { createHash } from "node:crypto";
 
 import type { ProjectedCatalog } from "@executor/ir/catalog";
 import type { ShapeSymbolId } from "@executor/ir/ids";
-import type { CatalogV1, ShapeNode, ShapeSymbol } from "@executor/ir/model";
+import type {
+  CatalogV1,
+  DocumentationBlock,
+  ShapeNode,
+  ShapeSymbol,
+} from "@executor/ir/model";
 
 export type CatalogTypeRoot = {
   readonly shapeId: ShapeSymbolId;
@@ -128,7 +133,9 @@ const objectTypeLiteral = (
 
   return [
     "{",
-    ...lines.map((line) => `${indent}${line}`),
+    ...lines.flatMap((line) =>
+      line.split("\n").map((segment) => `${indent}${segment}`)
+    ),
     `${indent.slice(0, -2)}}`,
   ].join("\n");
 };
@@ -152,6 +159,73 @@ const isSyntheticShapeLabel = (value: string): boolean =>
   /^shape_[a-f0-9_]+$/i.test(value);
 
 const looksLikeHumanPhrase = (value: string): boolean => /\s/.test(value.trim());
+
+const cleanDocText = (value: string | undefined): string | null => {
+  const trimmed = value?.trim();
+  return trimmed && trimmed.length > 0 ? trimmed : null;
+};
+
+const escapeJsDocText = (value: string): string => value.replace(/\*\//g, "*\\/");
+
+const pushParagraphLines = (
+  lines: Array<string>,
+  value: string | null,
+): void => {
+  if (!value) {
+    return;
+  }
+
+  if (lines.length > 0) {
+    lines.push("");
+  }
+
+  for (const line of value.split(/\r?\n/)) {
+    lines.push(escapeJsDocText(line.trimEnd()));
+  }
+};
+
+export const documentationComment = (input: {
+  title?: string;
+  docs?: DocumentationBlock;
+  deprecated?: boolean;
+  includeTitle?: boolean;
+}): string | null => {
+  const lines: Array<string> = [];
+  const title = input.includeTitle && input.title && looksLikeHumanPhrase(input.title)
+    ? cleanDocText(input.title)
+    : null;
+  const summary = cleanDocText(input.docs?.summary);
+  const description = cleanDocText(input.docs?.description);
+  const externalDocsUrl = cleanDocText(input.docs?.externalDocsUrl);
+
+  pushParagraphLines(lines, title && title !== summary ? title : null);
+  pushParagraphLines(lines, summary);
+  pushParagraphLines(lines, description && description !== summary ? description : null);
+
+  if (externalDocsUrl) {
+    if (lines.length > 0) {
+      lines.push("");
+    }
+    lines.push(`@see ${escapeJsDocText(externalDocsUrl)}`);
+  }
+
+  if (input.deprecated) {
+    if (lines.length > 0) {
+      lines.push("");
+    }
+    lines.push("@deprecated");
+  }
+
+  if (lines.length === 0) {
+    return null;
+  }
+
+  return [
+    "/**",
+    ...lines.map((line) => line.length > 0 ? ` * ${line}` : " *"),
+    " */",
+  ].join("\n");
+};
 
 const compactAliasHint = (value: string): string => {
   const segments = typeNameWords(value);
@@ -254,16 +328,27 @@ const renderObjectNode = (
   stack: readonly ShapeSymbolId[],
   aliasHint: string | undefined,
   renderShape: RenderShape,
+  includeDocs: boolean,
 ): string => {
   const required = new Set(node.required);
   const lines = Object.keys(node.fields)
     .sort((left, right) => left.localeCompare(right))
-    .map((key) =>
-      `${formatPropertyKey(key)}${required.has(key) ? "" : "?"}: ${renderShape(node.fields[key]!.shapeId, {
-        stack,
-        aliasHint: aliasHint ? joinTypeNameSegments(aliasHint, key) : key,
-      })};`
-    );
+    .map((key) => {
+      const field = node.fields[key]!;
+      const propertyLine =
+        `${formatPropertyKey(key)}${required.has(key) ? "" : "?"}: ${renderShape(field.shapeId, {
+          stack,
+          aliasHint: aliasHint ? joinTypeNameSegments(aliasHint, key) : key,
+        })};`;
+      const comment = includeDocs
+        ? documentationComment({
+            docs: field.docs,
+            deprecated: field.deprecated,
+          })
+        : null;
+
+      return comment ? `${comment}\n${propertyLine}` : propertyLine;
+    });
 
   const patternShapeIds = Object.values(node.patternProperties ?? {});
   const hasUnknownIndex = node.additionalProperties === true;
@@ -290,6 +375,7 @@ const renderObjectFields = (
   stack: readonly ShapeSymbolId[],
   aliasHint: string | undefined,
   renderShape: RenderShape,
+  includeDocs: boolean,
 ): string =>
   renderObjectNode(
     {
@@ -301,6 +387,7 @@ const renderObjectFields = (
     stack,
     aliasHint,
     renderShape,
+    includeDocs,
   );
 
 const renderShapeBody = (
@@ -309,6 +396,7 @@ const renderShapeBody = (
   stack: readonly ShapeSymbolId[],
   aliasHint: string | undefined,
   renderShape: RenderShape,
+  includeDocs: boolean,
 ): string => {
   const shape = getShapeSymbol(catalog, shapeId);
   const node = shape.node;
@@ -321,7 +409,7 @@ const renderShapeBody = (
       return renderInlineShapeNode(node);
     case "object":
     case "graphqlInterface":
-      return renderObjectFields(node, stack, aliasHint, renderShape);
+      return renderObjectFields(node, stack, aliasHint, renderShape, includeDocs);
     case "array":
       return `Array<${wrapCompositeType(renderShape(node.itemShapeId, {
         stack,
@@ -714,6 +802,7 @@ export const createCatalogTypeProjector = (input: {
     stack: readonly ShapeSymbolId[],
     aliasHint: string | undefined,
     renderShape: RenderShape,
+    includeDocs: boolean,
   ): string | null => {
     const variants = shapeIds.map((shapeId) => resolveUnionVariantObject(shapeId));
     if (variants.some((variant) => variant === null)) {
@@ -769,7 +858,7 @@ export const createCatalogTypeProjector = (input: {
     }
 
     const baseText = baseHasSharedStructure
-      ? renderObjectNode(sharedNode, stack, aliasHint, renderShape)
+      ? renderObjectNode(sharedNode, stack, aliasHint, renderShape, includeDocs)
       : null;
 
     const variantTexts = objectVariants.map((variant, index) => {
@@ -786,6 +875,7 @@ export const createCatalogTypeProjector = (input: {
         stack,
         aliasHint ? joinTypeNameSegments(aliasHint, variantAliasLabel(discriminator, index)) : variantAliasLabel(discriminator, index),
         renderShape,
+        includeDocs,
       );
     });
     const unionText = variantTexts.map((variantText) => wrapCompositeType(variantText)).join(" | ");
@@ -857,15 +947,21 @@ export const createCatalogTypeProjector = (input: {
     switch (shape.node.type) {
       case "anyOf":
       case "oneOf": {
-        const normalized = normalizedUnionRender(shape.node.items, stack, aliasHint, renderDeclarationShape);
-        return normalized ?? renderShapeBody(catalog, shapeId, stack, aliasHint, renderDeclarationShape);
+        const normalized = normalizedUnionRender(
+          shape.node.items,
+          stack,
+          aliasHint,
+          renderDeclarationShape,
+          true,
+        );
+        return normalized ?? renderShapeBody(catalog, shapeId, stack, aliasHint, renderDeclarationShape, true);
       }
       case "graphqlUnion": {
-        const normalized = normalizedUnionRender(shape.node.memberTypeIds, stack, aliasHint, renderDeclarationShape);
-        return normalized ?? renderShapeBody(catalog, shapeId, stack, aliasHint, renderDeclarationShape);
+        const normalized = normalizedUnionRender(shape.node.memberTypeIds, stack, aliasHint, renderDeclarationShape, true);
+        return normalized ?? renderShapeBody(catalog, shapeId, stack, aliasHint, renderDeclarationShape, true);
       }
       default:
-        return renderShapeBody(catalog, shapeId, stack, aliasHint, renderDeclarationShape);
+        return renderShapeBody(catalog, shapeId, stack, aliasHint, renderDeclarationShape, true);
     }
   };
 
@@ -921,16 +1017,49 @@ export const createCatalogTypeProjector = (input: {
     switch (shape.node.type) {
       case "anyOf":
       case "oneOf": {
-        const normalized = normalizedUnionRender(shape.node.items, [...stack, shapeId], options.aliasHint, renderSelfContainedShape);
-        return normalized ?? renderShapeBody(catalog, shapeId, [...stack, shapeId], options.aliasHint, renderSelfContainedShape);
+        const normalized = normalizedUnionRender(
+          shape.node.items,
+          [...stack, shapeId],
+          options.aliasHint,
+          renderSelfContainedShape,
+          false,
+        );
+        return normalized ?? renderShapeBody(
+          catalog,
+          shapeId,
+          [...stack, shapeId],
+          options.aliasHint,
+          renderSelfContainedShape,
+          false,
+        );
       }
       case "graphqlUnion": {
-        const normalized = normalizedUnionRender(shape.node.memberTypeIds, [...stack, shapeId], options.aliasHint, renderSelfContainedShape);
-        return normalized ?? renderShapeBody(catalog, shapeId, [...stack, shapeId], options.aliasHint, renderSelfContainedShape);
+        const normalized = normalizedUnionRender(
+          shape.node.memberTypeIds,
+          [...stack, shapeId],
+          options.aliasHint,
+          renderSelfContainedShape,
+          false,
+        );
+        return normalized ?? renderShapeBody(
+          catalog,
+          shapeId,
+          [...stack, shapeId],
+          options.aliasHint,
+          renderSelfContainedShape,
+          false,
+        );
       }
     }
 
-    return renderShapeBody(catalog, shapeId, [...stack, shapeId], options.aliasHint, renderSelfContainedShape);
+    return renderShapeBody(
+      catalog,
+      shapeId,
+      [...stack, shapeId],
+      options.aliasHint,
+      renderSelfContainedShape,
+      false,
+    );
   };
 
   const supportingDeclarations = (): readonly string[] => {
@@ -960,11 +1089,25 @@ export const createCatalogTypeProjector = (input: {
         const canonicalType = canonicalTypeForSignature(signature);
         const representativeShapeId = representativeShapeIdForSignature(signature);
         const aliasName = aliasNameForSignature(signature);
+        const representativeShape = getShapeSymbol(catalog, representativeShapeId);
+        const comment = documentationComment({
+          title: representativeShape.title,
+          docs: representativeShape.docs,
+          deprecated: representativeShape.deprecated,
+          includeTitle: true,
+        });
         if (canonicalType !== aliasName) {
-          return `type ${aliasName} = ${canonicalType};`;
+          return comment
+            ? `${comment}\ntype ${aliasName} = ${canonicalType};`
+            : `type ${aliasName} = ${canonicalType};`;
         }
         const body = renderDeclarationShapeBody(representativeShapeId, [representativeShapeId], aliasName);
-        return body === aliasName ? "" : `type ${aliasName} = ${body};`;
+        if (body === aliasName) {
+          return "";
+        }
+
+        const declaration = `type ${aliasName} = ${body};`;
+        return comment ? `${comment}\n${declaration}` : declaration;
       })
       .filter((declaration) => declaration.length > 0);
   };

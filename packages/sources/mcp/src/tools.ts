@@ -503,12 +503,14 @@ export const createMcpToolsFromManifest = (input: {
           },
           metadata: {
             sourceKey,
-            ...(entry.inputSchema !== undefined
-              ? { inputSchema: entry.inputSchema }
-              : {}),
-            ...(entry.outputSchema !== undefined
-              ? { outputSchema: entry.outputSchema }
-              : {}),
+            contract: {
+              ...(entry.inputSchema !== undefined
+                ? { inputSchema: entry.inputSchema }
+                : {}),
+              ...(entry.outputSchema !== undefined
+                ? { outputSchema: entry.outputSchema }
+                : {}),
+            },
           },
         }),
       ] as const;

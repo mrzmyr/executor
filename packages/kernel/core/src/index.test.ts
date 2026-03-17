@@ -289,16 +289,20 @@ describe("codemode-core", () => {
           path: asToolPath("source.docs.search"),
           sourceKey: "source.docs",
           description: "Search docs",
-          inputTypePreview: "object",
-          outputTypePreview: "object",
+          contract: {
+            inputTypePreview: "object",
+            outputTypePreview: "object",
+          },
         },
         "source.issues.create": {
           path: asToolPath("source.issues.create"),
           sourceKey: "source.issues",
           description: "Create issue",
           interaction: "required",
-          inputTypePreview: "object",
-          outputTypePreview: "object",
+          contract: {
+            inputTypePreview: "object",
+            outputTypePreview: "object",
+          },
         },
       };
 
@@ -327,8 +331,24 @@ describe("codemode-core", () => {
               .slice(0, limit)
               .map((descriptor) => ({
                 ...descriptor,
-                inputSchema: includeSchemas ? descriptor.inputSchema : undefined,
-                outputSchema: includeSchemas ? descriptor.outputSchema : undefined,
+                ...(descriptor.contract
+                  ? {
+                      contract: {
+                        ...(descriptor.contract.inputTypePreview !== undefined
+                          ? { inputTypePreview: descriptor.contract.inputTypePreview }
+                          : {}),
+                        ...(descriptor.contract.outputTypePreview !== undefined
+                          ? { outputTypePreview: descriptor.contract.outputTypePreview }
+                          : {}),
+                        ...(includeSchemas && descriptor.contract.inputSchema !== undefined
+                          ? { inputSchema: descriptor.contract.inputSchema }
+                          : {}),
+                        ...(includeSchemas && descriptor.contract.outputSchema !== undefined
+                          ? { outputSchema: descriptor.contract.outputSchema }
+                          : {}),
+                      },
+                    }
+                  : {}),
               })),
           ),
         getToolByPath: ({ path }) =>
@@ -367,9 +387,11 @@ describe("codemode-core", () => {
               path: asToolPath("github.repos.getRepo"),
               sourceKey: "source.github",
               description: "Get repository details",
-              inputTypePreview: "{ owner: string; repo: string }",
-              outputTypePreview: "Repository",
-              inputSchema: { type: "object" },
+              contract: {
+                inputTypePreview: "{ owner: string; repo: string }",
+                outputTypePreview: "Repository",
+                inputSchema: { type: "object" },
+              },
             },
           },
           {
@@ -383,8 +405,10 @@ describe("codemode-core", () => {
               path: asToolPath("github.issues.list"),
               sourceKey: "source.github",
               description: "List repository issues",
-              inputTypePreview: "{ owner: string; repo: string }",
-              outputTypePreview: "Issue[]",
+              contract: {
+                inputTypePreview: "{ owner: string; repo: string }",
+                outputTypePreview: "Issue[]",
+              },
             },
           },
         ],
@@ -403,7 +427,7 @@ describe("codemode-core", () => {
         includeSchemas: false,
       });
       expect(listed[0]?.path).toBe("github.repos.getRepo");
-      expect(listed[0]?.inputSchema).toBeUndefined();
+      expect(listed[0]?.contract?.inputSchema).toBeUndefined();
 
       const discovered = yield* catalog.searchTools({
         query: "repository issues",
@@ -415,7 +439,7 @@ describe("codemode-core", () => {
         path: asToolPath("github.repos.getRepo"),
         includeSchemas: true,
       });
-      expect(described?.inputSchema).toEqual({ type: "object" });
+      expect(described?.contract?.inputSchema).toEqual({ type: "object" });
     }),
   );
 

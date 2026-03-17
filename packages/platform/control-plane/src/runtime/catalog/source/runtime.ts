@@ -19,6 +19,7 @@ import {
   projectCatalogForAgentSdk,
   type ProjectedCatalog,
 } from "@executor/ir/catalog";
+import type { ShapeSymbolId } from "@executor/ir/ids";
 import type {
   Capability,
   CatalogSnapshotV1,
@@ -29,10 +30,13 @@ import type {
 import { LocalSourceArtifactMissingError } from "../../local/errors";
 import {
   createCatalogTypeProjector,
+  documentationComment,
   joinTypeNameSegments,
   projectedCatalogTypeRoots,
+  shapeAllowsOmittedArgs,
   type CatalogTypeProjector,
 } from "../catalog-typescript";
+import { formatWithPrettier } from "../prettier-format";
 import {
   RuntimeLocalWorkspaceService,
   type RuntimeLocalWorkspaceState,
@@ -85,6 +89,24 @@ export type LoadedSourceCatalogToolIndexEntry = Omit<
   "revision" | "projectedDescriptor" | "typeProjector"
 >;
 
+export type LoadedSourceCatalogToolContractSide = {
+  shapeId: string | null;
+  typePreview: string | null;
+  typeDeclaration: string | null;
+  schemaJson: string | null;
+  exampleJson: string | null;
+};
+
+export type LoadedSourceCatalogToolContract = {
+  callSignature: string;
+  callDeclaration: string;
+  callShapeId: string;
+  resultShapeId: string | null;
+  responseSetId: string;
+  input: LoadedSourceCatalogToolContractSide;
+  output: LoadedSourceCatalogToolContractSide;
+};
+
 export const catalogToolCatalogEntry = (input: {
   tool: LoadedSourceCatalogToolIndexEntry;
   score: (queryTokens: readonly string[]) => number;
@@ -101,6 +123,14 @@ const catalogNamespaceFromPath = (path: string): string => {
 };
 
 const descriptorPath = (descriptor: CatalogToolDescriptor): string => descriptor.path;
+
+const optionalJsonString = (value: unknown): string | null => {
+  if (value === undefined || value === null) {
+    return null;
+  }
+
+  return JSON.stringify(value, null, 2);
+};
 
 const projectedToolPath = (projected: ProjectedCatalog, capability: Capability): string =>
   projected.toolDescriptors[capability.id]?.toolPath.join(".") ?? "";
@@ -535,10 +565,12 @@ const codemodeDescriptorFromCapability = (input: {
     sourceKey: input.source.id,
     description: input.capability.surface.summary ?? input.capability.surface.description,
     interaction,
-    ...(inputSchema !== undefined ? { inputSchema } : {}),
-    ...(outputSchema !== undefined ? { outputSchema } : {}),
-    inputTypePreview,
-    ...(outputTypePreview !== undefined ? { outputTypePreview } : {}),
+    contract: {
+      inputTypePreview,
+      ...(outputTypePreview !== undefined ? { outputTypePreview } : {}),
+      ...(inputSchema !== undefined ? { inputSchema } : {}),
+      ...(outputSchema !== undefined ? { outputSchema } : {}),
+    },
     providerKind: input.executable.adapterKey,
     providerData: {
       capabilityId: input.capability.id,
@@ -576,6 +608,8 @@ const loadedCatalogToolFromCapability = (input: {
     input.capability.surface.title,
     input.capability.surface.summary,
     input.capability.surface.description,
+    descriptor.contract?.inputTypePreview,
+    descriptor.contract?.outputTypePreview,
     ...(searchDoc?.tags ?? []),
     ...(searchDoc?.protocolHints ?? []),
     ...(searchDoc?.authHints ?? []),
@@ -852,6 +886,199 @@ export const expandCatalogTools = (input: {
         })),
     ),
   );
+
+const declarationBlockForShape = (input: {
+  catalog: CatalogV1;
+  shapeId: ShapeSymbolId;
+  aliasHint: string;
+}): Effect.Effect<string, Error, never> =>
+  Effect.tryPromise({
+    try: async () => {
+      const projector = createCatalogTypeProjector({
+        catalog: input.catalog,
+        roots: [{
+          shapeId: input.shapeId,
+          aliasHint: input.aliasHint,
+        }],
+      });
+      const rootType = projector.renderDeclarationShape(input.shapeId, {
+        aliasHint: input.aliasHint,
+      });
+      const supportingDeclarations = projector.supportingDeclarations();
+      const rootDeclarationPrefix = `type ${input.aliasHint} =`;
+      const declarationText = supportingDeclarations.some((declaration) =>
+        declaration.includes(rootDeclarationPrefix)
+      )
+        ? supportingDeclarations.join("\n\n")
+        : [
+            ...supportingDeclarations,
+            typeAliasDeclaration({
+              catalog: input.catalog,
+              shapeId: input.shapeId,
+              aliasHint: input.aliasHint,
+              body: rootType,
+            }),
+          ].join("\n\n");
+
+      return formatWithPrettier(declarationText, "typescript-module");
+    },
+    catch: (cause) =>
+      cause instanceof Error ? cause : new Error(String(cause)),
+  });
+
+const formattedOptionalTypeExpression = (
+  value: string | undefined,
+): Effect.Effect<string | null, Error, never> =>
+  value === undefined
+    ? Effect.succeed(null)
+    : Effect.tryPromise({
+        try: () => formatWithPrettier(value, "typescript"),
+        catch: (cause) =>
+          cause instanceof Error ? cause : new Error(String(cause)),
+      });
+
+const formattedOptionalJson = (
+  value: unknown,
+): Effect.Effect<string | null, Error, never> => {
+  const serialized = optionalJsonString(value);
+  return serialized === null
+    ? Effect.succeed(null)
+    : Effect.tryPromise({
+        try: () => formatWithPrettier(serialized, "json"),
+        catch: (cause) =>
+          cause instanceof Error ? cause : new Error(String(cause)),
+      });
+};
+
+const lowerCamelCase = (value: string): string =>
+  value.length === 0 ? "tool" : `${value.slice(0, 1).toLowerCase()}${value.slice(1)}`;
+
+const typeAliasDeclaration = (input: {
+  catalog: CatalogV1;
+  shapeId: ShapeSymbolId;
+  aliasHint: string;
+  body: string;
+}): string => {
+  const shape = input.catalog.symbols[input.shapeId];
+  const comment = shape?.kind === "shape"
+    ? documentationComment({
+        title: shape.title,
+        docs: shape.docs,
+        deprecated: shape.deprecated,
+        includeTitle: true,
+      })
+    : null;
+  const declaration = `type ${input.aliasHint} = ${input.body};`;
+  return comment ? `${comment}\n${declaration}` : declaration;
+};
+
+export const buildLoadedSourceCatalogToolContract = (
+  tool: LoadedSourceCatalogTool,
+): Effect.Effect<LoadedSourceCatalogToolContract, Error, never> => {
+  const inputAlias = joinTypeNameSegments(...tool.projectedDescriptor.toolPath, "call");
+  const outputAlias = joinTypeNameSegments(...tool.projectedDescriptor.toolPath, "result");
+  const inputShapeId = tool.projectedDescriptor.callShapeId;
+  const outputShapeId = tool.projectedDescriptor.resultShapeId ?? null;
+  const argsOptional = shapeAllowsOmittedArgs(tool.projectedCatalog, inputShapeId);
+  const outputTypeName = outputShapeId ? outputAlias : "unknown";
+  const callFunctionName = lowerCamelCase(
+    joinTypeNameSegments(...tool.projectedDescriptor.toolPath),
+  );
+  const callComment = documentationComment({
+    title: tool.capability.surface.title,
+    docs: {
+      ...(tool.capability.surface.summary
+        ? { summary: tool.capability.surface.summary }
+        : {}),
+      ...(tool.capability.surface.description
+        ? { description: tool.capability.surface.description }
+        : {}),
+    },
+    includeTitle: true,
+  });
+
+  return Effect.gen(function* () {
+    const [
+      inputTypePreview,
+      outputTypePreview,
+      inputTypeDeclaration,
+      outputTypeDeclaration,
+      inputSchemaJson,
+      outputSchemaJson,
+      callSignature,
+      callDeclaration,
+    ] =
+      yield* Effect.all([
+        formattedOptionalTypeExpression(tool.descriptor.contract?.inputTypePreview),
+        formattedOptionalTypeExpression(tool.descriptor.contract?.outputTypePreview),
+        declarationBlockForShape({
+          catalog: tool.projectedCatalog,
+          shapeId: inputShapeId,
+          aliasHint: inputAlias,
+        }),
+        outputShapeId
+          ? declarationBlockForShape({
+              catalog: tool.projectedCatalog,
+              shapeId: outputShapeId,
+              aliasHint: outputAlias,
+            })
+          : Effect.succeed<string | null>(null),
+        formattedOptionalJson(
+          tool.descriptor.contract?.inputSchema
+          ?? shapeToJsonSchema(tool.projectedCatalog, inputShapeId),
+        ),
+        outputShapeId
+          ? formattedOptionalJson(
+              tool.descriptor.contract?.outputSchema
+              ?? shapeToJsonSchema(tool.projectedCatalog, outputShapeId),
+            )
+          : Effect.succeed<string | null>(null),
+        Effect.tryPromise({
+          try: () =>
+            formatWithPrettier(
+              `(${argsOptional ? "args?" : "args"}: ${inputAlias}) => Promise<${outputTypeName}>`,
+              "typescript",
+            ),
+          catch: (cause) =>
+            cause instanceof Error ? cause : new Error(String(cause)),
+        }),
+        Effect.tryPromise({
+          try: () =>
+            formatWithPrettier(
+              [
+                ...(callComment ? [callComment] : []),
+                `declare function ${callFunctionName}(${argsOptional ? "args?" : "args"}: ${inputAlias}): Promise<${outputTypeName}>;`,
+              ].join("\n"),
+              "typescript-module",
+            ),
+          catch: (cause) =>
+            cause instanceof Error ? cause : new Error(String(cause)),
+        }),
+      ]);
+
+    return {
+      callSignature,
+      callDeclaration,
+      callShapeId: inputShapeId,
+      resultShapeId: outputShapeId,
+      responseSetId: tool.projectedDescriptor.responseSetId,
+      input: {
+        shapeId: inputShapeId,
+        typePreview: inputTypePreview,
+        typeDeclaration: inputTypeDeclaration,
+        schemaJson: inputSchemaJson,
+        exampleJson: null,
+      },
+      output: {
+        shapeId: outputShapeId,
+        typePreview: outputTypePreview,
+        typeDeclaration: outputTypeDeclaration,
+        schemaJson: outputSchemaJson,
+        exampleJson: null,
+      },
+    } satisfies LoadedSourceCatalogToolContract;
+  });
+};
 
 export const expandCatalogToolByPath = (input: {
   catalogs: readonly LoadedSourceCatalog[];

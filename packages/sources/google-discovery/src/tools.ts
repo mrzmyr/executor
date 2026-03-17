@@ -456,12 +456,16 @@ export const createGoogleDiscoveryToolFromDefinition = (
     interaction: input.definition.method === "get" || input.definition.method === "head"
       ? "auto"
       : "required",
-    ...(presentation.inputSchema !== undefined
-      ? { inputSchema: presentation.inputSchema }
-      : {}),
-    ...(presentation.outputSchema !== undefined
-      ? { outputSchema: presentation.outputSchema }
-      : {}),
+    contract: {
+      inputTypePreview: presentation.inputTypePreview,
+      outputTypePreview: presentation.outputTypePreview,
+      ...(presentation.inputSchema !== undefined
+        ? { inputSchema: presentation.inputSchema }
+        : {}),
+      ...(presentation.outputSchema !== undefined
+        ? { outputSchema: presentation.outputSchema }
+        : {}),
+    },
     sourceKey: input.sourceKey,
     providerKind: "google_discovery",
     providerData,
