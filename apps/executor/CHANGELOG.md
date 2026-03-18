@@ -1,5 +1,11 @@
 # executor
 
+## 1.2.4-beta.0
+
+### Patch Changes
+
+- 74185a9: Move execution to adapters rather than IR model
+
 ## 1.2.3
 
 ### Patch Changes
