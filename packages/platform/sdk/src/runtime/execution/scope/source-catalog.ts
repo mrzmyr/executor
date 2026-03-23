@@ -1,6 +1,7 @@
 import {
   createToolCatalogFromEntries,
   type ToolCatalog,
+  type ToolNamespace,
 } from "@executor/codemode-core";
 import type {
   ScopeId,
@@ -79,6 +80,49 @@ const hasSubstringMatch = (value: string, queryToken: string): boolean => {
 
 const queryTokenWeight = (token: string): number =>
   LOW_SIGNAL_QUERY_TOKENS.has(token) ? 0.25 : 1;
+
+const namespaceFromPath = (path: string): string => {
+  const [first, second] = path.split(".");
+  return second ? `${first}.${second}` : first;
+};
+
+const sortNamespaces = (namespaces: Iterable<ToolNamespace>): ToolNamespace[] =>
+  [...namespaces].sort((left, right) => left.namespace.localeCompare(right.namespace));
+
+const loadWorkspaceCatalogNamespaces = (input: {
+  scopeId: Source["scopeId"];
+  actorScopeId: ScopeId;
+  sourceCatalogStore: Effect.Effect.Success<typeof RuntimeSourceCatalogStoreService>;
+}): Effect.Effect<
+  readonly ToolNamespace[],
+  Error,
+  ScopeStorageServices
+> =>
+  Effect.gen(function* () {
+    const catalogs = yield* input.sourceCatalogStore.loadWorkspaceSourceCatalogs({
+      scopeId: input.scopeId,
+      actorScopeId: input.actorScopeId,
+    });
+
+    const namespaces = new Map<string, ToolNamespace>();
+
+    for (const catalog of catalogs) {
+      if (!catalog.source.enabled || catalog.source.status !== "connected") {
+        continue;
+      }
+
+      for (const descriptor of Object.values(catalog.projected.toolDescriptors)) {
+        const namespace = namespaceFromPath(descriptor.toolPath.join("."));
+        const existing = namespaces.get(namespace);
+        namespaces.set(namespace, {
+          namespace,
+          toolCount: (existing?.toolCount ?? 0) + 1,
+        });
+      }
+    }
+
+    return sortNamespaces(namespaces.values());
+  });
 
 export const loadWorkspaceCatalogTools = (input: {
   scopeId: Source["scopeId"];
@@ -291,9 +335,14 @@ export const createScopeSourceCatalog = (input: {
   return {
     listNamespaces: ({ limit }) =>
       provideRuntimeLocalScope(
-        Effect.flatMap(createSharedCatalog(false), (catalog) =>
-          catalog.listNamespaces({ limit }),
-        ),
+        provideWorkspaceStorage(Effect.map(
+          loadWorkspaceCatalogNamespaces({
+            scopeId: input.scopeId,
+            actorScopeId: input.actorScopeId,
+            sourceCatalogStore: input.sourceCatalogStore,
+          }),
+          (namespaces) => namespaces.slice(0, limit),
+        )),
         input.runtimeLocalScope,
       ),
 
