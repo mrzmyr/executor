@@ -1,6 +1,9 @@
 import {
   randomUUID,
 } from "node:crypto";
+import {
+  fileURLToPath,
+} from "node:url";
 
 import {
   createMcpExpressApp,
@@ -68,6 +71,19 @@ import {
 type RealMcpServer = {
   endpoint: string;
   close: () => Promise<void>;
+};
+
+const PACKAGE_ROOT = fileURLToPath(new URL("../../../../", import.meta.url));
+const STDIO_SERVER_SCRIPT_PATH = fileURLToPath(
+  new URL("./__fixtures__/mcp-stdio-server.mjs", import.meta.url),
+);
+const BUN_COMMAND =
+  process.env.BUN_INSTALL && process.env.BUN_INSTALL.length > 0
+    ? `${process.env.BUN_INSTALL}/bin/bun`
+    : "bun";
+const STDIO_TEST_ENV = {
+  PATH: process.env.PATH ?? "",
+  HOME: process.env.HOME ?? "",
 };
 
 const makeLoadedCatalog = (input: {
@@ -567,40 +583,6 @@ const makeStatefulMcpServer = Effect.acquireRelease(
     }).pipe(Effect.orDie),
 );
 
-const STDIO_TEST_SERVER_SCRIPT = `
-import {
-  McpServer,
-} from "@modelcontextprotocol/sdk/server/mcp.js";
-import {
-  StdioServerTransport,
-} from "@modelcontextprotocol/sdk/server/stdio.js";
-import {
-  z,
-} from "zod/v4";
-
-const server = new McpServer(
-  { name: "mcp-stdio-test-server", version: "1.0.0" },
-  { capabilities: { tools: { listChanged: true } } },
-);
-
-server.registerTool(
-  "echo_stdio",
-  {
-    title: "Echo Stdio",
-    description: "Echo a value over stdio",
-    inputSchema: {
-      value: z.string(),
-    },
-  },
-  async ({ value }) => ({
-    content: [{ type: "text", text: "stdio:" + value }],
-  }),
-);
-
-const transport = new StdioServerTransport();
-await server.connect(transport);
-`;
-
 const makeStaticAuthProvider = (accessToken: string): OAuthClientProvider => ({
   get redirectUrl() {
     return "http://127.0.0.1/oauth/callback";
@@ -1020,10 +1002,10 @@ describe("mcp source adapter", () => {
             transport: "stdio",
             queryParams: null,
             headers: null,
-            command: "node",
-            args: ["--input-type=module", "-e", STDIO_TEST_SERVER_SCRIPT],
-            env: null,
-            cwd: process.cwd(),
+            command: BUN_COMMAND,
+            args: [STDIO_SERVER_SCRIPT_PATH],
+            env: STDIO_TEST_ENV,
+            cwd: PACKAGE_ROOT,
           },
           importAuthPolicy: "reuse_runtime",
           importAuth: { kind: "none" },

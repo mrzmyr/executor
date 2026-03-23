@@ -2,7 +2,7 @@ export type { CreateLocalExecutorBackendOptions } from "./index";
 export {
   buildLocalSourceArtifact,
   createLocalExecutorEffect,
-  createLocalExecutorServicesEffect,
+  createLocalExecutorRepositoriesEffect,
   deriveLocalInstallation,
   getOrProvisionLocalInstallation,
   loadLocalExecutorConfig,

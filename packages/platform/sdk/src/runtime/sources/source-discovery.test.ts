@@ -13,7 +13,7 @@ import * as Effect from "effect/Effect";
 
 import {
   discoverSource,
-} from "./source-discovery";
+} from "../../sources/discovery";
 
 type TestServer = {
   url: string;

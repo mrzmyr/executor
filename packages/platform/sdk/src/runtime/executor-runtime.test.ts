@@ -59,6 +59,7 @@ import {
 
 import {
   type ExecutorRuntime,
+  type ExecutorStateStoreShape,
   LiveExecutionManagerService,
   provideExecutorRuntime,
   RuntimeExecutionResolverService,
@@ -346,7 +347,7 @@ const upsertLocalSecret = (
     value: string;
   },
 ) =>
-  runtime.storage.executorState.secretMaterials.upsert({
+  executorStateForRuntime(runtime).secretMaterials.upsert({
     id: SecretMaterialIdSchema.make(input.id),
     providerId: "local",
     handle: input.id,
@@ -356,6 +357,21 @@ const upsertLocalSecret = (
     createdAt: Date.now(),
     updatedAt: Date.now(),
   });
+
+const executorStateForRuntime = (
+  runtime: ExecutorRuntime,
+): ExecutorStateStoreShape => ({
+  authArtifacts: runtime.storage.auth.artifacts,
+  authLeases: runtime.storage.auth.leases,
+  sourceOauthClients: runtime.storage.auth.sourceOauthClients,
+  scopeOauthClients: runtime.storage.auth.scopeOauthClients,
+  providerAuthGrants: runtime.storage.auth.providerGrants,
+  sourceAuthSessions: runtime.storage.auth.sourceSessions,
+  secretMaterials: runtime.storage.secrets,
+  executions: runtime.storage.executions.runs,
+  executionInteractions: runtime.storage.executions.interactions,
+  executionSteps: runtime.storage.executions.steps,
+});
 
 const createPersistedGoogleSource = (input: {
   runtime: ExecutorRuntime;
@@ -403,7 +419,7 @@ const createPersistedGoogleSource = (input: {
       now: Date.now(),
     });
 
-    return yield* persistSource(input.runtime.storage.executorState, source, {
+    return yield* persistSource(executorStateForRuntime(input.runtime), source, {
       actorScopeId: installation.actorScopeId,
     }).pipe((effect) => provideExecutorRuntime(effect, input.runtime));
   });
@@ -563,7 +579,7 @@ describe("executor-runtime", () => {
       expect(updated.name).toBe("GitHub PAT Updated");
 
       const storedSecret =
-        yield* runtime.storage.executorState.secretMaterials.getById(
+        yield* executorStateForRuntime(runtime).secretMaterials.getById(
           SecretMaterialIdSchema.make(created.id),
         );
       assertTrue(Option.isSome(storedSecret));
@@ -798,7 +814,7 @@ describe("executor-runtime", () => {
         );
         const now = Date.now();
 
-        yield* runtime.storage.executorState.executions.insert({
+        yield* executorStateForRuntime(runtime).executions.insert({
           id: executionId,
           scopeId: installation.scopeId,
           createdByScopeId: installation.actorScopeId,
@@ -833,7 +849,7 @@ describe("executor-runtime", () => {
           },
           now,
         }).pipe(Effect.orDie);
-        yield* persistSource(runtime.storage.executorState, localSource, {
+        yield* persistSource(executorStateForRuntime(runtime), localSource, {
           actorScopeId: installation.actorScopeId,
         }).pipe(
           (effect) => provideExecutorRuntime(effect, runtime),
@@ -843,7 +859,7 @@ describe("executor-runtime", () => {
         const interactionFiber = yield* Effect.gen(function* () {
           const liveExecutionManager = yield* LiveExecutionManagerService;
           const onElicitation = liveExecutionManager.createOnElicitation({
-            executorState: runtime.storage.executorState,
+            executorState: executorStateForRuntime(runtime),
             executionId,
           });
 
@@ -874,7 +890,7 @@ describe("executor-runtime", () => {
         const waitForPendingInteraction = (
           remaining: number,
         ): Effect.Effect<Option.Option<ExecutionInteraction>, Error> =>
-          runtime.storage.executorState.executionInteractions
+          executorStateForRuntime(runtime).executionInteractions
             .getPendingByExecutionId(executionId)
             .pipe(
               Effect.flatMap((pendingInteraction) =>
@@ -947,7 +963,7 @@ describe("executor-runtime", () => {
             : "",
         );
         const storedSecret =
-          yield* runtime.storage.executorState.secretMaterials.getById(
+          yield* executorStateForRuntime(runtime).secretMaterials.getById(
             tokenSecretMaterialId,
           );
         assertTrue(Option.isSome(storedSecret));
@@ -963,7 +979,7 @@ describe("executor-runtime", () => {
         );
 
         const storedInteraction =
-          yield* runtime.storage.executorState.executionInteractions.getById(
+          yield* executorStateForRuntime(runtime).executionInteractions.getById(
             pendingInteraction.value.id,
           );
         assertTrue(Option.isSome(storedInteraction));
@@ -1315,7 +1331,7 @@ describe("executor-runtime", () => {
           },
           now,
         }).pipe(Effect.orDie);
-        yield* persistSource(runtime.storage.executorState, localSource, {
+        yield* persistSource(executorStateForRuntime(runtime), localSource, {
           actorScopeId: installation.actorScopeId,
         }).pipe(
           (effect) => provideExecutorRuntime(effect, runtime),
@@ -1373,7 +1389,7 @@ describe("executor-runtime", () => {
           },
           now,
         }).pipe(Effect.orDie);
-        yield* persistSource(runtime.storage.executorState, localSource, {
+        yield* persistSource(executorStateForRuntime(runtime), localSource, {
           actorScopeId: installation.actorScopeId,
         }).pipe(
           (effect) => provideExecutorRuntime(effect, runtime),
@@ -1415,7 +1431,7 @@ describe("executor-runtime", () => {
         );
         const now = Date.now();
 
-        yield* runtime.storage.executorState.executions.insert({
+        yield* executorStateForRuntime(runtime).executions.insert({
           id: executionId,
           scopeId: installation.scopeId,
           createdByScopeId: installation.actorScopeId,
@@ -1450,7 +1466,7 @@ describe("executor-runtime", () => {
           },
           now,
         }).pipe(Effect.orDie);
-        yield* persistSource(runtime.storage.executorState, localSource, {
+        yield* persistSource(executorStateForRuntime(runtime), localSource, {
           actorScopeId: installation.actorScopeId,
         }).pipe(
           (effect) => provideExecutorRuntime(effect, runtime),
@@ -1460,7 +1476,7 @@ describe("executor-runtime", () => {
         const interactionFiber = yield* Effect.gen(function* () {
           const liveExecutionManager = yield* LiveExecutionManagerService;
           const onElicitation = liveExecutionManager.createOnElicitation({
-            executorState: runtime.storage.executorState,
+            executorState: executorStateForRuntime(runtime),
             executionId,
           });
 
@@ -1491,7 +1507,7 @@ describe("executor-runtime", () => {
         const waitForPendingInteraction = (
           remaining: number,
         ): Effect.Effect<Option.Option<ExecutionInteraction>, Error> =>
-          runtime.storage.executorState.executionInteractions
+          executorStateForRuntime(runtime).executionInteractions
             .getPendingByExecutionId(executionId)
             .pipe(
               Effect.flatMap((pendingInteraction) =>
@@ -1522,7 +1538,7 @@ describe("executor-runtime", () => {
         });
 
         const storedInteraction =
-          yield* runtime.storage.executorState.executionInteractions.getById(
+          yield* executorStateForRuntime(runtime).executionInteractions.getById(
             pendingInteraction.value.id,
           );
         assertTrue(Option.isSome(storedInteraction));
@@ -1615,7 +1631,7 @@ describe("executor-runtime", () => {
         const grantId = ProviderAuthGrantIdSchema.make(
           `provider_grant_${crypto.randomUUID()}`,
         );
-        yield* runtime.storage.executorState.providerAuthGrants.upsert({
+        yield* executorStateForRuntime(runtime).providerAuthGrants.upsert({
           id: grantId,
           scopeId: installation.scopeId,
           actorScopeId: installation.actorScopeId,
@@ -1677,7 +1693,7 @@ describe("executor-runtime", () => {
         });
 
         const storedGrant =
-          yield* runtime.storage.executorState.providerAuthGrants.getById(grantId);
+          yield* executorStateForRuntime(runtime).providerAuthGrants.getById(grantId);
         assertTrue(Option.isSome(storedGrant));
         expect(storedGrant.value.orphanedAt).toBeNull();
         expect(googleServer.discoveryAuthorizations).toContain(
@@ -1791,7 +1807,7 @@ describe("executor-runtime", () => {
         const grantId = ProviderAuthGrantIdSchema.make(
           `provider_grant_${crypto.randomUUID()}`,
         );
-        yield* runtime.storage.executorState.providerAuthGrants.upsert({
+        yield* executorStateForRuntime(runtime).providerAuthGrants.upsert({
           id: grantId,
           scopeId: installation.scopeId,
           actorScopeId: installation.actorScopeId,
@@ -1870,7 +1886,7 @@ describe("executor-runtime", () => {
         ).toBe(true);
 
         const storedGrant =
-          yield* runtime.storage.executorState.providerAuthGrants.getById(grantId);
+          yield* executorStateForRuntime(runtime).providerAuthGrants.getById(grantId);
         assertTrue(Option.isSome(storedGrant));
         expect(storedGrant.value.orphanedAt).toBeNull();
         expect(googleServer.tokenRequests.length).toBeGreaterThanOrEqual(1);
@@ -2001,7 +2017,7 @@ describe("executor-runtime", () => {
         const grantId = ProviderAuthGrantIdSchema.make(
           `provider_grant_${crypto.randomUUID()}`,
         );
-        yield* runtime.storage.executorState.providerAuthGrants.upsert({
+        yield* executorStateForRuntime(runtime).providerAuthGrants.upsert({
           id: grantId,
           scopeId: installation.scopeId,
           actorScopeId: installation.actorScopeId,
@@ -2026,7 +2042,7 @@ describe("executor-runtime", () => {
           `src_auth_${crypto.randomUUID()}`,
         );
         const state = `provider-state-${crypto.randomUUID()}`;
-        yield* runtime.storage.executorState.sourceAuthSessions.upsert({
+        yield* executorStateForRuntime(runtime).sourceAuthSessions.upsert({
           id: sessionId,
           scopeId: installation.scopeId,
           sourceId: SourceIdSchema.make(
@@ -2097,7 +2113,7 @@ describe("executor-runtime", () => {
         expect(callbackPage).toContain("Connected 1 source");
 
         const storedGrant =
-          yield* runtime.storage.executorState.providerAuthGrants.getById(grantId);
+          yield* executorStateForRuntime(runtime).providerAuthGrants.getById(grantId);
         assertTrue(Option.isSome(storedGrant));
         expect(storedGrant.value.refreshToken).toEqual({
           providerId: "local",
@@ -2155,7 +2171,7 @@ describe("executor-runtime", () => {
         );
         const refreshSecretId = "sec_google_refresh_orphan";
 
-        yield* runtime.storage.executorState.scopeOauthClients.upsert({
+        yield* executorStateForRuntime(runtime).scopeOauthClients.upsert({
           id: oauthClientId,
           scopeId: installation.scopeId,
           providerKey: "google_workspace",
@@ -2177,7 +2193,7 @@ describe("executor-runtime", () => {
         const grantId = ProviderAuthGrantIdSchema.make(
           `provider_grant_${crypto.randomUUID()}`,
         );
-        yield* runtime.storage.executorState.providerAuthGrants.upsert({
+        yield* executorStateForRuntime(runtime).providerAuthGrants.upsert({
           id: grantId,
           scopeId: installation.scopeId,
           actorScopeId: installation.actorScopeId,
@@ -2228,7 +2244,7 @@ describe("executor-runtime", () => {
         expect(removed.removed).toBe(true);
 
         const storedGrant =
-          yield* runtime.storage.executorState.providerAuthGrants.getById(grantId);
+          yield* executorStateForRuntime(runtime).providerAuthGrants.getById(grantId);
         assertTrue(Option.isSome(storedGrant));
         expect(storedGrant.value.orphanedAt).not.toBeNull();
       }),
@@ -2245,7 +2261,7 @@ describe("executor-runtime", () => {
         );
         const refreshSecretId = "sec_google_refresh_revoke";
 
-        yield* runtime.storage.executorState.scopeOauthClients.upsert({
+        yield* executorStateForRuntime(runtime).scopeOauthClients.upsert({
           id: oauthClientId,
           scopeId: installation.scopeId,
           providerKey: "google_workspace",
@@ -2267,7 +2283,7 @@ describe("executor-runtime", () => {
         const grantId = ProviderAuthGrantIdSchema.make(
           `provider_grant_${crypto.randomUUID()}`,
         );
-        yield* runtime.storage.executorState.providerAuthGrants.upsert({
+        yield* executorStateForRuntime(runtime).providerAuthGrants.upsert({
           id: grantId,
           scopeId: installation.scopeId,
           actorScopeId: installation.actorScopeId,
@@ -2335,11 +2351,11 @@ describe("executor-runtime", () => {
         expect(removed.removed).toBe(true);
 
         const storedGrant =
-          yield* runtime.storage.executorState.providerAuthGrants.getById(grantId);
+          yield* executorStateForRuntime(runtime).providerAuthGrants.getById(grantId);
         assertTrue(Option.isNone(storedGrant));
 
         const storedRefreshSecret =
-          yield* runtime.storage.executorState.secretMaterials.getById(
+          yield* executorStateForRuntime(runtime).secretMaterials.getById(
             SecretMaterialIdSchema.make(refreshSecretId),
           );
         assertTrue(Option.isNone(storedRefreshSecret));

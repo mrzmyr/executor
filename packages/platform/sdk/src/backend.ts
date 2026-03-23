@@ -47,15 +47,19 @@ type PublicizeObject<T> = {
       : T[Key];
 };
 
-export type ExecutorInstallationBackend = PublicizeObject<BoundInstallationStore>;
-export type ExecutorScopeConfigBackend = PublicizeObject<BoundScopeConfigStore>;
-export type ExecutorScopeStateBackend = PublicizeObject<BoundScopeStateStore>;
-export type ExecutorSourceArtifactBackend = PublicizeObject<BoundSourceArtifactStore>;
-export type ExecutorLocalToolBackend = PublicizeObject<BoundLocalToolRuntimeLoader>;
-export type ExecutorSourceTypeDeclarationsBackend = PublicizeObject<
+export type ExecutorInstallationRepository = PublicizeObject<BoundInstallationStore>;
+export type ExecutorWorkspaceConfigRepository = PublicizeObject<BoundScopeConfigStore>;
+export type ExecutorWorkspaceStateRepository = PublicizeObject<BoundScopeStateStore>;
+export type ExecutorWorkspaceSourceArtifactRepository = PublicizeObject<
+  BoundSourceArtifactStore
+>;
+export type ExecutorWorkspaceLocalToolRepository = PublicizeObject<
+  BoundLocalToolRuntimeLoader
+>;
+export type ExecutorWorkspaceSourceTypeDeclarationsRepository = PublicizeObject<
   BoundSourceTypeDeclarationsRefresher
 >;
-export type ExecutorAuthBackend = {
+export type ExecutorWorkspaceSourceAuthRepository = {
   artifacts: PublicizeObject<RuntimeAuthStorageServices["artifacts"]>;
   leases: PublicizeObject<RuntimeAuthStorageServices["leases"]>;
   sourceOauthClients: PublicizeObject<RuntimeAuthStorageServices["sourceOauthClients"]>;
@@ -63,31 +67,33 @@ export type ExecutorAuthBackend = {
   providerGrants: PublicizeObject<RuntimeAuthStorageServices["providerGrants"]>;
   sourceSessions: PublicizeObject<RuntimeAuthStorageServices["sourceSessions"]>;
 };
-export type ExecutorSecretsBackend = PublicizeObject<RuntimeSecretsStorageServices>;
-export type ExecutorExecutionsBackend = {
+export type ExecutorSecretRepository = PublicizeObject<RuntimeSecretsStorageServices>;
+export type ExecutorExecutionRepository = {
   runs: PublicizeObject<RuntimeExecutionStorageServices["runs"]>;
   interactions: PublicizeObject<RuntimeExecutionStorageServices["interactions"]>;
   steps: PublicizeObject<RuntimeExecutionStorageServices["steps"]>;
 };
-export type ExecutorInstanceConfigBackend = PublicizeObject<RuntimeInstanceConfigService>;
+export type ExecutorInstanceConfigRepository = PublicizeObject<
+  RuntimeInstanceConfigService
+>;
 
-export type ExecutorStorageBackend = {
-  installation: ExecutorInstallationBackend;
-  scopeConfig: ExecutorScopeConfigBackend;
-  scopeState: ExecutorScopeStateBackend;
-  sourceArtifacts: ExecutorSourceArtifactBackend;
-  auth: ExecutorAuthBackend;
-  secrets: ExecutorSecretsBackend;
-  executions: ExecutorExecutionsBackend;
-  close?: () => Promise<void>;
+export type ExecutorWorkspaceRepository = {
+  config: ExecutorWorkspaceConfigRepository;
+  state: ExecutorWorkspaceStateRepository;
+  sourceArtifacts: ExecutorWorkspaceSourceArtifactRepository;
+  sourceAuth: ExecutorWorkspaceSourceAuthRepository;
+  localTools?: ExecutorWorkspaceLocalToolRepository;
+  sourceTypeDeclarations?: ExecutorWorkspaceSourceTypeDeclarationsRepository;
 };
 
-export type ExecutorBackendServices = {
+export type ExecutorBackendRepositories = {
   scope: ExecutorScopeDescriptor;
-  storage: ExecutorStorageBackend;
-  instanceConfig: ExecutorInstanceConfigBackend;
-  localTools?: ExecutorLocalToolBackend;
-  sourceTypeDeclarations?: ExecutorSourceTypeDeclarationsBackend;
+  installation: ExecutorInstallationRepository;
+  workspace: ExecutorWorkspaceRepository;
+  secrets: ExecutorSecretRepository;
+  executions: ExecutorExecutionRepository;
+  instanceConfig: ExecutorInstanceConfigRepository;
+  close?: () => Promise<void>;
 };
 
 const toError = (cause: unknown): Error =>
@@ -118,14 +124,14 @@ const toOptionEffect = <T>(
   );
 
 const toInstallationBackend = (
-  input: ExecutorInstallationBackend,
+  input: ExecutorInstallationRepository,
 ): BoundInstallationStore => ({
   load: () => toEffect(input.load()),
   getOrProvision: () => toEffect(input.getOrProvision()),
 });
 
 const toScopeConfigBackend = (
-  input: ExecutorScopeConfigBackend,
+  input: ExecutorWorkspaceConfigRepository,
 ): BoundScopeConfigStore => ({
   load: () => toEffect(input.load()),
   writeProject: (config) => toEffect(input.writeProject(config)),
@@ -133,14 +139,14 @@ const toScopeConfigBackend = (
 });
 
 const toScopeStateBackend = (
-  input: ExecutorScopeStateBackend,
+  input: ExecutorWorkspaceStateRepository,
 ): BoundScopeStateStore => ({
   load: () => toEffect(input.load()),
   write: (state) => toEffect(input.write(state)),
 });
 
 const toSourceArtifactBackend = (
-  input: ExecutorSourceArtifactBackend,
+  input: ExecutorWorkspaceSourceArtifactRepository,
 ): BoundSourceArtifactStore => ({
   build: input.build,
   read: (sourceId) => toEffect(input.read(sourceId)),
@@ -149,19 +155,19 @@ const toSourceArtifactBackend = (
 });
 
 const toInstanceConfigBackend = (
-  input: ExecutorInstanceConfigBackend,
+  input: ExecutorInstanceConfigRepository,
 ): RuntimeInstanceConfigService => ({
   resolve: () => toEffect(input.resolve()),
 });
 
 const toLocalToolBackend = (
-  input: ExecutorLocalToolBackend,
+  input: ExecutorWorkspaceLocalToolRepository,
 ): BoundLocalToolRuntimeLoader => ({
   load: () => toEffect(input.load()),
 });
 
 const toSourceTypeDeclarationsBackend = (
-  input: ExecutorSourceTypeDeclarationsBackend,
+  input: ExecutorWorkspaceSourceTypeDeclarationsRepository,
 ): BoundSourceTypeDeclarationsRefresher => ({
   refreshWorkspaceInBackground: (payload) =>
     toEffect(input.refreshWorkspaceInBackground(payload)).pipe(Effect.orDie),
@@ -170,7 +176,7 @@ const toSourceTypeDeclarationsBackend = (
 });
 
 const toAuthBackend = (
-  input: ExecutorAuthBackend,
+  input: ExecutorWorkspaceSourceAuthRepository,
 ): RuntimeAuthStorageServices => ({
   artifacts: {
     listByScopeId: (scopeId) => toEffect(input.artifacts.listByScopeId(scopeId)),
@@ -230,7 +236,7 @@ const toAuthBackend = (
 });
 
 const toSecretsBackend = (
-  input: ExecutorSecretsBackend,
+  input: ExecutorSecretRepository,
 ): RuntimeSecretsStorageServices => ({
   getById: (id) => toOptionEffect(input.getById(id)),
   listAll: () => toEffect(input.listAll()),
@@ -244,7 +250,7 @@ const toSecretsBackend = (
 });
 
 const toExecutionsBackend = (
-  input: ExecutorExecutionsBackend,
+  input: ExecutorExecutionRepository,
 ): RuntimeExecutionStorageServices => ({
   runs: {
     getById: (executionId) => toOptionEffect(input.runs.getById(executionId)),
@@ -285,33 +291,37 @@ const toExecutionsBackend = (
 });
 
 export const createExecutorBackend = (input: {
-  loadServices: (
+  loadRepositories: (
     options: ExecutorRuntimeOptions,
-  ) => MaybeEffect<ExecutorBackendServices>;
+  ) => MaybeEffect<ExecutorBackendRepositories>;
 }): ExecutorBackend => ({
   createRuntime: (options) =>
-    Effect.flatMap(toEffect(input.loadServices(options)), (services) =>
+    Effect.flatMap(toEffect(input.loadRepositories(options)), (repositories) =>
       createExecutorRuntimeFromServices({
         ...options,
         services: {
-          scope: services.scope,
+          scope: repositories.scope,
           storage: {
-            installation: toInstallationBackend(services.storage.installation),
-            scopeConfig: toScopeConfigBackend(services.storage.scopeConfig),
-            scopeState: toScopeStateBackend(services.storage.scopeState),
-            sourceArtifacts: toSourceArtifactBackend(services.storage.sourceArtifacts),
-            auth: toAuthBackend(services.storage.auth),
-            secrets: toSecretsBackend(services.storage.secrets),
-            executions: toExecutionsBackend(services.storage.executions),
-            close: services.storage.close,
+            installation: toInstallationBackend(repositories.installation),
+            scopeConfig: toScopeConfigBackend(repositories.workspace.config),
+            scopeState: toScopeStateBackend(repositories.workspace.state),
+            sourceArtifacts: toSourceArtifactBackend(
+              repositories.workspace.sourceArtifacts,
+            ),
+            auth: toAuthBackend(repositories.workspace.sourceAuth),
+            secrets: toSecretsBackend(repositories.secrets),
+            executions: toExecutionsBackend(repositories.executions),
+            close: repositories.close,
           } satisfies RuntimeStorageServices,
-          localToolRuntimeLoader: services.localTools
-            ? toLocalToolBackend(services.localTools)
+          localToolRuntimeLoader: repositories.workspace.localTools
+            ? toLocalToolBackend(repositories.workspace.localTools)
             : undefined,
-          sourceTypeDeclarationsRefresher: services.sourceTypeDeclarations
-            ? toSourceTypeDeclarationsBackend(services.sourceTypeDeclarations)
+          sourceTypeDeclarationsRefresher: repositories.workspace.sourceTypeDeclarations
+            ? toSourceTypeDeclarationsBackend(
+              repositories.workspace.sourceTypeDeclarations,
+            )
             : undefined,
-          instanceConfig: toInstanceConfigBackend(services.instanceConfig),
+          instanceConfig: toInstanceConfigBackend(repositories.instanceConfig),
         },
       }),
     ),

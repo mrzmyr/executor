@@ -1,6 +1,7 @@
 import type { OAuthClientProvider } from "@modelcontextprotocol/sdk/client/auth.js";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { SSEClientTransport } from "@modelcontextprotocol/sdk/client/sse.js";
+import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
@@ -104,31 +105,6 @@ const closeClient = (client: Client): Effect.Effect<void, never, never> =>
       }),
   }).pipe(Effect.ignore);
 
-type DynamicImport = <TModule>(specifier: string) => Promise<TModule>;
-
-const dynamicImport = new Function(
-  "specifier",
-  "return import(specifier)",
-) as DynamicImport;
-
-const loadStdioClientTransport = (): Effect.Effect<
-  typeof import("@modelcontextprotocol/sdk/client/stdio.js").StdioClientTransport,
-  McpConnectionError,
-  never
-> =>
-  Effect.tryPromise({
-    try: async () =>
-      (await dynamicImport<typeof import("@modelcontextprotocol/sdk/client/stdio.js")>(
-        "@modelcontextprotocol/sdk/client/stdio.js",
-      )).StdioClientTransport,
-    catch: (cause) =>
-      mcpConnectionError({
-        transport: "stdio",
-        message: "Failed loading MCP stdio transport",
-        cause,
-      }),
-  });
-
 const connectClient = (input: {
   createClient: () => Client;
   transport: McpTransportPreference;
@@ -143,7 +119,10 @@ const connectClient = (input: {
       catch: (cause) =>
         mcpConnectionError({
           transport: input.transport,
-          message: `Failed connecting to MCP server via ${input.transport}`,
+          message:
+            `Failed connecting to MCP server via ${input.transport}: ${
+              cause instanceof Error ? cause.message : String(cause)
+            }`,
           cause,
         }),
     }).pipe(
@@ -183,7 +162,6 @@ export const createSdkMcpConnector = (
         });
       }
 
-      const StdioClientTransport = yield* loadStdioClientTransport();
       return yield* connectClient({
         createClient,
         transport: "stdio",

@@ -369,7 +369,7 @@ describe("execution-mcp-resume", () => {
         expect(created.pendingInteraction.payloadJson).toContain("Approve gated echo");
       }
 
-      const pendingInteraction = yield* runtime.storage.executorState.executionInteractions.getPendingByExecutionId(
+      const pendingInteraction = yield* runtime.storage.executions.interactions.getPendingByExecutionId(
         created.execution.id,
       );
 

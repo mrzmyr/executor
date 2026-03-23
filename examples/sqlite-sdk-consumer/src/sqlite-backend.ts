@@ -14,10 +14,10 @@ import {
 import {
   createExecutorBackend,
   type ExecutorBackend,
-  type ExecutorBackendServices,
-  type ExecutorScopeConfigBackend,
-  type ExecutorScopeStateBackend,
-  type ExecutorSourceArtifactBackend,
+  type ExecutorBackendRepositories,
+  type ExecutorWorkspaceConfigRepository,
+  type ExecutorWorkspaceStateRepository,
+  type ExecutorWorkspaceSourceArtifactRepository,
 } from "@executor/platform-sdk";
 import type {
   AuthArtifact,
@@ -53,10 +53,13 @@ export type CreateSqliteExecutorBackendOptions = {
   actorScopeId?: string;
 };
 
-type ScopeConfig = Awaited<ReturnType<ExecutorScopeConfigBackend["load"]>>;
-type ScopeState = Awaited<ReturnType<ExecutorScopeStateBackend["load"]>>;
-type SourceArtifact = ReturnType<ExecutorSourceArtifactBackend["build"]>;
-type SourceArtifactBuildInput = Parameters<ExecutorSourceArtifactBackend["build"]>[0];
+type ScopeConfig = Awaited<ReturnType<ExecutorWorkspaceConfigRepository["load"]>>;
+type ScopeState = Awaited<ReturnType<ExecutorWorkspaceStateRepository["load"]>>;
+type SourceArtifact =
+  ReturnType<ExecutorWorkspaceSourceArtifactRepository["build"]>;
+type SourceArtifactBuildInput = Parameters<
+  ExecutorWorkspaceSourceArtifactRepository["build"]
+>[0];
 
 type SecretMaterialSummary = {
   id: string;
@@ -924,7 +927,7 @@ export const createSqliteExecutorBackend = (
     : (options.databasePath ?? ":memory:");
 
   return createExecutorBackend({
-    loadServices: () => {
+    loadRepositories: () => {
       const store = openSqliteStore(databasePath);
       const { auth, secrets, executions } = createStorageDomains(store);
 
@@ -937,9 +940,21 @@ export const createSqliteExecutorBackend = (
             databasePath,
           },
         },
-        storage: {
-          installation: {
-            load: () => {
+        installation: {
+          load: () => {
+            const row = store.db.select().from(installations).where(eq(installations.key, "active")).get();
+            return row
+              ? {
+                  scopeId: row.scopeId as LocalInstallation["scopeId"],
+                  actorScopeId: row.actorScopeId as LocalInstallation["actorScopeId"],
+                  resolutionScopeIds: parseJson<LocalInstallation["resolutionScopeIds"]>(
+                    row.resolutionScopeIdsJson,
+                  ),
+                }
+              : createInstallation(options);
+          },
+          getOrProvision: () => {
+            const installation = (() => {
               const row = store.db.select().from(installations).where(eq(installations.key, "active")).get();
               return row
                 ? {
@@ -950,37 +965,25 @@ export const createSqliteExecutorBackend = (
                     ),
                   }
                 : createInstallation(options);
-            },
-            getOrProvision: () => {
-              const installation = (() => {
-                const row = store.db.select().from(installations).where(eq(installations.key, "active")).get();
-                return row
-                  ? {
-                      scopeId: row.scopeId as LocalInstallation["scopeId"],
-                      actorScopeId: row.actorScopeId as LocalInstallation["actorScopeId"],
-                      resolutionScopeIds: parseJson<LocalInstallation["resolutionScopeIds"]>(
-                        row.resolutionScopeIdsJson,
-                      ),
-                    }
-                  : createInstallation(options);
-              })();
-              store.db.insert(installations).values({
-                key: "active",
+            })();
+            store.db.insert(installations).values({
+              key: "active",
+              scopeId: installation.scopeId,
+              actorScopeId: installation.actorScopeId,
+              resolutionScopeIdsJson: JSON.stringify(installation.resolutionScopeIds),
+            }).onConflictDoUpdate({
+              target: installations.key,
+              set: {
                 scopeId: installation.scopeId,
                 actorScopeId: installation.actorScopeId,
                 resolutionScopeIdsJson: JSON.stringify(installation.resolutionScopeIds),
-              }).onConflictDoUpdate({
-                target: installations.key,
-                set: {
-                  scopeId: installation.scopeId,
-                  actorScopeId: installation.actorScopeId,
-                  resolutionScopeIdsJson: JSON.stringify(installation.resolutionScopeIds),
-                },
-              }).run();
-              return installation;
-            },
+              },
+            }).run();
+            return installation;
           },
-          scopeConfig: {
+        },
+        workspace: {
+          config: {
             load: () => {
               const row = store.db.select().from(scopeConfigs).where(eq(scopeConfigs.key, "project")).get();
               const projectConfig = row
@@ -1003,7 +1006,7 @@ export const createSqliteExecutorBackend = (
             },
             resolveRelativePath: ({ path, scopeRoot }) => resolvePath(scopeRoot, path),
           },
-          scopeState: {
+          state: {
             load: () => {
               const row = store.db.select().from(scopeStates).where(eq(scopeStates.key, "active")).get();
               return row ? parseJson<ScopeState>(row.stateJson) : defaultScopeState();
@@ -1039,55 +1042,52 @@ export const createSqliteExecutorBackend = (
               store.db.delete(sourceArtifacts).where(eq(sourceArtifacts.sourceId, sourceId)).run();
             },
           },
-          auth,
-          secrets: {
-            ...secrets,
-            resolve: ({ ref }) => {
-              const material = secrets.getById(
-                ref.handle as SecretMaterial["id"],
-              );
-              if (!material || material.value === null) {
-                throw new Error(`Missing secret material ${ref.handle}`);
-              }
-              return material.value;
-            },
-            store: ({ purpose, value, name, providerId }) => {
-              const now = Date.now();
-              const id = SecretMaterialIdSchema.make(`secret_${randomUUID()}`);
-              const material: SecretMaterial = {
-                id,
-                providerId: providerId ?? SQLITE_SECRET_PROVIDER_ID,
-                handle: id,
-                name: name ?? null,
-                purpose,
-                value,
-                createdAt: now,
-                updatedAt: now,
-              };
-              secrets.upsert(material);
-              return {
-                providerId: material.providerId,
-                handle: material.handle,
-              } satisfies SecretRef;
-            },
-            delete: (ref) =>
-              secrets.removeById(ref.handle as SecretMaterial["id"]),
-            update: ({ ref, name, value }) => {
-              const updated = secrets.updateById(
-                ref.handle as SecretMaterial["id"],
-                { name, value },
-              );
-              if (!updated) {
-                throw new Error(`Missing secret material ${ref.handle}`);
-              }
-              return updated;
-            },
+          sourceAuth: auth,
+        },
+        secrets: {
+          ...secrets,
+          resolve: ({ ref }) => {
+            const material = secrets.getById(
+              ref.handle as SecretMaterial["id"],
+            );
+            if (!material || material.value === null) {
+              throw new Error(`Missing secret material ${ref.handle}`);
+            }
+            return material.value;
           },
-          executions,
-          close: async () => {
-            store.close();
+          store: ({ purpose, value, name, providerId }) => {
+            const now = Date.now();
+            const id = SecretMaterialIdSchema.make(`secret_${randomUUID()}`);
+            const material: SecretMaterial = {
+              id,
+              providerId: providerId ?? SQLITE_SECRET_PROVIDER_ID,
+              handle: id,
+              name: name ?? null,
+              purpose,
+              value,
+              createdAt: now,
+              updatedAt: now,
+            };
+            secrets.upsert(material);
+            return {
+              providerId: material.providerId,
+              handle: material.handle,
+            } satisfies SecretRef;
+          },
+          delete: (ref) =>
+            secrets.removeById(ref.handle as SecretMaterial["id"]),
+          update: ({ ref, name, value }) => {
+            const updated = secrets.updateById(
+              ref.handle as SecretMaterial["id"],
+              { name, value },
+            );
+            if (!updated) {
+              throw new Error(`Missing secret material ${ref.handle}`);
+            }
+            return updated;
           },
         },
+        executions,
         instanceConfig: {
           resolve: () => ({
             platform: "sqlite-sdk-example",
@@ -1101,7 +1101,10 @@ export const createSqliteExecutorBackend = (
             defaultSecretStoreProvider: SQLITE_SECRET_PROVIDER_ID,
           }),
         },
-      } satisfies ExecutorBackendServices;
+        close: async () => {
+          store.close();
+        },
+      } satisfies ExecutorBackendRepositories;
     },
   });
 };

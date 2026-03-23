@@ -40,7 +40,7 @@ import {
   ScopeIdSchema,
 } from "./schema";
 import {
-  createLocalExecutorServicesEffect,
+  createLocalExecutorRepositoriesEffect,
 } from "../../sdk-file/src/effect";
 import {
   createExecutorApiLayer,
@@ -50,7 +50,7 @@ import {
 } from "../../api/src/index";
 
 type LocalExecutorServices = Effect.Effect.Success<
-  ReturnType<typeof createLocalExecutorServicesEffect>
+  ReturnType<typeof createLocalExecutorRepositoriesEffect>
 >;
 
 const createClientLayer = (executor: Executor) =>
@@ -168,7 +168,7 @@ const createScopedExecutor = (input: {
 }) =>
   createExecutorEffect({
     backend: createExecutorBackend({
-      loadServices: () =>
+      loadRepositories: () =>
         Effect.succeed({
           ...input.services,
           scope: {
@@ -176,12 +176,9 @@ const createScopedExecutor = (input: {
             actorScopeId: input.installation.actorScopeId,
             resolutionScopeIds: input.installation.resolutionScopeIds,
           },
-          storage: {
-            ...input.services.storage,
-            installation: {
-              load: () => Effect.succeed(input.installation),
-              getOrProvision: () => Effect.succeed(input.installation),
-            },
+          installation: {
+            load: () => Effect.succeed(input.installation),
+            getOrProvision: () => Effect.succeed(input.installation),
           },
         }),
     }),
@@ -200,21 +197,21 @@ const makeSharedScopeExecutors = Effect.acquireRelease(
       prefix: "executor-sdk-scope-b-",
     });
 
-    const servicesA = yield* createLocalExecutorServicesEffect({
+    const servicesA = yield* createLocalExecutorRepositoriesEffect({
       workspaceRoot: workspaceRootA,
       homeConfigPath: join(workspaceRootA, ".executor-home.jsonc"),
       homeStateDirectory: join(workspaceRootA, ".executor-home-state"),
     });
-    const servicesB = yield* createLocalExecutorServicesEffect({
+    const servicesB = yield* createLocalExecutorRepositoriesEffect({
       workspaceRoot: workspaceRootB,
       homeConfigPath: join(workspaceRootB, ".executor-home.jsonc"),
       homeStateDirectory: join(workspaceRootB, ".executor-home-state"),
     });
 
     const baseInstallationA =
-      yield* servicesA.storage.installation.getOrProvision();
+      yield* servicesA.installation.getOrProvision();
     const baseInstallationB =
-      yield* servicesB.storage.installation.getOrProvision();
+      yield* servicesB.installation.getOrProvision();
 
     const sharedStorageClose = (() => {
       let closed = false;
@@ -223,14 +220,12 @@ const makeSharedScopeExecutors = Effect.acquireRelease(
           return;
         }
         closed = true;
-        await servicesA.storage.close?.();
-        await servicesB.storage.close?.();
+        await servicesA.close?.();
+        await servicesB.close?.();
       };
     })();
 
     const sharedStorage = {
-      executorState: servicesA.storage.executorState,
-      secretMaterial: servicesA.storage.secretMaterial,
       close: sharedStorageClose,
     };
 
@@ -256,20 +251,14 @@ const makeSharedScopeExecutors = Effect.acquireRelease(
     const executorA = yield* createScopedExecutor({
       services: {
         ...servicesA,
-        storage: {
-          ...servicesA.storage,
-          ...sharedStorage,
-        },
+        ...sharedStorage,
       },
       installation: installationA,
     });
     const executorB = yield* createScopedExecutor({
       services: {
         ...servicesB,
-        storage: {
-          ...servicesB.storage,
-          ...sharedStorage,
-        },
+        ...sharedStorage,
       },
       installation: installationB,
     });

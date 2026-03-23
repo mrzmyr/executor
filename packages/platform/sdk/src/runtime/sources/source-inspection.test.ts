@@ -10,7 +10,7 @@ import type {
 } from "../catalog/source/runtime";
 import {
   inspectionToolDetailFromTool,
-} from "./source-inspection";
+} from "../../sources/inspection";
 
 describe("source inspection", () => {
   it.effect("keeps the shared TypeScript contract first-class on tool detail", () =>

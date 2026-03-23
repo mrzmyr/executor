@@ -462,7 +462,9 @@ export const mcpSourceAdapter = {
         Effect.mapError(
           (cause) =>
             new Error(
-              `Failed discovering MCP tools for ${source.id}: ${cause.message}`,
+              `Failed discovering MCP tools for ${source.id}: ${cause.message}${
+                cause.details ? ` (${cause.details})` : ""
+              }`,
             ),
         ),
       );
