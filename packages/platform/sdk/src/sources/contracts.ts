@@ -16,11 +16,15 @@ import {
   ScopeOauthClientIdSchema,
   ScopeOauthClientSchema,
 } from "../schema";
-import {
-  ConnectSourcePayloadSchema,
-  type ConnectSourcePayload,
-} from "../runtime/sources/source-adapters";
 import * as Schema from "effect/Schema";
+import {
+  ConnectHttpAuthSchema,
+  ConnectHttpImportAuthSchema,
+  ConnectOauthClientSchema,
+  McpConnectFieldsSchema,
+  OptionalNullableStringSchema,
+  SourceConnectCommonFieldsSchema,
+} from "@executor/source-core";
 
 import {
   OptionalTrimmedNonEmptyStringSchema,
@@ -141,6 +145,70 @@ export const DiscoverSourcePayloadSchema = Schema.Struct({
 
 export type DiscoverSourcePayload = typeof DiscoverSourcePayloadSchema.Type;
 
+const OpenApiConnectSourcePayloadSchema = Schema.extend(
+  SourceConnectCommonFieldsSchema,
+  Schema.extend(
+    ConnectHttpImportAuthSchema,
+    Schema.Struct({
+      kind: Schema.Literal("openapi"),
+      specUrl: TrimmedNonEmptyStringSchema,
+      auth: Schema.optional(ConnectHttpAuthSchema),
+    }),
+  ),
+);
+
+const GraphqlConnectSourcePayloadSchema = Schema.extend(
+  SourceConnectCommonFieldsSchema,
+  Schema.extend(
+    ConnectHttpImportAuthSchema,
+    Schema.Struct({
+      kind: Schema.Literal("graphql"),
+      auth: Schema.optional(ConnectHttpAuthSchema),
+    }),
+  ),
+);
+
+const GoogleDiscoveryConnectSourcePayloadSchema = Schema.extend(
+  ConnectHttpImportAuthSchema,
+  Schema.Struct({
+    kind: Schema.Literal("google_discovery"),
+    service: TrimmedNonEmptyStringSchema,
+    version: TrimmedNonEmptyStringSchema,
+    discoveryUrl: Schema.optional(
+      Schema.NullOr(TrimmedNonEmptyStringSchema),
+    ),
+    scopes: Schema.optional(
+      Schema.Array(TrimmedNonEmptyStringSchema),
+    ),
+    scopeOauthClientId: Schema.optional(
+      Schema.NullOr(ScopeOauthClientIdSchema),
+    ),
+    oauthClient: ConnectOauthClientSchema,
+    name: OptionalNullableStringSchema,
+    namespace: OptionalNullableStringSchema,
+    auth: Schema.optional(ConnectHttpAuthSchema),
+  }),
+);
+
+const McpConnectSourcePayloadSchema = Schema.extend(
+  McpConnectFieldsSchema,
+  Schema.Struct({
+    kind: Schema.Literal("mcp"),
+    endpoint: OptionalNullableStringSchema,
+    name: OptionalNullableStringSchema,
+    namespace: OptionalNullableStringSchema,
+  }),
+);
+
+export const ConnectSourcePayloadSchema = Schema.Union(
+  OpenApiConnectSourcePayloadSchema,
+  GraphqlConnectSourcePayloadSchema,
+  GoogleDiscoveryConnectSourcePayloadSchema,
+  McpConnectSourcePayloadSchema,
+);
+
+export type ConnectSourcePayload = typeof ConnectSourcePayloadSchema.Type;
+
 export const ConnectSourceResultSchema = Schema.Union(
   Schema.Struct({
     kind: Schema.Literal("connected"),
@@ -162,8 +230,6 @@ export const ConnectSourceResultSchema = Schema.Union(
 export type ConnectSourceResult = typeof ConnectSourceResultSchema.Type;
 
 export {
-  ConnectSourcePayloadSchema,
-  type ConnectSourcePayload,
   SourceDiscoveryResultSchema,
   ScopeIdSchema,
   ScopeOauthClientSchema,
