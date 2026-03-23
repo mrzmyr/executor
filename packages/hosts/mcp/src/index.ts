@@ -3,13 +3,12 @@ import type {
 } from "@executor/platform-sdk/schema";
 import {
   EXECUTOR_SOURCES_ADD_HELP_LINES,
-  RuntimeExecutionResolverService,
+  RuntimeSourceCatalogStoreService,
   createExecution,
   getExecution,
   resumeExecution,
   type ExecutorRuntime,
 } from "@executor/platform-sdk/runtime";
-import { ExecutionIdSchema } from "@executor/platform-sdk/schema";
 import * as Effect from "effect/Effect";
 import * as Cause from "effect/Cause";
 import * as Exit from "effect/Exit";
@@ -121,19 +120,33 @@ const interactionModeForServer = (server: McpServer): "live_form" | "detach" =>
   supportsManagedElicitation(server) ? "live_form" : "detach";
 
 type CatalogLike = {
-  listNamespaces: (input: { limit: number }) => Effect.Effect<
-    ReadonlyArray<{ namespace: string; displayName?: string }>,
-    unknown
-  >;
+  projected: {
+    toolDescriptors: Record<string, { toolPath: readonly string[] }>;
+  };
+  source: {
+    name: string;
+    enabled: boolean;
+    status: string;
+  };
 };
 
-const buildExecuteWorkflowText = (namespaces: readonly string[] = []): string =>
+const executeDescriptionToolsPerSource = 5;
+
+const buildExecuteWorkflowText = (
+  sourceToolExamples: ReadonlyArray<{
+    sourceName: string;
+    toolPaths: readonly string[];
+  }> = [],
+): string =>
   [
     "Execute TypeScript in sandbox; call tools via discovery workflow.",
-    ...(namespaces.length > 0
+    ...(sourceToolExamples.length > 0
       ? [
-          "Available namespaces:",
-          ...namespaces.map((namespace) => `- ${namespace}`),
+          "Available source tool examples:",
+          ...sourceToolExamples.flatMap((source) => [
+            `${source.sourceName}:`,
+            ...source.toolPaths.map((toolPath) => `- ${toolPath}`),
+          ]),
         ]
       : []),
     "Workflow:",
@@ -152,28 +165,29 @@ const loadExecuteDescription = (runtime: ExecutorRuntime): Promise<string> =>
   runControlPlane(
     runtime,
     Effect.gen(function* () {
-      const resolveExecutionEnvironment = yield* RuntimeExecutionResolverService;
-      const environment = yield* resolveExecutionEnvironment({
+      const sourceCatalogStore = yield* RuntimeSourceCatalogStoreService;
+      const catalogs = yield* sourceCatalogStore.loadWorkspaceSourceCatalogs({
         scopeId: runtime.localInstallation.scopeId,
         actorScopeId: runtime.localInstallation.actorScopeId,
-        executionId: ExecutionIdSchema.make("exec_mcp_help"),
       });
 
-      const catalog = environment.catalog as CatalogLike | undefined;
-      if (!catalog) {
+      const sourceToolExamples = (catalogs as ReadonlyArray<CatalogLike>)
+        .filter((catalog) => catalog.source.enabled && catalog.source.status === "connected")
+        .map((catalog) => ({
+          sourceName: catalog.source.name,
+          toolPaths: Object.values(catalog.projected.toolDescriptors)
+            .map((descriptor) => descriptor.toolPath.join("."))
+            .filter((toolPath) => toolPath.length > 0)
+            .sort((left, right) => left.localeCompare(right))
+            .slice(0, executeDescriptionToolsPerSource),
+        }))
+        .filter((catalog) => catalog.toolPaths.length > 0);
+
+      if (sourceToolExamples.length === 0) {
         return defaultExecuteDescription;
       }
 
-      const namespaces = yield* catalog.listNamespaces({ limit: 200 }).pipe(
-        Effect.map((items) =>
-          items.length > 0
-            ? items.map((item) => item.displayName ?? item.namespace)
-            : ["none discovered yet"],
-        ),
-        Effect.catchAll(() => Effect.succeed(["none discovered yet"])),
-      );
-
-      return buildExecuteWorkflowText(namespaces);
+      return buildExecuteWorkflowText(sourceToolExamples);
     }).pipe(Effect.catchAll(() => Effect.succeed(defaultExecuteDescription))),
   );
 
