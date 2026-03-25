@@ -119,8 +119,6 @@ export {
   hasRegisteredExternalSourcePlugins,
   getSourcePlugin,
   getSourcePluginForSource,
-  sourcePluginCatalogKind,
-  isInternalSourcePluginKind,
 } from "./sources/source-plugins";
 
 export type ExecutorRuntimeOptions = {

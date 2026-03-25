@@ -7,10 +7,7 @@ export const SecretRefSchema = Schema.Struct({
 
 export const CredentialSlotSchema = Schema.Literal("runtime", "import");
 
-export const SourceCatalogKindSchema = Schema.Literal(
-  "imported",
-  "internal",
-);
+export const SourceCatalogKindSchema = Schema.Literal("imported");
 
 export const SourceKindSchema = Schema.String;
 

@@ -15,7 +15,6 @@
     "@effect/platform": "catalog:",
     "@effect/platform-node": "catalog:",
     "@executor/executor-mcp": "workspace:*",
-    "@executor/plugin-internal-sdk": "workspace:*",
     "@executor/plugin-google-discovery-http": "workspace:*",
     "@executor/plugin-google-discovery-shared": "workspace:*",
     "@executor/plugin-google-discovery-sdk": "workspace:*",

@@ -21,9 +21,6 @@ import {
   graphqlSdkPlugin,
 } from "@executor/plugin-graphql-sdk";
 import {
-  internalSdkPlugin,
-} from "@executor/plugin-internal-sdk";
-import {
   mcpSdkPlugin,
 } from "@executor/plugin-mcp-sdk";
 import {
@@ -305,7 +302,6 @@ const loadRunWorkflowText = (): Effect.Effect<string, Error, never> =>
         localDataDir: DEFAULT_LOCAL_DATA_DIR,
       }),
       plugins: [
-        internalSdkPlugin(),
         graphqlSdkPlugin({
           storage: createFileGraphqlSourceStorage({
             rootDir: `${DEFAULT_LOCAL_DATA_DIR}/plugins/graphql/sources`,

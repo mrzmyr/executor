@@ -46,19 +46,10 @@ export function DefaultSourceIcon({
 }) {
   const base = cn("shrink-0", className);
 
-  switch (kind) {
-    case "internal":
-      return (
-        <svg viewBox="0 0 16 16" fill="none" className={base}>
-          <path d="M8 2v12M4 6l4-4 4 4M4 10l4 4 4-4" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" />
-        </svg>
-      );
-    default:
-      return (
-        <svg viewBox="0 0 16 16" fill="none" className={base}>
-          <rect x="2.5" y="2.5" width="11" height="11" rx="2" stroke="currentColor" strokeWidth="1.2" />
-          <path d="M5 6h6M5 8h4M5 10h3" stroke="currentColor" strokeWidth="1.1" strokeLinecap="round" />
-        </svg>
-      );
-  }
+  return (
+    <svg viewBox="0 0 16 16" fill="none" className={base}>
+      <rect x="2.5" y="2.5" width="11" height="11" rx="2" stroke="currentColor" strokeWidth="1.2" />
+      <path d="M5 6h6M5 8h4M5 10h3" stroke="currentColor" strokeWidth="1.1" strokeLinecap="round" />
+    </svg>
+  );
 }

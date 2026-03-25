@@ -10,10 +10,7 @@ import {
   SourceCatalogRevisionIdSchema,
 } from "../ids";
 
-export const SourceCatalogKindSchema = Schema.Literal(
-  "imported",
-  "internal",
-);
+export const SourceCatalogKindSchema = Schema.Literal("imported");
 
 export const SourceCatalogPluginKeySchema = Schema.String;
 

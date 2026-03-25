@@ -40,7 +40,6 @@
     "@executor/executor-mcp": "workspace:*",
     "@executor/plugin-google-discovery-sdk": "workspace:*",
     "@executor/plugin-graphql-sdk": "workspace:*",
-    "@executor/plugin-internal-sdk": "workspace:*",
     "@executor/plugin-mcp-sdk": "workspace:*",
     "@executor/plugin-openapi-sdk": "workspace:*",
     "@executor/platform-api": "workspace:*",

@@ -131,9 +131,5 @@ export const registerExecutorSdkPlugins = (
     sourceConnectors: [...sourceConnectors.values()],
     getSourcePlugin,
     getSourcePluginForSource,
-    sourcePluginCatalogKind: (kind: string): SourceCatalogKind =>
-      getSourcePlugin(kind).catalogKind,
-    isInternalSourcePluginKind: (kind: string): boolean =>
-      getSourcePlugin(kind).catalogKind === "internal",
   };
 };

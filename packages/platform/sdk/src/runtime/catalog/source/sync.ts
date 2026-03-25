@@ -36,8 +36,7 @@ import {
 
 const shouldIndexSource = (source: Source): boolean =>
   source.enabled
-  && source.status === "connected"
-  && getSourcePluginForSource(source).catalogKind !== "internal";
+  && source.status === "connected";
 
 type RuntimeSourceCatalogSyncDeps = {
   runtimeLocalScope: RuntimeLocalScopeState;
