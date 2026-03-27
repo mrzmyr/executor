@@ -9,7 +9,7 @@
   },
   "scripts": {
     "typecheck": "bunx tsc --noEmit -p tsconfig.json",
-    "test": "bunx vitest run --passWithNoTests",
+    "test": "bunx vitest run",
     "test:watch": "bunx vitest"
   },
   "dependencies": {

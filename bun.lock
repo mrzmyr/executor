@@ -388,8 +388,15 @@
         "effect": "catalog:",
       },
       "devDependencies": {
+        "@effect/vitest": "catalog:",
+        "@executor/effect-test-utils": "workspace:*",
+        "@executor/mcp-elicitation-demo": "workspace:*",
+        "@executor/runtime-ses": "workspace:*",
+        "@modelcontextprotocol/sdk": "^1.26.0",
         "@types/node": "catalog:",
         "bun-types": "catalog:",
+        "vitest": "catalog:",
+        "zod": "catalog:",
       },
     },
     "packages/sources/core": {
@@ -462,8 +469,10 @@
         "effect": "catalog:",
       },
       "devDependencies": {
+        "@effect/vitest": "catalog:",
         "@types/node": "catalog:",
         "bun-types": "catalog:",
+        "vitest": "catalog:",
       },
     },
     "plugins/google-discovery/shared": {
@@ -522,8 +531,10 @@
         "graphql": "^16.12.0",
       },
       "devDependencies": {
+        "@effect/vitest": "catalog:",
         "@types/node": "catalog:",
         "bun-types": "catalog:",
+        "vitest": "catalog:",
       },
     },
     "plugins/graphql/shared": {
@@ -582,8 +593,12 @@
         "effect": "catalog:",
       },
       "devDependencies": {
+        "@effect/vitest": "catalog:",
+        "@executor/runtime-ses": "workspace:*",
         "@types/node": "catalog:",
         "bun-types": "catalog:",
+        "vitest": "catalog:",
+        "zod": "catalog:",
       },
     },
     "plugins/mcp/shared": {
