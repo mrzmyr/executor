@@ -129,7 +129,7 @@ export function ExecutorPluginRoutePage(input: {
         navigation: input.navigation,
       }}
     >
-      <div className="h-full min-h-0">
+      <div className="flex h-full min-h-0 flex-col overflow-hidden">
         <PluginPage />
       </div>
     </ExecutorPluginRouteProvider>

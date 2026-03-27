@@ -54,6 +54,7 @@
       "name": "@executor/web",
       "version": "0.0.0",
       "dependencies": {
+        "@executor/plugin-execution-history-react": "workspace:*",
         "@executor/plugin-google-discovery-react": "workspace:*",
         "@executor/plugin-graphql-react": "workspace:*",
         "@executor/plugin-mcp-react": "workspace:*",
@@ -402,6 +403,19 @@
       },
       "devDependencies": {
         "@types/node": "catalog:",
+        "bun-types": "catalog:",
+      },
+    },
+    "plugins/execution-history/react": {
+      "name": "@executor/plugin-execution-history-react",
+      "version": "0.0.0",
+      "dependencies": {
+        "@executor/react": "workspace:*",
+        "react": "^19.2.0",
+      },
+      "devDependencies": {
+        "@types/node": "catalog:",
+        "@types/react": "^19.2.10",
         "bun-types": "catalog:",
       },
     },
@@ -873,6 +887,8 @@
     "@executor/platform-sdk": ["@executor/platform-sdk@workspace:packages/platform/sdk"],
 
     "@executor/platform-sdk-file": ["@executor/platform-sdk-file@workspace:packages/platform/sdk-file"],
+
+    "@executor/plugin-execution-history-react": ["@executor/plugin-execution-history-react@workspace:plugins/execution-history/react"],
 
     "@executor/plugin-google-discovery-http": ["@executor/plugin-google-discovery-http@workspace:plugins/google-discovery/http"],
 

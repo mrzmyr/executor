@@ -2,6 +2,9 @@ import type {
   Source,
 } from "@executor/react";
 import {
+  ExecutionHistoryReactPlugin,
+} from "@executor/plugin-execution-history-react";
+import {
   GoogleDiscoveryReactPlugin,
   getGoogleDiscoveryIconUrl,
 } from "@executor/plugin-google-discovery-react";
@@ -22,6 +25,7 @@ import {
 } from "@executor/react/plugins";
 
 const frontendPlugins = [
+  ExecutionHistoryReactPlugin,
   McpReactPlugin,
   GraphqlReactPlugin,
   GoogleDiscoveryReactPlugin,

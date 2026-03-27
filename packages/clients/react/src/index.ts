@@ -21,6 +21,9 @@ export type {
 } from "@executor/platform-api";
 
 export type {
+  Execution,
+  ExecutionEnvelope,
+  ExecutionStatus,
   Source,
   SourceInspection,
   SourceInspectionDiscoverResult,
@@ -63,6 +66,10 @@ export {
   useSecrets,
   useUpdateSecret,
 } from "./hooks/secrets";
+export {
+  useExecution,
+  useExecutions,
+} from "./hooks/executions";
 export {
   usePrefetchToolDetail,
   useRemoveSource,

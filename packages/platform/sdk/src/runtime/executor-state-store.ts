@@ -35,6 +35,9 @@ export type ExecutorStateStoreShape = {
     removeById: (id: SecretMaterial["id"]) => Effect.Effect<boolean, Error, never>;
   };
   executions: {
+    listByScope: (
+      scopeId: Execution["scopeId"],
+    ) => Effect.Effect<readonly Execution[], Error, never>;
     getById: (
       executionId: Execution["id"],
     ) => Effect.Effect<import("effect/Option").Option<Execution>, Error, never>;
