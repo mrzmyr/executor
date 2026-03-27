@@ -9,6 +9,8 @@
     "*.ts"
   ],
   "scripts": {
+    "test": "vitest run",
+    "test:watch": "vitest",
     "typecheck": "bunx tsc --noEmit -p tsconfig.json"
   },
   "dependencies": {
@@ -21,8 +23,12 @@
     "effect": "catalog:"
   },
   "devDependencies": {
+    "@effect/vitest": "catalog:",
+    "@executor/runtime-ses": "workspace:*",
     "@types/node": "catalog:",
-    "bun-types": "catalog:"
+    "bun-types": "catalog:",
+    "vitest": "catalog:",
+    "zod": "catalog:"
   },
   "version": "0.0.0"
 }
