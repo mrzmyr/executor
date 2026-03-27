@@ -120,6 +120,7 @@ const toPromiseExecutor = <
       },
     },
     executions: {
+      list: () => run(executor.executions.list()),
       create: (payload: Parameters<typeof executor.executions.create>[0]) =>
         run(executor.executions.create(payload)),
       get: (executionId: Parameters<typeof executor.executions.get>[0]) =>

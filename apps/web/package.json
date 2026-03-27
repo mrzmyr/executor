@@ -9,6 +9,7 @@
     "start": "NODE_ENV=production bun src/server.ts"
   },
   "dependencies": {
+    "@executor/plugin-execution-history-react": "workspace:*",
     "@executor/plugin-google-discovery-react": "workspace:*",
     "@executor/plugin-graphql-react": "workspace:*",
     "@executor/plugin-mcp-react": "workspace:*",

@@ -1,4 +1,4 @@
-import type { Source } from "@executor/platform-sdk/schema";
+import type { Execution, Source } from "@executor/platform-sdk/schema";
 
 import type { ReactivityKeys } from "./types";
 
@@ -18,6 +18,19 @@ export const sourcesReactivityKey = (
   workspaceId: Source["scopeId"],
 ): ReactivityKeys => ({
   sources: [workspaceId],
+});
+
+export const executionsReactivityKey = (
+  workspaceId: Execution["scopeId"],
+): ReactivityKeys => ({
+  executions: [workspaceId],
+});
+
+export const executionReactivityKey = (
+  workspaceId: Execution["scopeId"],
+  executionId: Execution["id"],
+): ReactivityKeys => ({
+  execution: [workspaceId, executionId],
 });
 
 export const sourceReactivityKey = (

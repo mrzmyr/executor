@@ -66,6 +66,7 @@ import {
 import {
   createExecution,
   getExecution,
+  listExecutions,
   resumeExecution,
 } from "./runtime/execution/service";
 import type {
@@ -153,6 +154,7 @@ export type ExecutorEffect = {
     };
   };
   executions: {
+    list: () => ProvidedEffect<ReturnType<typeof listExecutions>>;
     create: (
       payload: CreateExecutionPayload,
     ) => ProvidedEffect<ReturnType<typeof createExecution>>;
@@ -241,6 +243,7 @@ const fromRuntime = (runtime: ExecutorRuntime): ExecutorEffect => {
       },
     },
     executions: {
+      list: () => provide(listExecutions({ scopeId })),
       create: (payload) =>
         provide(
           createExecution({

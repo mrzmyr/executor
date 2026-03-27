@@ -7,6 +7,8 @@ import type {
   SecretListItem,
 } from "@executor/platform-api";
 import type {
+  Execution,
+  ExecutionEnvelope,
   Source,
   SourceInspection,
   SourceInspectionDiscoverResult,
@@ -17,6 +19,8 @@ import * as Effect from "effect/Effect";
 import { getExecutorApiBaseUrl } from "./base-url";
 import { getExecutorApiHttpClient } from "./http-client";
 import {
+  executionReactivityKey,
+  executionsReactivityKey,
   instanceConfigReactivityKey,
   localInstallationReactivityKey,
   secretsReactivityKey,
@@ -44,6 +48,28 @@ export const secretsAtom = (baseUrl: string = getExecutorApiBaseUrl()) =>
   getExecutorApiHttpClient(baseUrl).query("local", "listSecrets", {
     reactivityKeys: secretsReactivityKey(),
     timeToLive: "1 minute",
+  });
+
+export const executionsAtom = (workspaceId: Execution["scopeId"]) =>
+  getExecutorApiHttpClient().query("executions", "list", {
+    path: {
+      workspaceId,
+    },
+    reactivityKeys: executionsReactivityKey(workspaceId),
+    timeToLive: "15 seconds",
+  });
+
+export const executionAtom = (
+  workspaceId: Execution["scopeId"],
+  executionId: Execution["id"],
+) =>
+  getExecutorApiHttpClient().query("executions", "get", {
+    path: {
+      workspaceId,
+      executionId,
+    },
+    reactivityKeys: executionReactivityKey(workspaceId, executionId),
+    timeToLive: "15 seconds",
   });
 
 export const sourcesAtom = (workspaceId: Source["scopeId"]) =>
@@ -142,6 +168,8 @@ export type ExecutorApiAtoms = {
   localInstallationAtom: typeof localInstallationAtom;
   instanceConfigAtom: typeof instanceConfigAtom;
   secretsAtom: typeof secretsAtom;
+  executionsAtom: typeof executionsAtom;
+  executionAtom: typeof executionAtom;
   sourcesAtom: typeof sourcesAtom;
   sourceAtom: typeof sourceAtom;
   sourceInspectionAtom: typeof sourceInspectionAtom;
@@ -153,6 +181,8 @@ export type ExecutorApiAtomValues = {
   localInstallation: LocalInstallation;
   instanceConfig: InstanceConfig;
   secrets: ReadonlyArray<SecretListItem>;
+  executions: ReadonlyArray<Execution>;
+  execution: ExecutionEnvelope;
   sources: ReadonlyArray<Source>;
   source: Source;
   sourceInspection: SourceInspection;

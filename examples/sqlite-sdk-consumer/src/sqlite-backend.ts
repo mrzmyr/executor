@@ -326,6 +326,12 @@ const createStorageDomains = (store: SqliteStore) => ({
   },
   executions: {
     runs: {
+    listByScope: (scopeId: Execution["scopeId"]) =>
+      store.db.select().from(executions).where(
+        eq(executions.scopeId, scopeId),
+      ).all()
+        .map((row) => parseJson<Execution>(row.json))
+        .sort((left, right) => right.createdAt - left.createdAt),
     getById: (executionId: Execution["id"]) => {
       const row = store.db.select().from(executions).where(eq(executions.id, executionId)).get();
       return row ? parseJson<Execution>(row.json) : null;

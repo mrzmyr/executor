@@ -409,6 +409,15 @@ export const createLocalExecutorStateStore = (
         }),
     },
     executions: {
+      listByScope: (scopeId: Execution["scopeId"]) =>
+        stateManager.read((state) =>
+          cloneValue(
+            state.executions
+              .filter((candidate) => candidate.scopeId === scopeId)
+              .sort((left, right) => right.createdAt - left.createdAt),
+          )
+        ),
+
       getById: (executionId: Execution["id"]) =>
         stateManager.read((state) => {
           const execution = state.executions.find(

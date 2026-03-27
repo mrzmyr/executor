@@ -183,6 +183,7 @@ const toExecutionsBackend = (
   input: ExecutorExecutionRepository,
 ): RuntimeExecutionStorageServices => ({
   runs: {
+    listByScope: (scopeId) => toEffect(input.runs.listByScope(scopeId)),
     getById: (executionId) => toOptionEffect(input.runs.getById(executionId)),
     getByScopeAndId: (scopeId, executionId) =>
       toOptionEffect(input.runs.getByScopeAndId(scopeId, executionId)),
