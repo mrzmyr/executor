@@ -264,7 +264,7 @@ const writeConfiguredLocalMcpSource = (input: {
     });
   }).pipe(Effect.provide(NodeFileSystem.layer));
 
-const writeLegacyConfiguredWorkspaceSources = (input: {
+const writeConfiguredWorkspaceSources = (input: {
   workspaceRoot: string;
   sources: Record<string, LocalConfigSource>;
 }) =>
@@ -288,8 +288,8 @@ const writeLegacyConfiguredWorkspaceSources = (input: {
   }).pipe(Effect.provide(NodeFileSystem.layer));
 
 const writeMissingSourceCatalogArtifact = (input: {
-  context: Effect.Effect.Success<ReturnType<typeof writeLegacyConfiguredWorkspaceSources>>["context"];
-  installation: Effect.Effect.Success<ReturnType<typeof writeLegacyConfiguredWorkspaceSources>>["installation"];
+  context: Effect.Effect.Success<ReturnType<typeof writeConfiguredWorkspaceSources>>["context"];
+  installation: Effect.Effect.Success<ReturnType<typeof writeConfiguredWorkspaceSources>>["installation"];
   source: {
     id: string;
     name: string;
@@ -1632,7 +1632,7 @@ describe("local-executor-server", () => {
     15_000,
   );
 
-  it.scoped("adds an OpenAPI source via executor.sources.add and calls it end to end", () =>
+  it.scoped("adds an OpenAPI source via executor.openapi.createSource and calls it end to end", () =>
     Effect.gen(function* () {
       const openApiServer = yield* Effect.acquireRelease(
         Effect.promise(() => startOpenApiDemoServer()),
@@ -1645,8 +1645,7 @@ describe("local-executor-server", () => {
           workspaceId: installation.scopeId,
         },
         payload: {
-          code: `return await tools.executor.sources.add({
-            kind: "openapi",
+          code: `return await tools.executor.openapi.createSource({
             name: "GitHub",
             specUrl: ${JSON.stringify(openApiServer.specUrl)},
             baseUrl: ${JSON.stringify(openApiServer.baseUrl)},
@@ -1831,16 +1830,14 @@ describe("local-executor-server", () => {
         (server) => Effect.promise(() => server.close()).pipe(Effect.orDie),
       );
 
-      const workspace = yield* writeLegacyConfiguredWorkspaceSources({
+      const workspace = yield* writeConfiguredWorkspaceSources({
         workspaceRoot,
         sources: {
           deepwiki: {
             kind: "mcp",
             name: "DeepWiki MCP",
-            connection: {
+            config: {
               endpoint: demoServer.endpoint,
-            },
-            binding: {
               transport: "streamable-http",
               queryParams: null,
               headers: null,
@@ -1848,16 +1845,20 @@ describe("local-executor-server", () => {
               args: null,
               env: null,
               cwd: null,
+              auth: {
+                kind: "none",
+              },
             },
           },
           vercel: {
             kind: "openapi",
             name: "Vercel API",
-            connection: {
-              endpoint: openApiServer.baseUrl,
-            },
-            binding: {
+            config: {
               specUrl: openApiServer.specUrl,
+              baseUrl: openApiServer.baseUrl,
+              auth: {
+                kind: "none",
+              },
               defaultHeaders: null,
             },
           },

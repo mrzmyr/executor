@@ -1402,7 +1402,7 @@ export const defineExecutorSecretStorePlugin = <
               ...pluginInput,
               secretStore: createExecutorSecretStorePluginApi(
                 input.secretStore,
-                pluginInput.host as ExecutorSecretStorePluginInternalHost,
+                pluginInput.host as unknown as ExecutorSecretStorePluginInternalHost,
               ),
             })
         : undefined,
@@ -1412,7 +1412,7 @@ export const defineExecutorSecretStorePlugin = <
               ...pluginInput,
               secretStore: createExecutorSecretStorePluginApi(
                 input.secretStore,
-                pluginInput.host as ExecutorSecretStorePluginInternalHost,
+                pluginInput.host as unknown as ExecutorSecretStorePluginInternalHost,
               ),
             })
         : undefined,

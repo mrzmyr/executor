@@ -24,7 +24,6 @@ import {
 import {
   SecretMaterialResolverService,
   createPluginLocalConfigEntrySchema,
-  decodeCurrentOrLegacyLocalConfigAuth,
   pluginLocalConfigSourceFromConfig,
   provideExecutorRuntime,
   runtimeEffectError,
@@ -155,25 +154,6 @@ const decodeGraphqlCurrentLocalConfigOption = Schema.decodeUnknownOption(
   createPluginLocalConfigEntrySchema({
     kind: "graphql",
     config: GraphqlStoredSourceDataSchema,
-  }),
-);
-
-const decodeGraphqlLegacyLocalConfigOption = Schema.decodeUnknownOption(
-  Schema.Struct({
-    kind: Schema.Literal("graphql"),
-    name: Schema.optional(Schema.String),
-    namespace: Schema.optional(Schema.String),
-    enabled: Schema.optional(Schema.Boolean),
-    connection: Schema.Struct({
-      endpoint: Schema.String,
-      auth: Schema.optional(Schema.Unknown),
-    }),
-    binding: Schema.Struct({
-      defaultHeaders: Schema.optional(
-        Schema.NullOr(Schema.Record({ key: Schema.String, value: Schema.String })),
-      ),
-    }),
-    config: Schema.optional(Schema.Unknown),
   }),
 );
 
@@ -361,29 +341,6 @@ const graphqlStoredSourceDataFromLocalConfig = (input: {
   const current = decodeGraphqlCurrentLocalConfigOption(input.config);
   if (Option.isSome(current)) {
     return normalizeStoredSourceData(current.value.config);
-  }
-
-  const legacy = decodeGraphqlLegacyLocalConfigOption(input.config);
-  if (Option.isSome(legacy)) {
-    return storedSourceDataFromInput({
-      name: legacy.value.name ?? "GraphQL",
-      endpoint: legacy.value.connection.endpoint,
-      defaultHeaders: legacy.value.binding.defaultHeaders ?? null,
-      auth: decodeCurrentOrLegacyLocalConfigAuth({
-        auth: legacy.value.connection.auth,
-        authSchema: GraphqlConnectionAuthSchema,
-        loadedConfig: input.loadedConfig,
-        onLegacySecretRef: (tokenSecretRef) => ({
-          kind: "bearer",
-          tokenSecretRef,
-          headerName: null,
-          prefix: null,
-        }),
-        fallback: {
-          kind: "none",
-        },
-      }),
-    });
   }
 
   throw new Error("Unsupported GraphQL local source config.");

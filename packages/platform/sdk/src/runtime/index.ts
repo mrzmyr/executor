@@ -146,6 +146,8 @@ export type {
   LocalToolRuntimeLoaderShape,
 } from "./local-tool-runtime";
 export {
+  createExecutorPluginRegistry,
+  emptyExecutorPluginRegistry,
   registeredSourceContributions,
   registeredSecretStoreContributions,
   registeredManagementToolContributions,

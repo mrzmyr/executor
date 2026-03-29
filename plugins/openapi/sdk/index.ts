@@ -19,7 +19,6 @@ import {
 } from "@executor/platform-sdk/plugins";
 import {
   createPluginLocalConfigEntrySchema,
-  decodeCurrentOrLegacyLocalConfigAuth,
   pluginLocalConfigSourceFromConfig,
   runtimeEffectError,
   SecretMaterialResolverService,
@@ -163,26 +162,6 @@ const decodeOpenApiCurrentLocalConfigOption = Schema.decodeUnknownOption(
   }),
 );
 
-const decodeOpenApiLegacyLocalConfigOption = Schema.decodeUnknownOption(
-  Schema.Struct({
-    kind: Schema.Literal("openapi"),
-    name: Schema.optional(Schema.String),
-    namespace: Schema.optional(Schema.String),
-    enabled: Schema.optional(Schema.Boolean),
-    connection: Schema.Struct({
-      endpoint: Schema.optional(Schema.NullOr(Schema.String)),
-      auth: Schema.optional(Schema.Unknown),
-    }),
-    binding: Schema.Struct({
-      specUrl: Schema.String,
-      defaultHeaders: Schema.optional(
-        Schema.NullOr(Schema.Record({ key: Schema.String, value: Schema.String })),
-      ),
-    }),
-    config: Schema.optional(Schema.Unknown),
-  }),
-);
-
 const createStoredSourceData = (
   input: OpenApiConnectInput,
 ): OpenApiStoredSourceData => ({
@@ -219,31 +198,6 @@ const openApiStoredSourceDataFromLocalConfig = (input: {
   if (Option.isSome(current)) {
     return normalizeStoredSourceData({
       ...current.value.config,
-      etag: null,
-      lastSyncAt: null,
-    });
-  }
-
-  const legacy = decodeOpenApiLegacyLocalConfigOption(input.config);
-  if (Option.isSome(legacy)) {
-    return normalizeStoredSourceData({
-      specUrl: legacy.value.binding.specUrl.trim(),
-      baseUrl: legacy.value.connection.endpoint?.trim() || null,
-      auth: decodeCurrentOrLegacyLocalConfigAuth({
-        auth: legacy.value.connection.auth,
-        authSchema: OpenApiConnectionAuthSchema,
-        loadedConfig: input.loadedConfig,
-        onLegacySecretRef: (tokenSecretRef) => ({
-          kind: "bearer",
-          tokenSecretRef,
-          headerName: null,
-          prefix: null,
-        }),
-        fallback: {
-          kind: "none",
-        },
-      }),
-      defaultHeaders: legacy.value.binding.defaultHeaders ?? null,
       etag: null,
       lastSyncAt: null,
     });

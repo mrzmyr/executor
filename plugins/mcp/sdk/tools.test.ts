@@ -500,7 +500,7 @@ describe("codemode-mcp", () => {
                 action: "accept" as const,
               };
             }),
-          path: "executor.sources.add" as ToolPath,
+          path: "executor.mcp.createSource" as ToolPath,
           sourceKey: "executor",
           args: {
             endpoint: "https://example.com/mcp",

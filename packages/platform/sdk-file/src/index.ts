@@ -27,11 +27,11 @@ import {
   type ExecutorRuntime,
   type ExecutorRuntimeOptions,
   type ResolveSecretMaterial,
+  emptyExecutorPluginRegistry,
 } from "@executor/platform-sdk/runtime";
 import * as Effect from "effect/Effect";
 import {
   type LoadedLocalExecutorConfig,
-  migrateLegacyLocalExecutorConfigs,
   type ResolvedLocalWorkspaceContext,
   loadLocalExecutorConfig,
   resolveConfigRelativePath,
@@ -238,10 +238,6 @@ export const createLocalExecutorRepositoriesEffect = (
         homeStateDirectory: options.homeStateDirectory,
       }),
     ).pipe(Effect.mapError(toError));
-    yield* bindFileSystem(
-      fileSystem,
-      migrateLegacyLocalExecutorConfigs(workspaceContext),
-    ).pipe(Effect.mapError(toError));
 
     const executorStateStorage = createLocalExecutorStatePersistence(
       workspaceContext,
@@ -252,14 +248,17 @@ export const createLocalExecutorRepositoriesEffect = (
       fileSystem,
     );
     const loadedConfig = yield* workspaceConfigStore.load();
+    const pluginRegistry = runtimeOptions.pluginRegistry ?? emptyExecutorPluginRegistry();
     yield* provisionBuiltinSecretStores({
       executorState: executorStateStorage.executorState,
+      pluginRegistry,
       scopeId: deriveLocalInstallation(workspaceContext).scopeId,
     });
     const resolveSecretMaterial: ResolveSecretMaterial =
       runtimeOptions.resolveSecretMaterial
       ?? createDefaultSecretMaterialResolver({
         executorState: executorStateStorage.executorState,
+        pluginRegistry,
       });
 
     return {
@@ -288,14 +287,17 @@ export const createLocalExecutorRepositoriesEffect = (
         resolve: resolveSecretMaterial,
         store: createDefaultSecretMaterialStorer({
           executorState: executorStateStorage.executorState,
+          pluginRegistry,
           resolveSecretMaterial,
         }),
         delete: createDefaultSecretMaterialDeleter({
           executorState: executorStateStorage.executorState,
+          pluginRegistry,
           resolveSecretMaterial,
         }),
         update: createDefaultSecretMaterialUpdater({
           executorState: executorStateStorage.executorState,
+          pluginRegistry,
           resolveSecretMaterial,
         }),
       },
@@ -308,6 +310,7 @@ export const createLocalExecutorRepositoriesEffect = (
       instanceConfig: {
         resolve: createLocalInstanceConfigResolver({
           executorState: executorStateStorage.executorState,
+          pluginRegistry,
         }),
       },
       close: executorStateStorage.close,

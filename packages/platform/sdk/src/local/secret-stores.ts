@@ -18,6 +18,7 @@ import {
   ControlPlaneStorageError,
 } from "../errors";
 import {
+  ExecutorPluginRegistryService,
   createManagedSecretStoreRecord,
   getManagedSecretStore,
   getSecretStoreContribution,
@@ -75,13 +76,15 @@ const asRecord = (value: unknown): Record<string, unknown> | null =>
     ? value as Record<string, unknown>
     : null;
 
-const getSecretStoreContributionOption = (kind: string) => {
-  try {
-    return Option.some(getSecretStoreContribution(kind));
-  } catch {
-    return Option.none<typeof getSecretStoreContribution extends (kind: string) => infer T ? T : never>();
-  }
-};
+const getSecretStoreContributionOption = (kind: string) =>
+  Effect.gen(function* () {
+    const pluginRegistry = yield* ExecutorPluginRegistryService;
+    try {
+      return Option.some(getSecretStoreContribution(pluginRegistry, kind));
+    } catch {
+      return Option.none<typeof getSecretStoreContribution extends (registry: any, kind: string) => infer T ? T : never>();
+    }
+  });
 
 const defaultCapabilities: SecretStoreCapabilities = {
   canCreateSecrets: false,
@@ -95,7 +98,7 @@ const loadStoreCapabilities = (
   store: SecretStore,
 )=>
   Effect.gen(function* () {
-    const contribution = getSecretStoreContributionOption(store.kind);
+    const contribution = yield* getSecretStoreContributionOption(store.kind);
     if (Option.isNone(contribution)) {
       return defaultCapabilities;
     }
@@ -183,8 +186,9 @@ export const createLocalSecretStore = (payload: CreateSecretStorePayload) =>
         ),
       ),
     );
+    const pluginRegistry = yield* ExecutorPluginRegistryService;
     const contribution = yield* Effect.try({
-      try: () => getSecretStoreContribution(payload.kind),
+      try: () => getSecretStoreContribution(pluginRegistry, payload.kind),
       catch: (cause) =>
         cause instanceof Error ? cause : new Error(String(cause)),
     }).pipe(
@@ -254,7 +258,7 @@ export const updateLocalSecretStore = (input: {
       ),
     );
 
-    const contribution = getSecretStoreContributionOption(store.kind);
+    const contribution = yield* getSecretStoreContributionOption(store.kind);
     const configRecord = input.payload.config === undefined
       ? null
       : asRecord(input.payload.config);
@@ -318,7 +322,7 @@ export const deleteLocalSecretStore = (storeId: string) =>
       });
     }
 
-    const contribution = getSecretStoreContributionOption(store.value.kind);
+    const contribution = yield* getSecretStoreContributionOption(store.value.kind);
     if (Option.isNone(contribution)) {
       return yield* new ControlPlaneBadRequestError({
         operation: "secretStores.delete",
@@ -359,7 +363,7 @@ export const browseLocalSecretStore = (input: {
       ),
     );
 
-    const contribution = getSecretStoreContributionOption(store.kind);
+    const contribution = yield* getSecretStoreContributionOption(store.kind);
     const capabilities = yield* loadStoreCapabilities(store);
     if (Option.isNone(contribution) || !capabilities.canBrowseSecrets) {
       return yield* new ControlPlaneBadRequestError({
@@ -399,7 +403,7 @@ export const importLocalSecretFromStore = (input: {
       ),
     );
 
-    const contribution = getSecretStoreContributionOption(store.kind);
+    const contribution = yield* getSecretStoreContributionOption(store.kind);
     if (Option.isNone(contribution)) {
       return yield* new ControlPlaneBadRequestError({
         operation: "secretStores.import",

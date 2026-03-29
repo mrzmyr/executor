@@ -18,7 +18,6 @@ import {
 } from "@executor/platform-sdk/plugins";
 import {
   createPluginLocalConfigEntrySchema,
-  decodeCurrentOrLegacyLocalConfigAuth,
   pluginLocalConfigSourceFromConfig,
   SecretMaterialDeleterService,
   SecretMaterialResolverService,
@@ -103,29 +102,6 @@ const decodeGoogleDiscoveryCurrentLocalConfigOption = Schema.decodeUnknownOption
     config: GoogleDiscoveryStoredSourceDataSchema,
   }),
 );
-const decodeGoogleDiscoveryLegacyLocalConfigOption = Schema.decodeUnknownOption(
-  Schema.Struct({
-    kind: Schema.Literal(GOOGLE_DISCOVERY_SOURCE_KIND),
-    name: Schema.optional(Schema.String),
-    namespace: Schema.optional(Schema.String),
-    enabled: Schema.optional(Schema.Boolean),
-    connection: Schema.Struct({
-      endpoint: Schema.optional(Schema.NullOr(Schema.String)),
-      auth: Schema.optional(Schema.Unknown),
-    }),
-    binding: Schema.Struct({
-      service: Schema.String,
-      version: Schema.String,
-      discoveryUrl: Schema.optional(Schema.NullOr(Schema.String)),
-      defaultHeaders: Schema.optional(
-        Schema.NullOr(Schema.Record({ key: Schema.String, value: Schema.String })),
-      ),
-      scopes: Schema.optional(Schema.Array(Schema.String)),
-    }),
-    config: Schema.optional(Schema.Unknown),
-  }),
-);
-
 export type GoogleDiscoverySourceStorage = {
   get: (input: {
     scopeId: string;
@@ -580,32 +556,6 @@ const googleDiscoveryStoredSourceDataFromLocalConfig = (input: {
   const current = decodeGoogleDiscoveryCurrentLocalConfigOption(input.config);
   if (Option.isSome(current)) {
     return current.value.config;
-  }
-
-  const legacy = decodeGoogleDiscoveryLegacyLocalConfigOption(input.config);
-  if (Option.isSome(legacy)) {
-    return storedSourceDataFromInput({
-      name:
-        legacy.value.name
-        ?? `${legacy.value.binding.service} ${legacy.value.binding.version}`,
-      service: legacy.value.binding.service,
-      version: legacy.value.binding.version,
-      discoveryUrl: legacy.value.binding.discoveryUrl ?? null,
-      defaultHeaders: legacy.value.binding.defaultHeaders ?? null,
-      scopes: legacy.value.binding.scopes ?? [],
-      auth: decodeCurrentOrLegacyLocalConfigAuth({
-        auth: legacy.value.connection.auth,
-        authSchema: GoogleDiscoveryConnectionAuthSchema,
-        loadedConfig: input.loadedConfig,
-        onLegacySecretRef: (tokenSecretRef) => ({
-          kind: "bearer",
-          tokenSecretRef,
-        }),
-        fallback: {
-          kind: "none",
-        },
-      }),
-    });
   }
 
   throw new Error("Unsupported Google Discovery local source config.");

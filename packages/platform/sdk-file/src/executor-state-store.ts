@@ -28,8 +28,6 @@ import {
 
 const LOCAL_EXECUTOR_STATE_VERSION = 1 as const;
 const LOCAL_EXECUTOR_STATE_BASENAME = "executor-state.json";
-const LEGACY_LOCAL_SECRET_STORE_ID = "sts_builtin_local";
-const LEGACY_KEYCHAIN_SECRET_STORE_ID = "sts_builtin_keychain";
 
 const LocalExecutorStateSnapshotSchema = Schema.Struct({
   version: Schema.Literal(LOCAL_EXECUTOR_STATE_VERSION),
@@ -62,145 +60,6 @@ const defaultLocalExecutorStateSnapshot = (): LocalExecutorStateSnapshot => ({
 
 const cloneValue = <T>(value: T): T =>
   JSON.parse(JSON.stringify(value)) as T;
-
-const asRecord = (
-  value: unknown,
-): Record<string, unknown> | null =>
-  value !== null && typeof value === "object" && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : null;
-
-const legacySecretStoreIdForProviderId = (providerId: string): string =>
-  providerId === "local"
-    ? LEGACY_LOCAL_SECRET_STORE_ID
-    : providerId === "keychain"
-      ? LEGACY_KEYCHAIN_SECRET_STORE_ID
-      : `sts_legacy_${providerId}`;
-
-const legacySecretStoreNameForProviderId = (providerId: string): string => {
-  switch (providerId) {
-    case "local":
-      return "Local Store";
-    case "keychain":
-      return process.platform === "darwin"
-        ? "macOS Keychain"
-        : "Desktop Keyring";
-    default:
-      return `Legacy ${providerId}`;
-  }
-};
-
-const migrateLegacyExecutorStateValue = (
-  value: unknown,
-  input: {
-    scopeId: string;
-  },
-): {
-  value: unknown;
-  migrated: boolean;
-} => {
-  if (Array.isArray(value)) {
-    let migrated = false;
-    const next = value.map((item) => {
-      const result = migrateLegacyExecutorStateValue(item, input);
-      migrated = migrated || result.migrated;
-      return result.value;
-    });
-    return { value: next, migrated };
-  }
-
-  const record = asRecord(value);
-  if (record === null) {
-    return { value, migrated: false };
-  }
-
-  let migrated = false;
-  const next: Record<string, unknown> = {};
-
-  for (const [key, entry] of Object.entries(record)) {
-    let nextKey = key;
-    if (key === "workspaceId") {
-      nextKey = "scopeId";
-      migrated = true;
-    } else if (key === "actorAccountId") {
-      nextKey = "actorScopeId";
-      migrated = true;
-    } else if (key === "createdByAccountId") {
-      nextKey = "createdByScopeId";
-      migrated = true;
-    } else if (key === "workspaceOauthClients") {
-      nextKey = "scopeOauthClients";
-      migrated = true;
-    }
-
-    const migratedEntry = migrateLegacyExecutorStateValue(entry, input);
-    migrated = migrated || migratedEntry.migrated;
-    next[nextKey] = migratedEntry.value;
-  }
-
-  if (next.version === LOCAL_EXECUTOR_STATE_VERSION) {
-    const secretMaterialsValue = Array.isArray(next.secretMaterials)
-      ? next.secretMaterials
-      : [];
-    const secretStoresValue = Array.isArray(next.secretStores)
-      ? next.secretStores
-      : [];
-    const secretStoresById = new Map<string, Record<string, unknown>>();
-
-    for (const entry of secretStoresValue) {
-      const record = asRecord(entry);
-      if (record !== null && typeof record.id === "string") {
-        secretStoresById.set(record.id, record);
-      }
-    }
-
-    const migratedSecretMaterials = secretMaterialsValue.map((entry) => {
-      const record = asRecord(entry);
-      if (record === null) {
-        return entry;
-      }
-
-      if (typeof record.providerId !== "string" || typeof record.storeId === "string") {
-        return entry;
-      }
-
-      const providerId = record.providerId;
-      const storeId = legacySecretStoreIdForProviderId(providerId);
-      const createdAt =
-        typeof record.createdAt === "number" ? record.createdAt : 0;
-      const updatedAt =
-        typeof record.updatedAt === "number" ? record.updatedAt : createdAt;
-
-      secretStoresById.set(storeId, {
-        id: storeId,
-        scopeId: input.scopeId,
-        name: legacySecretStoreNameForProviderId(providerId),
-        kind: providerId,
-        status: providerId === "local" || providerId === "keychain"
-          ? "connected"
-          : "error",
-        enabled: true,
-        createdAt,
-        updatedAt,
-      });
-
-      migrated = true;
-      return {
-        ...record,
-        storeId,
-      };
-    });
-
-    if (!Array.isArray(next.secretStores)) {
-      migrated = true;
-    }
-
-    next.secretStores = [...secretStoresById.values()];
-    next.secretMaterials = migratedSecretMaterials;
-  }
-
-  return { value: next, migrated };
-};
 
 const mapFileSystemError = (path: string, action: string) => (cause: unknown) =>
   new LocalFileSystemError({
@@ -258,15 +117,9 @@ const readStateFromDisk = (
       try: () => JSON.parse(content) as unknown,
       catch: mapFileSystemError(path, "parse executor state"),
     });
-    const migrated = migrateLegacyExecutorStateValue(parsed, {
-      scopeId: deriveLocalInstallation(context).scopeId,
-    });
-    const decoded = yield* decodeLocalExecutorStateSnapshot(migrated.value).pipe(
+    const decoded = yield* decodeLocalExecutorStateSnapshot(parsed).pipe(
       Effect.mapError(mapFileSystemError(path, "decode executor state")),
     );
-    if (migrated.migrated) {
-      yield* writeStateToDisk(context, decoded);
-    }
     return decoded;
   });
 

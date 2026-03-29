@@ -38,7 +38,7 @@ const makeEnvelope = (
     scopeId: "ws_123" as never,
     createdByScopeId: "acct_123" as never,
     status: "waiting_for_interaction",
-    code: "return await tools.executor.sources.add({ endpoint: 'https://mcp.axiom.co/mcp' });",
+    code: "return await tools.executor.mcp.createSource({ name: 'Axiom', endpoint: 'https://mcp.axiom.co/mcp', transport: 'streamable-http', queryParams: null, headers: null, command: null, args: null, env: null, cwd: null, auth: { kind: 'none' } });",
     resultJson: null,
     errorText: null,
     logsJson: null,

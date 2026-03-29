@@ -249,35 +249,10 @@ const normalizeStringArray = (
   return normalized.length > 0 ? normalized : null;
 };
 
-const decodeMcpAuthOption = Schema.decodeUnknownOption(McpConnectionAuthSchema);
 const decodeMcpCurrentLocalConfigOption = Schema.decodeUnknownOption(
   createPluginLocalConfigEntrySchema({
     kind: "mcp",
     config: McpStoredSourceDataSchema,
-  }),
-);
-const decodeMcpLegacyLocalConfigOption = Schema.decodeUnknownOption(
-  Schema.Struct({
-    kind: Schema.Literal("mcp"),
-    name: Schema.optional(Schema.String),
-    namespace: Schema.optional(Schema.String),
-    enabled: Schema.optional(Schema.Boolean),
-    connection: Schema.optional(
-      Schema.Struct({
-        endpoint: Schema.optional(Schema.NullOr(Schema.String)),
-        auth: Schema.optional(Schema.Unknown),
-      }),
-    ),
-    binding: Schema.Struct({
-      transport: Schema.optional(Schema.NullOr(SourceTransportSchema)),
-      queryParams: Schema.optional(Schema.NullOr(StringMapSchema)),
-      headers: Schema.optional(Schema.NullOr(StringMapSchema)),
-      command: Schema.optional(Schema.NullOr(Schema.String)),
-      args: Schema.optional(Schema.NullOr(StringArraySchema)),
-      env: Schema.optional(Schema.NullOr(StringMapSchema)),
-      cwd: Schema.optional(Schema.NullOr(Schema.String)),
-    }),
-    config: Schema.optional(Schema.Unknown),
   }),
 );
 
@@ -397,37 +372,6 @@ const mcpStoredSourceDataFromLocalConfig = (
   const current = decodeMcpCurrentLocalConfigOption(config);
   if (Option.isSome(current)) {
     return Effect.succeed(current.value.config);
-  }
-
-  const legacy = decodeMcpLegacyLocalConfigOption(config);
-  if (Option.isSome(legacy)) {
-    const auth = decodeMcpAuthOption(legacy.value.connection?.auth);
-    if (
-      legacy.value.connection?.auth !== undefined &&
-      Option.isNone(auth)
-    ) {
-      return runtimeEffectError(
-        "plugins/mcp/sdk",
-        "Unsupported MCP auth configuration in local source config.",
-      );
-    }
-
-    return normalizeStoredSourceData({
-      name: legacy.value.name ?? "MCP",
-      endpoint: legacy.value.connection?.endpoint ?? null,
-      transport: legacy.value.binding.transport ?? null,
-      queryParams: legacy.value.binding.queryParams ?? null,
-      headers: legacy.value.binding.headers ?? null,
-      command: legacy.value.binding.command ?? null,
-      args: legacy.value.binding.args ?? null,
-      env: legacy.value.binding.env ?? null,
-      cwd: legacy.value.binding.cwd ?? null,
-      auth: Option.isSome(auth)
-        ? auth.value
-        : {
-            kind: "none",
-          },
-    });
   }
 
   return runtimeEffectError(

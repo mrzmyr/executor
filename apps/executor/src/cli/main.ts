@@ -90,7 +90,6 @@ import {
 import { decideInteractionHandling } from "./interaction-handling";
 import {
   renderMcpSessionSummary,
-  renderUpSummary,
   renderWebSessionSummary,
 } from "./session-summary";
 import {
@@ -415,8 +414,6 @@ const printRootHelp = (workflow: string) =>
       "    Execute code against the local executor server.",
       "  resume",
       "    Resume a paused execution.",
-      "  up / down / status / doctor",
-      "    Compatibility commands for the detached local daemon.",
       "",
       "TIP",
       "",
@@ -625,152 +622,9 @@ const waitForReachability = (baseUrl: string, expected: boolean) =>
     return yield* failReachabilityTimeout({ baseUrl, expected });
   });
 
-type LocalServerStatus = {
-  baseUrl: string;
-  reachable: boolean;
-  pidFile: string;
-  pid: number | null;
-  pidRunning: boolean;
-  logFile: string;
-  localDataDir: string;
-  webAssetsDir: string | null;
-  installation: {
-    accountId: string;
-    workspaceId: string;
-  } | null;
-};
-
-const getServerStatus = (
-  baseUrl: string,
-): Effect.Effect<LocalServerStatus, Error, FileSystem.FileSystem> =>
-  Effect.gen(function* () {
-    const pidRecord = yield* readPidRecord();
-    const reachable = yield* isServerReachable(baseUrl);
-    const installation = reachable
-      ? yield* getBootstrapClient(baseUrl).pipe(
-          Effect.flatMap((client) => client.local.installation({})),
-          Effect.map((installation) => ({
-            accountId: installation.actorScopeId,
-            workspaceId: installation.scopeId,
-          })),
-          Effect.catchAll(() => Effect.succeed(null)),
-        )
-      : null;
-
-    const pid = typeof pidRecord?.pid === "number" ? pidRecord.pid : null;
-    const pidRunning = pid !== null ? isPidRunning(pid) : false;
-    const logFile = pidRecord?.logFile ?? DEFAULT_SERVER_LOG_FILE;
-
-    return {
-      baseUrl,
-      reachable,
-      pidFile: DEFAULT_SERVER_PID_FILE,
-      pid,
-      pidRunning,
-      logFile,
-      localDataDir: CLI_LOCAL_DATA_DIR,
-      webAssetsDir: resolveRuntimeWebAssetsDir(),
-      installation,
-    } satisfies LocalServerStatus;
-  });
-
-const renderStatus = (status: LocalServerStatus): string =>
-  [
-    `baseUrl: ${status.baseUrl}`,
-    `reachable: ${status.reachable ? "yes" : "no"}`,
-    `pid: ${status.pid ?? "none"}`,
-    `pidRunning: ${status.pidRunning ? "yes" : "no"}`,
-    `pidFile: ${status.pidFile}`,
-    `logFile: ${status.logFile}`,
-    `localDataDir: ${status.localDataDir}`,
-    `webAssetsDir: ${status.webAssetsDir ?? "missing"}`,
-    `workspaceId: ${status.installation?.workspaceId ?? "unavailable"}`,
-  ].join("\n");
-
-const getDoctorReport = (baseUrl: string) =>
-  getServerStatus(baseUrl).pipe(
-    Effect.map((status) => {
-      const checks = {
-        serverReachable: {
-          ok: status.reachable,
-          detail: status.reachable ? `reachable at ${status.baseUrl}` : `not reachable at ${status.baseUrl}`,
-        },
-        pidFile: {
-          ok: status.pid !== null,
-          detail: status.pid !== null ? `pid ${status.pid}` : `missing pid file at ${status.pidFile}`,
-        },
-        process: {
-          ok: status.pidRunning,
-          detail: status.pidRunning ? `pid ${status.pid}` : "no live daemon process recorded",
-        },
-        database: {
-          ok: status.localDataDir.length > 0,
-          detail: status.localDataDir,
-        },
-        webAssets: {
-          ok: status.webAssetsDir !== null,
-          detail: status.webAssetsDir ?? "missing bundled web assets",
-        },
-        installation: {
-          ok: status.installation !== null,
-          detail: status.installation
-            ? `workspace ${status.installation.workspaceId}`
-            : "local installation unavailable",
-        },
-      } as const;
-
-      return {
-        ok: Object.values(checks).every((check) => check.ok),
-        status,
-        checks,
-      };
-    }),
-  );
-
-const printJson = (value: unknown) =>
-  Effect.sync(() => {
-    console.log(JSON.stringify(value, null, 2));
-  });
-
 const printText = (value: string) =>
   Effect.sync(() => {
     console.log(value);
-  });
-
-const stopServer = (baseUrl: string) =>
-  Effect.gen(function* () {
-    const fs = yield* FileSystem.FileSystem;
-    const removePidFile = fs.remove(DEFAULT_SERVER_PID_FILE, {
-      force: true,
-    }).pipe(Effect.ignore);
-    const pidRecord = yield* readPidRecord();
-    const pid = typeof pidRecord?.pid === "number" ? pidRecord.pid : null;
-
-    if (pid === null) {
-      yield* removePidFile;
-      return false;
-    }
-
-    if (!isPidRunning(pid)) {
-      yield* removePidFile;
-      return false;
-    }
-
-
-    yield* Effect.sync(() => {
-      process.kill(pid, "SIGTERM");
-    });
-
-    yield* waitForReachability(baseUrl, false).pipe(
-      Effect.catchAll(() =>
-        removePidFile.pipe(
-          Effect.ignore,
-          Effect.zipRight(Effect.fail(executorAppEffectError("cli/main", `Timed out stopping local executor server pid ${pid}`))),
-        ),
-      ),
-    );
-
-    return true;
   });
 
 const ensureServer = (baseUrl: string = DEFAULT_SERVER_BASE_URL) =>
@@ -1243,63 +1097,6 @@ const mcpCommand = Command.make(
       : runForegroundSession({ kind: "mcp", port }),
 ).pipe(Command.withDescription("Start a foreground MCP session, or run stdio MCP with --stdio"));
 
-const upCommand = Command.make(
-  "up",
-  {
-    baseUrl: Options.text("base-url").pipe(Options.withDefault(DEFAULT_SERVER_BASE_URL)),
-  },
-  ({ baseUrl }) =>
-    ensureServer(baseUrl).pipe(
-      Effect.flatMap(({ started }) =>
-        getServerStatus(baseUrl).pipe(
-          Effect.flatMap((status) => printText(renderUpSummary({ started, status }))),
-        )
-      ),
-    ),
-).pipe(Command.withDescription("Start the local executor server if needed and show how to use it"));
-
-const downCommand = Command.make(
-  "down",
-  {
-    baseUrl: Options.text("base-url").pipe(Options.withDefault(DEFAULT_SERVER_BASE_URL)),
-  },
-  ({ baseUrl }) =>
-    stopServer(baseUrl).pipe(
-      Effect.flatMap((stopped) =>
-        printText(stopped ? "Stopped local executor server." : "Local executor server is not running."),
-      ),
-    ),
-).pipe(Command.withDescription("Stop the local executor server"));
-
-const statusCommand = Command.make(
-  "status",
-  {
-    baseUrl: Options.text("base-url").pipe(Options.withDefault(DEFAULT_SERVER_BASE_URL)),
-    json: Options.boolean("json").pipe(Options.withDefault(false)),
-  },
-  ({ baseUrl, json }) =>
-    getServerStatus(baseUrl).pipe(
-      Effect.flatMap((status) => json ? printJson(status) : printText(renderStatus(status))),
-    ),
-).pipe(Command.withDescription("Show local executor server status"));
-
-const doctorCommand = Command.make(
-  "doctor",
-  {
-    baseUrl: Options.text("base-url").pipe(Options.withDefault(DEFAULT_SERVER_BASE_URL)),
-    json: Options.boolean("json").pipe(Options.withDefault(false)),
-  },
-  ({ baseUrl, json }) =>
-    getDoctorReport(baseUrl).pipe(
-      Effect.flatMap((report) => json
-        ? printJson(report)
-        : printText([
-            `ok: ${report.ok ? "yes" : "no"}`,
-            ...Object.entries(report.checks).map(([name, check]) => `${name}: ${check.ok ? "ok" : "fail"} - ${check.detail}`),
-          ].join("\n"))),
-    ),
-).pipe(Command.withDescription("Check local executor install and daemon health"));
-
 const callCommand = Command.make(
   "call",
   {
@@ -1386,10 +1183,6 @@ const root = Command.make("executor").pipe(
     serverCommand,
     webCommand,
     mcpCommand,
-    upCommand,
-    downCommand,
-    statusCommand,
-    doctorCommand,
     callCommand,
     resumeCommand,
     devCommand,

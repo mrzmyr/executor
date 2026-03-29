@@ -31,7 +31,6 @@ import type {
   ExecutorSdkPluginRegistry,
 } from "../plugins";
 
-const LEGACY_LOCAL_SOURCE_ARTIFACT_VERSION = 3 as const;
 const LOCAL_SOURCE_ARTIFACT_VERSION = 4 as const;
 
 export const LocalSourceArtifactSchema = Schema.Struct({
@@ -45,15 +44,6 @@ export const LocalSourceArtifactSchema = Schema.Struct({
 
 export type LocalSourceArtifact = typeof LocalSourceArtifactSchema.Type;
 
-const ReadableLegacyLocalSourceArtifactSchema = Schema.Struct({
-  version: Schema.Literal(LEGACY_LOCAL_SOURCE_ARTIFACT_VERSION),
-  sourceId: SourceIdSchema,
-  catalogId: SourceCatalogIdSchema,
-  generatedAt: TimestampMsSchema,
-  revision: StoredSourceCatalogRevisionRecordSchema,
-  snapshot: Schema.Unknown,
-});
-
 const ReadableLocalSourceArtifactSchema = Schema.Struct({
   version: Schema.Literal(LOCAL_SOURCE_ARTIFACT_VERSION),
   sourceId: SourceIdSchema,
@@ -63,29 +53,14 @@ const ReadableLocalSourceArtifactSchema = Schema.Struct({
   snapshot: Schema.Unknown,
 });
 
-type ReadableLegacyLocalSourceArtifact =
-  typeof ReadableLegacyLocalSourceArtifactSchema.Type;
 type ReadableLocalSourceArtifact =
   typeof ReadableLocalSourceArtifactSchema.Type;
 
 const decodeReadableLocalSourceArtifactOption = Schema.decodeUnknownOption(
   Schema.parseJson(
-    Schema.Union(
-      ReadableLocalSourceArtifactSchema,
-      ReadableLegacyLocalSourceArtifactSchema,
-    ),
+    ReadableLocalSourceArtifactSchema,
   ),
 );
-
-const normalizeLocalSourceArtifact = (
-  artifact: ReadableLocalSourceArtifact | ReadableLegacyLocalSourceArtifact,
-): Omit<LocalSourceArtifact, "snapshot"> & { snapshot: unknown } =>
-  artifact.version === LOCAL_SOURCE_ARTIFACT_VERSION
-    ? artifact
-    : {
-        ...artifact,
-        version: LOCAL_SOURCE_ARTIFACT_VERSION,
-      };
 
 const mutableRecord = <K extends string, V>(
   value: Readonly<Record<K, V>>,
@@ -188,7 +163,7 @@ export const decodeStoredLocalSourceArtifact = (
     return null;
   }
 
-  const artifact = normalizeLocalSourceArtifact(decodedArtifact.value);
+  const artifact = decodedArtifact.value;
   const snapshot = decodeCatalogSnapshotV1Option(artifact.snapshot);
   if (snapshot === null) {
     return null;

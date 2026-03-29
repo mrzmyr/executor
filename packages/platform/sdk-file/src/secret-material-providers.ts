@@ -5,6 +5,9 @@ import type {
   SecretProvider,
 } from "@executor/platform-sdk/contracts";
 import type {
+  ExecutorSdkPluginRegistry,
+} from "@executor/platform-sdk/plugins";
+import type {
   SecretMaterial,
   SecretMaterialPurpose,
   SecretRef,
@@ -43,8 +46,10 @@ const trimOrNull = (value: string | null | undefined): string | null => {
   return trimmed.length > 0 ? trimmed : null;
 };
 
-const builtinSecretStoreContributions = () =>
-  registeredSecretStoreContributions()
+const builtinSecretStoreContributions = (
+  pluginRegistry: ExecutorSdkPluginRegistry,
+) =>
+  registeredSecretStoreContributions(pluginRegistry)
     .filter((entry) => entry.builtin !== undefined)
     .filter((entry) => entry.builtin?.enabled?.() ?? true)
     .map((entry) => ({
@@ -52,11 +57,17 @@ const builtinSecretStoreContributions = () =>
       builtin: entry.builtin!,
     }));
 
-const resolveStoreContribution = (store: SecretStore) =>
-  getSecretStoreContribution(store.kind);
+const resolveStoreContribution = (
+  pluginRegistry: ExecutorSdkPluginRegistry,
+  store: SecretStore,
+) =>
+  getSecretStoreContribution(pluginRegistry, store.kind);
 
-const loadStoreCapabilities = (store: SecretStore) =>
-  resolveStoreContribution(store).getCapabilities({
+const loadStoreCapabilities = (
+  pluginRegistry: ExecutorSdkPluginRegistry,
+  store: SecretStore,
+) =>
+  resolveStoreContribution(pluginRegistry, store).getCapabilities({
     store,
   }) as Effect.Effect<{
     canCreateSecrets: boolean;
@@ -72,6 +83,7 @@ const parseDefaultStoreKind = (value: string | undefined): string | null => {
 };
 
 const resolveDefaultStoreId = (
+  pluginRegistry: ExecutorSdkPluginRegistry,
   stores: ReadonlyArray<{
     id: string;
     kind: string;
@@ -85,7 +97,7 @@ const resolveDefaultStoreId = (
     }
   }
 
-  const prioritizedBuiltins = builtinSecretStoreContributions()
+  const prioritizedBuiltins = builtinSecretStoreContributions(pluginRegistry)
     .sort((left, right) =>
       (right.builtin.defaultPriority ?? 0) - (left.builtin.defaultPriority ?? 0)
     );
@@ -102,12 +114,13 @@ const resolveDefaultStoreId = (
 
 export const provisionBuiltinSecretStores = (input: {
   executorState: ExecutorStateStoreShape;
+  pluginRegistry: ExecutorSdkPluginRegistry;
   scopeId: string;
 }) =>
   Effect.gen(function* () {
     const now = Date.now();
 
-    for (const entry of builtinSecretStoreContributions()) {
+    for (const entry of builtinSecretStoreContributions(input.pluginRegistry)) {
       const existing = yield* input.executorState.secretStores.getById(
         entry.builtin.storeId as SecretStore["id"],
       );
@@ -169,6 +182,7 @@ const provideSecretResolver = <A, E>(
 
 export const createDefaultSecretMaterialResolver = (input: {
   executorState: ExecutorStateStoreShape;
+  pluginRegistry: ExecutorSdkPluginRegistry;
   keychainServiceName?: string;
 }): ResolveSecretMaterial => {
   let resolveSecretMaterial!: ResolveSecretMaterial;
@@ -182,7 +196,7 @@ export const createDefaultSecretMaterialResolver = (input: {
         executorState: input.executorState,
         storeId: material.storeId,
       });
-      const contribution = resolveStoreContribution(store);
+      const contribution = resolveStoreContribution(input.pluginRegistry, store);
       return yield* provideSecretResolver(
         contribution.resolveSecret({
           secret: material,
@@ -198,13 +212,14 @@ export const createDefaultSecretMaterialResolver = (input: {
 
 export const createDefaultSecretMaterialStorer = (input: {
   executorState: ExecutorStateStoreShape;
+  pluginRegistry: ExecutorSdkPluginRegistry;
   resolveSecretMaterial: ResolveSecretMaterial;
   keychainServiceName?: string;
 }): StoreSecretMaterial => {
   return ({ purpose, value, name, storeId }) =>
     Effect.gen(function* () {
       const stores = yield* input.executorState.secretStores.listAll();
-      const resolvedStoreId = storeId ?? resolveDefaultStoreId(stores);
+      const resolvedStoreId = storeId ?? resolveDefaultStoreId(input.pluginRegistry, stores);
       if (resolvedStoreId === null) {
         return yield* runtimeEffectError(
           "local/secret-material-providers",
@@ -216,9 +231,9 @@ export const createDefaultSecretMaterialStorer = (input: {
         executorState: input.executorState,
         storeId: resolvedStoreId as SecretStore["id"],
       });
-      const contribution = resolveStoreContribution(store);
+      const contribution = resolveStoreContribution(input.pluginRegistry, store);
 
-      const capabilities = yield* loadStoreCapabilities(store);
+      const capabilities = yield* loadStoreCapabilities(input.pluginRegistry, store);
       if (!capabilities.canCreateSecrets) {
         return yield* runtimeEffectError(
           "local/secret-material-providers",
@@ -258,6 +273,7 @@ export const createDefaultSecretMaterialStorer = (input: {
 
 export const createDefaultSecretMaterialUpdater = (input: {
   executorState: ExecutorStateStoreShape;
+  pluginRegistry: ExecutorSdkPluginRegistry;
   resolveSecretMaterial: ResolveSecretMaterial;
   keychainServiceName?: string;
 }): UpdateSecretMaterial => {
@@ -271,9 +287,9 @@ export const createDefaultSecretMaterialUpdater = (input: {
         executorState: input.executorState,
         storeId: material.storeId,
       });
-      const contribution = resolveStoreContribution(store);
+      const contribution = resolveStoreContribution(input.pluginRegistry, store);
 
-      const capabilities = yield* loadStoreCapabilities(store);
+      const capabilities = yield* loadStoreCapabilities(input.pluginRegistry, store);
       if (!capabilities.canUpdateSecrets) {
         return yield* runtimeEffectError(
           "local/secret-material-providers",
@@ -313,6 +329,7 @@ export const createDefaultSecretMaterialUpdater = (input: {
 
 export const createDefaultSecretMaterialDeleter = (input: {
   executorState: ExecutorStateStoreShape;
+  pluginRegistry: ExecutorSdkPluginRegistry;
   resolveSecretMaterial: ResolveSecretMaterial;
   keychainServiceName?: string;
 }): DeleteSecretMaterial => {
@@ -326,8 +343,8 @@ export const createDefaultSecretMaterialDeleter = (input: {
         executorState: input.executorState,
         storeId: material.storeId,
       });
-      const contribution = resolveStoreContribution(store);
-      const capabilities = yield* loadStoreCapabilities(store);
+      const contribution = resolveStoreContribution(input.pluginRegistry, store);
+      const capabilities = yield* loadStoreCapabilities(input.pluginRegistry, store);
       const deleted = capabilities.canDeleteSecrets
         ? yield* provideSecretResolver(
             contribution.deleteSecret({
@@ -346,8 +363,10 @@ export const createDefaultSecretMaterialDeleter = (input: {
     });
 };
 
-const listAvailableSecretStorePlugins = (): SecretProvider[] => {
-  return registeredSecretStoreContributions().map((entry) => ({
+const listAvailableSecretStorePlugins = (
+  pluginRegistry: ExecutorSdkPluginRegistry,
+): SecretProvider[] => {
+  return registeredSecretStoreContributions(pluginRegistry).map((entry) => ({
     kind: entry.kind,
     displayName: entry.displayName,
     canCreate: entry.canCreate,
@@ -356,18 +375,20 @@ const listAvailableSecretStorePlugins = (): SecretProvider[] => {
 
 export const createLocalInstanceConfigResolver = (input: {
   executorState: ExecutorStateStoreShape;
+  pluginRegistry: ExecutorSdkPluginRegistry;
 }): ResolveInstanceConfig => () =>
   Effect.gen(function* () {
     const stores = yield* input.executorState.secretStores.listAll();
     return {
       platform: process.platform,
-      secretStorePlugins: listAvailableSecretStorePlugins(),
-      defaultSecretStoreId: resolveDefaultStoreId(stores),
+      secretStorePlugins: listAvailableSecretStorePlugins(input.pluginRegistry),
+      defaultSecretStoreId: resolveDefaultStoreId(input.pluginRegistry, stores),
     } satisfies InstanceConfig;
   });
 
 export const SecretMaterialResolverLive = (input: {
   executorState: ExecutorStateStoreShape;
+  pluginRegistry: ExecutorSdkPluginRegistry;
   resolveSecretMaterial?: ResolveSecretMaterial;
   keychainServiceName?: string;
 }) =>
@@ -380,6 +401,7 @@ export const SecretMaterialResolverLive = (input: {
 
 export const SecretMaterialStorerLive = (input: {
   executorState: ExecutorStateStoreShape;
+  pluginRegistry: ExecutorSdkPluginRegistry;
   resolveSecretMaterial: ResolveSecretMaterial;
   keychainServiceName?: string;
 }) =>
@@ -390,6 +412,7 @@ export const SecretMaterialStorerLive = (input: {
 
 export const SecretMaterialDeleterLive = (input: {
   executorState: ExecutorStateStoreShape;
+  pluginRegistry: ExecutorSdkPluginRegistry;
   resolveSecretMaterial: ResolveSecretMaterial;
   keychainServiceName?: string;
 }) =>
@@ -400,6 +423,7 @@ export const SecretMaterialDeleterLive = (input: {
 
 export const SecretMaterialUpdaterLive = (input: {
   executorState: ExecutorStateStoreShape;
+  pluginRegistry: ExecutorSdkPluginRegistry;
   resolveSecretMaterial: ResolveSecretMaterial;
   keychainServiceName?: string;
 }) =>
@@ -410,6 +434,7 @@ export const SecretMaterialUpdaterLive = (input: {
 
 export const SecretMaterialLive = (input: {
   executorState: ExecutorStateStoreShape;
+  pluginRegistry: ExecutorSdkPluginRegistry;
   resolveSecretMaterial?: ResolveSecretMaterial;
   keychainServiceName?: string;
 }) =>
@@ -421,8 +446,10 @@ export const SecretMaterialLive = (input: {
         input.resolveSecretMaterial
         ?? createDefaultSecretMaterialResolver({
           executorState: input.executorState,
+          pluginRegistry: input.pluginRegistry,
           keychainServiceName: input.keychainServiceName,
         }),
+      pluginRegistry: input.pluginRegistry,
       keychainServiceName: input.keychainServiceName,
     }),
     SecretMaterialDeleterLive({
@@ -431,8 +458,10 @@ export const SecretMaterialLive = (input: {
         input.resolveSecretMaterial
         ?? createDefaultSecretMaterialResolver({
           executorState: input.executorState,
+          pluginRegistry: input.pluginRegistry,
           keychainServiceName: input.keychainServiceName,
         }),
+      pluginRegistry: input.pluginRegistry,
       keychainServiceName: input.keychainServiceName,
     }),
     SecretMaterialUpdaterLive({
@@ -441,14 +470,17 @@ export const SecretMaterialLive = (input: {
         input.resolveSecretMaterial
         ?? createDefaultSecretMaterialResolver({
           executorState: input.executorState,
+          pluginRegistry: input.pluginRegistry,
           keychainServiceName: input.keychainServiceName,
         }),
+      pluginRegistry: input.pluginRegistry,
       keychainServiceName: input.keychainServiceName,
     }),
   );
 
 export const LocalInstanceConfigLive = (input: {
   executorState: ExecutorStateStoreShape;
+  pluginRegistry: ExecutorSdkPluginRegistry;
 }) =>
   Layer.succeed(
     LocalInstanceConfigService,

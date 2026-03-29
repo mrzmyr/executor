@@ -156,7 +156,7 @@ export const createScopeToolInvoker = (input: {
       return catalog;
     },
   });
-  const hasLocalToolsSourceContribution = registeredSourceContributions()
+  const hasLocalToolsSourceContribution = registeredSourceContributions(input.pluginRegistry)
     .some((source) => source.kind === "local-tools");
   const authoredTools = mergeToolMaps([
     systemTools,

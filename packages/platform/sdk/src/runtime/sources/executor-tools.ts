@@ -7,7 +7,6 @@ import {
 } from "#schema";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
 import type {
@@ -22,7 +21,6 @@ import {
   createManagedSourceRecord,
 } from "../../sources/operations";
 import {
-  deriveSchemaJson,
   deriveSchemaTypeSignature,
 } from "../catalog/schema-type-signature";
 import {
@@ -75,54 +73,6 @@ type RegisteredSourceContribution =
 type RegisteredManagementToolContribution =
   ExecutorSdkPluginRegistry["managementTools"][number];
 
-const createExecutorSourcesAddSchema = (
-  sources: ReadonlyArray<RegisteredSourceContribution>,
-): Schema.Schema<any, any, never> => {
-  if (sources.length === 0) {
-    return Schema.Unknown;
-  }
-
-  if (sources.length === 1) {
-    return sources[0]!.inputSchema;
-  }
-
-  return Schema.Union(
-    ...(sources.map((source) => source.inputSchema) as [
-      Schema.Schema<any, any, never>,
-      Schema.Schema<any, any, never>,
-      ...Array<Schema.Schema<any, any, never>>,
-    ]),
-  );
-};
-
-export const getExecutorSourcesAddInputHint = (
-  pluginRegistry: ExecutorSdkPluginRegistry,
-): string =>
-  deriveSchemaTypeSignature(
-    createExecutorSourcesAddSchema(
-      registeredSourceContributions(pluginRegistry),
-    ),
-    340,
-  );
-
-export const EXECUTOR_SOURCES_ADD_OUTPUT_SIGNATURE = deriveSchemaTypeSignature(
-  SourceSchema,
-  260,
-);
-
-export const getExecutorSourcesAddInputSchemaJson = (
-  pluginRegistry: ExecutorSdkPluginRegistry,
-): Record<string, unknown> =>
-  deriveSchemaJson(
-    createExecutorSourcesAddSchema(
-      registeredSourceContributions(pluginRegistry),
-    ),
-  ) ?? {};
-
-export const EXECUTOR_SOURCES_ADD_OUTPUT_SCHEMA = deriveSchemaJson(
-  SourceSchema,
-) ?? {};
-
 const coreSourceManagementHelpLines = (): readonly string[] => [
   "- executor.sources.list",
   `- executor.sources.get: ${deriveSchemaTypeSignature(SourceIdInputSchema, 180)}`,
@@ -147,51 +97,7 @@ export const getExecutorInternalToolHelpLines = (
             `- ${tool.path}: ${deriveSchemaTypeSignature(tool.inputSchema, 260)}`
           ),
         ]),
-    ...(sources.length === 0
-      ? []
-      : [
-          "Legacy compatibility tool:",
-          `- executor.sources.add: ${deriveSchemaTypeSignature(
-            createExecutorSourcesAddSchema(sources),
-            340,
-          )}`,
-        ]),
   ];
-};
-
-export const getExecutorSourcesAddHelpLines = (
-  pluginRegistry: ExecutorSdkPluginRegistry,
-): readonly string[] => {
-  const sources = registeredSourceContributions(pluginRegistry);
-  if (sources.length === 0) {
-    return ["No source plugins are registered in this build."] as const;
-  }
-
-  return [
-    "Source add input shapes:",
-    ...sources.flatMap((source) => [
-      `- ${source.displayName}: ${deriveSchemaTypeSignature(
-        source.inputSchema,
-        source.inputSignatureWidth ?? 260,
-      )}`,
-      ...(source.helpText ?? []).map((line) => `  ${line}`),
-    ]),
-  ];
-};
-
-export const buildExecutorSourcesAddDescription = (
-  pluginRegistry: ExecutorSdkPluginRegistry,
-): string => {
-  const sources = registeredSourceContributions(pluginRegistry);
-  if (sources.length === 0) {
-    return "No source plugins are registered in this build.";
-  }
-
-  return [
-    "Legacy compatibility alias for creating a source.",
-    "Prefer plugin-specific tools such as executor.openapi.createSource or executor.mcp.createSource.",
-    ...getExecutorSourcesAddHelpLines(pluginRegistry),
-  ].join("\n");
 };
 
 const createSourceConnectorHost = (input: {
@@ -295,28 +201,6 @@ const runExecutorToolEffect = async <A>(
       input.runtimeLocalScope,
     ) as Effect.Effect<A, unknown, never>,
   );
-};
-
-const resolveSourceContribution = (
-  sources: ReadonlyArray<RegisteredSourceContribution>,
-  args: unknown,
-):
-  | {
-      source: RegisteredSourceContribution;
-      parsedArgs: unknown;
-    }
-  | null => {
-  for (const source of sources) {
-    const parsed = Schema.decodeUnknownOption(source.inputSchema)(args);
-    if (Option.isSome(parsed)) {
-      return {
-        source,
-        parsedArgs: parsed.value,
-      };
-    }
-  }
-
-  return null;
 };
 
 const toSerializableValue = <A>(value: A): A =>
@@ -548,36 +432,6 @@ export const createExecutorToolMap = (input: {
       },
     }),
   };
-
-  if (sources.length > 0) {
-    coreTools["executor.sources.add"] = toTool({
-      tool: {
-        description: buildExecutorSourcesAddDescription(input.pluginRegistry),
-        inputSchema: Schema.standardSchemaV1(
-          createExecutorSourcesAddSchema(sources),
-        ),
-        outputSchema: Schema.standardSchemaV1(SourceSchema),
-        execute: async (args: unknown): Promise<Source> => {
-          const matched = resolveSourceContribution(sources, args);
-          if (matched === null) {
-            throw new Error(
-              "executor.sources.add input did not match a registered source plugin.",
-            );
-          }
-
-          const createdSource = await runExecutorToolEffect(
-            matched.source.createSource({
-              args: matched.parsedArgs,
-              host,
-            }),
-            runtime,
-          );
-
-          return toSerializableValue(createdSource);
-        },
-      },
-    });
-  }
 
   return {
     ...coreTools,
