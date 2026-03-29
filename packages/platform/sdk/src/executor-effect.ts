@@ -61,15 +61,13 @@ import {
   listExecutions,
   resumeExecution,
 } from "./runtime/execution/service";
-import type {
-  ExecutorSdkPluginHost,
-  ExecutorSdkPlugin,
-  ExecutorSdkPluginExtensions,
-  PluginCleanup,
-} from "./plugins";
 import {
-  configureExecutorSourcePlugins,
-} from "./runtime/sources/source-plugins";
+  registerExecutorSdkPlugins,
+  type ExecutorSdkPluginHost,
+  type ExecutorSdkPlugin,
+  type ExecutorSdkPluginExtensions,
+  type PluginCleanup,
+} from "./plugins";
 
 type ProvidedEffect<T extends Effect.Effect<any, any, any>> = Effect.Effect<
   Effect.Effect.Success<T>,
@@ -263,13 +261,14 @@ export const createExecutorEffect = <
 >(
   options: CreateExecutorEffectOptionsWithPlugins<TPlugins>,
 ): Effect.Effect<ExecutorEffect & ExecutorSdkPluginExtensions<TPlugins>, Error> => {
-  configureExecutorSourcePlugins(options.plugins ?? []);
+  const pluginRegistry = registerExecutorSdkPlugins(options.plugins ?? []);
 
   return Effect.flatMap(
     options.backend.createRuntime({
       executionResolver: options.executionResolver,
       resolveSecretMaterial: options.resolveSecretMaterial,
       getLocalServerBaseUrl: options.getLocalServerBaseUrl,
+      pluginRegistry,
     }),
     (runtime) =>
       Effect.gen(function* () {
