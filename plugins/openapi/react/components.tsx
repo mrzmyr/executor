@@ -48,6 +48,7 @@ const defaultOpenApiInput = (): OpenApiConnectInput => ({
   auth: {
     kind: "none",
   },
+  useSpecFetchCredentials: false,
 });
 
 const DEFAULT_BEARER_HEADER_NAME = "Authorization";
@@ -193,6 +194,7 @@ const inputFromConfig = (
   specUrl: config.specUrl,
   baseUrl: config.baseUrl,
   auth: config.auth,
+  useSpecFetchCredentials: config.useSpecFetchCredentials === true,
 });
 
 const secretValue = (input: OpenApiConnectInput["auth"]): string =>
@@ -266,6 +268,9 @@ function OpenApiSourceForm(props: {
   );
   const [authPrefix, setAuthPrefix] = useState(
     bearerPrefixValue(props.initialValue.auth),
+  );
+  const [useSpecFetchCredentials, setUseSpecFetchCredentials] = useState(
+    props.initialValue.useSpecFetchCredentials === true,
   );
   const [error, setError] = useState<string | null>(null);
   const [preview, setPreview] = useState<OpenApiPreviewResponse | null>(null);
@@ -378,6 +383,7 @@ function OpenApiSourceForm(props: {
         specUrl: trimmedSpecUrl,
         baseUrl: trimmedBaseUrl || null,
         auth,
+        useSpecFetchCredentials,
       });
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Failed saving source.");
@@ -470,6 +476,24 @@ function OpenApiSourceForm(props: {
                   />
                 </div>
               </div>
+
+              <label className="flex items-start gap-3 text-sm">
+                <input
+                  type="checkbox"
+                  checked={useSpecFetchCredentials}
+                  onChange={(event) => setUseSpecFetchCredentials(event.target.checked)}
+                  className="mt-0.5 rounded border-border"
+                />
+                <div className="space-y-1">
+                  <div className="font-medium text-foreground">
+                    Use credentials for spec fetch
+                  </div>
+                  <div className="text-xs text-muted-foreground">
+                    Send this bearer token when downloading the OpenAPI document and any
+                    referenced files. Leave it off for public specs hosted elsewhere.
+                  </div>
+                </div>
+              </label>
             </div>
           )}
         </div>
