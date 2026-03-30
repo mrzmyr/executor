@@ -102,7 +102,14 @@ export {
   SourceToolModelWorkbench,
   type SourceToolDetailPanelProps,
   type SourceToolDiscoveryResult,
+  type ToolPermissionChangeRequest,
 } from "./components/source-tool-workbench";
+export {
+  ToolPermissionBadge,
+  ToolPermissionDot,
+  resolveToolPermission,
+  type ToolPermissionLevel,
+} from "./components/tool-permission-badge";
 
 // ── UI primitives (shadcn/ui) ────────────────────────────────────────────
 export { Alert, alertVariants, AlertTitle, AlertDescription, AlertAction } from "./components/ui/alert";

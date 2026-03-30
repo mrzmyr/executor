@@ -29,6 +29,9 @@ export type {
   Execution,
   ExecutionEnvelope,
   ExecutionStatus,
+  LocalScopePolicy,
+  LocalScopePolicyApprovalMode,
+  LocalScopePolicyEffect,
   Source,
   SourceInspection,
   SourceInspectionDiscoverResult,
@@ -92,3 +95,10 @@ export {
   useSourceToolDetail,
   useSources,
 } from "./hooks/sources";
+export {
+  useCreatePolicy,
+  usePolicies,
+  useRefreshPolicies,
+  useRemovePolicy,
+  useUpdatePolicy,
+} from "./hooks/policies";

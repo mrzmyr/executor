@@ -1,16 +1,20 @@
-import { startTransition, useEffect, type ReactNode } from "react";
+import { startTransition, useCallback, useEffect, useState, type ReactNode } from "react";
 import type {
   SourceInspectionToolDetail,
 } from "../../index";
+import type { LocalScopePolicy } from "@executor/platform-sdk/schema";
 
 import {
   useSourceInspection,
   useSourceToolDetail,
 } from "../../hooks/sources";
+import { useCreatePolicy, usePolicies, useUpdatePolicy } from "../../hooks/policies";
+import { resolveToolPermission, type ToolPermissionLevel } from "./tool-permission-badge";
 import { Badge } from "./ui/badge";
 import { LoadableBlock } from "./loadable";
 import {
   SourceToolModelWorkbench,
+  type ToolPermissionChangeRequest,
 } from "./source-tool-workbench";
 import type { SourceToolExplorerSearch } from "./source-tool-explorer-search";
 
@@ -27,15 +31,68 @@ export const SourceToolExplorer = (props: {
   }) => void | Promise<void>;
   actions?: ReactNode;
   summary?: ReactNode;
+  policies?: ReadonlyArray<LocalScopePolicy>;
   renderDetail?: (detail: SourceInspectionToolDetail) => ReactNode;
 }) => {
   const inspection = useSourceInspection(props.sourceId);
+  const loadedPolicies = usePolicies();
+  const policies =
+    props.policies ??
+    (loadedPolicies.status === "ready" ? loadedPolicies.data : []);
   const selectedToolPath = props.selectedToolPath ?? props.search.tool ?? null;
   const detail = useSourceToolDetail(
     props.sourceId,
     selectedToolPath,
   );
   const navigate = props.navigate;
+  const createPolicy = useCreatePolicy();
+  const updatePolicy = useUpdatePolicy();
+  const [permissionPending, setPermissionPending] = useState(false);
+
+  const levelToPayload = (level: ToolPermissionLevel) => {
+    switch (level) {
+      case "auto-run":
+        return { effect: "allow" as const, approvalMode: "auto" as const };
+      case "requires-approval":
+        return { effect: "allow" as const, approvalMode: "required" as const };
+      case "denied":
+        return { effect: "deny" as const, approvalMode: "auto" as const };
+      default:
+        return { effect: "allow" as const, approvalMode: "auto" as const };
+    }
+  };
+
+  const handleSetPermission = useCallback(
+    async (request: ToolPermissionChangeRequest) => {
+      setPermissionPending(true);
+      try {
+        const { matchedPolicy } = resolveToolPermission(
+          request.toolPath,
+          policies,
+        );
+        const payload = levelToPayload(request.level);
+
+        if (matchedPolicy && matchedPolicy.resourcePattern === request.toolPath) {
+          await updatePolicy.mutateAsync({
+            policyId: matchedPolicy.id,
+            payload,
+          });
+        } else {
+          await createPolicy.mutateAsync({
+            resourcePattern: request.toolPath,
+            ...payload,
+            priority: 10,
+            enabled: true,
+          });
+        }
+      } catch {
+        // policy state will refresh
+      } finally {
+        setPermissionPending(false);
+      }
+    },
+    [createPolicy, updatePolicy, policies],
+  );
 
   useEffect(() => {
     if (inspection.status !== "ready" || !navigate) {
@@ -97,6 +154,9 @@ export const SourceToolExplorer = (props: {
                 bundle={loadedInspection}
                 detail={detail}
                 selectedToolPath={selectedTool?.path ?? null}
+                policies={policies}
+                onSetPermission={handleSetPermission}
+                permissionPending={permissionPending}
                 onSelectTool={(nextToolPath) => {
                   if (!navigate) {
                     return;
