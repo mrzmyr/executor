@@ -47,6 +47,9 @@ export const scopeConfigSourceBaseFromSource = (input: {
   ...(trimOrNull(input.source.namespace) !== trimOrNull(input.source.id)
     ? { namespace: input.source.namespace ?? undefined }
     : {}),
+  ...(input.source.iconUrl?.trim()
+    ? { iconUrl: input.source.iconUrl.trim() }
+    : {}),
   ...(input.source.enabled === false ? { enabled: false } : {}),
 });
 
@@ -58,8 +61,8 @@ export const scopeConfigSourceFromSource = (input: {
     ...scopeConfigSourceBaseFromSource({
       source: input.source,
     }),
-    ...(trimOrNull(input.existingConfig?.iconUrl)
-      ? { iconUrl: trimOrNull(input.existingConfig?.iconUrl) ?? undefined }
+    ...(input.existingConfig?.iconUrl?.trim()
+      ? { iconUrl: input.existingConfig.iconUrl.trim() }
       : {}),
     kind: input.source.kind as ExecutorScopeConfigSource["kind"],
     ...(input.existingConfig?.config !== undefined

@@ -294,7 +294,6 @@ export type ExecutorSourcePluginDefinition<
     toConfig: (input: {
       source: ExecutorSource;
       stored: TStored;
-      configSource: ExecutorScopeConfigSource | null;
     }) => TSourceConfig;
     remove?: (input: {
       source: ExecutorSource;
@@ -305,7 +304,6 @@ export type ExecutorSourcePluginDefinition<
     toConfigSource: (input: {
       source: ExecutorSource;
       stored: TStored;
-      configInput: TConnectInput | TSourceConfig | null;
     }) => ExecutorScopeConfigSource;
     recoverStored: (input: {
       source: ExecutorSource;
@@ -610,7 +608,6 @@ const persistSourceScopeConfig = <
   input: {
     source: ExecutorSource;
     stored: TStored;
-    configInput: TConnectInput | TSourceConfig | null;
   },
 ): Effect.Effect<void, Error, ScopeConfigStore> =>
   definition.scopeConfig
@@ -619,12 +616,12 @@ const persistSourceScopeConfig = <
         const scopeConfigStore = yield* ScopeConfigStore;
         const loadedConfig = yield* scopeConfigStore.load();
         const projectConfig = cloneJson(loadedConfig.projectConfig ?? {});
+
         const sources = {
           ...projectConfig.sources,
           [input.source.id]: scopeConfig.toConfigSource({
             source: input.source,
             stored: input.stored,
-            configInput: input.configInput,
           }),
         };
 
@@ -737,12 +734,12 @@ const createExecutorSourcePluginApi = <
 
       const scopeConfigStore = yield* ScopeConfigStore;
       const loadedConfig = yield* scopeConfigStore.load();
+      const iconUrl = loadedConfig.config?.sources?.[source.id]?.iconUrl;
 
-      return definition.source.toConfig({
-        source,
-        stored,
-        configSource: loadedConfig.config?.sources?.[source.id] ?? null,
-      });
+      return {
+        ...definition.source.toConfig({ source, stored }),
+        ...(iconUrl ? { iconUrl } : {}),
+      };
     }),
   createSource: (input) =>
     Effect.gen(function* () {
@@ -759,7 +756,6 @@ const createExecutorSourcePluginApi = <
       yield* persistSourceScopeConfig(definition, {
         source,
         stored: created.stored,
-        configInput: input,
       });
 
       return yield* host.sources.refreshCatalog(source.id);
@@ -784,7 +780,6 @@ const createExecutorSourcePluginApi = <
       yield* persistSourceScopeConfig(definition, {
         source: saved,
         stored: updated.stored,
-        configInput: input.config,
       });
 
       return yield* host.sources.refreshCatalog(saved.id);

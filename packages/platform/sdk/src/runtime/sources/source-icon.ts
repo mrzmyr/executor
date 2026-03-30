@@ -1,18 +1,9 @@
 import {
   getFaviconUrlForRemoteUrl,
+  isRecord,
 } from "@executor/source-core";
 
-const trimOrNull = (value: string | null | undefined): string | null => {
-  if (value == null) {
-    return null;
-  }
-
-  const trimmed = value.trim();
-  return trimmed.length > 0 ? trimmed : null;
-};
-
-const isRecord = (value: unknown): value is Record<string, unknown> =>
-  typeof value === "object" && value !== null && !Array.isArray(value);
+import { trimOrNull } from "./source-store/config";
 
 export const resolveSourceIconUrl = (input: {
   configuredIconUrl?: string | null;

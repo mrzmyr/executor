@@ -18,7 +18,6 @@ import {
   defineExecutorSourcePlugin,
 } from "@executor/platform-sdk/plugins";
 import {
-  configuredIconUrlFromConfigInput,
   createPluginScopeConfigEntrySchema,
   pluginScopeConfigSourceFromConfig,
   SecretMaterialResolverService,
@@ -186,10 +185,8 @@ const createStoredSourceData = (
 const configFromStoredSourceData = (
   source: Source,
   stored: OpenApiStoredSourceData,
-  configSource: { iconUrl?: string } | null,
 ): OpenApiSourceConfigPayload => ({
   name: source.name,
-  ...(configSource?.iconUrl ? { iconUrl: configSource.iconUrl } : {}),
   specUrl: stored.specUrl,
   baseUrl: stored.baseUrl,
   auth: stored.auth,
@@ -527,6 +524,7 @@ export const openApiSdkPlugin = (
             specUrl: input.specUrl,
             title: input.name,
           }),
+          ...(input.iconUrl?.trim() ? { iconUrl: input.iconUrl.trim() } : {}),
         },
         stored: createStoredSourceData(input),
       }),
@@ -538,14 +536,15 @@ export const openApiSdkPlugin = (
             specUrl: config.specUrl,
             title: config.name,
           }),
+          ...(config.iconUrl?.trim() ? { iconUrl: config.iconUrl.trim() } : {}),
         },
         stored: createStoredSourceData(config),
       }),
-      toConfig: ({ source, stored, configSource }) =>
-        configFromStoredSourceData(source, normalizeStoredSourceData(stored), configSource),
+      toConfig: ({ source, stored }) =>
+        configFromStoredSourceData(source, normalizeStoredSourceData(stored)),
     },
     scopeConfig: {
-      toConfigSource: ({ source, stored, configInput }) =>
+      toConfigSource: ({ source, stored }) =>
         pluginScopeConfigSourceFromConfig({
           source,
           config: {
@@ -554,7 +553,6 @@ export const openApiSdkPlugin = (
             auth: stored.auth,
             defaultHeaders: stored.defaultHeaders,
           },
-          iconUrl: configuredIconUrlFromConfigInput(configInput),
         }),
       recoverStored: ({ config, loadedConfig }) =>
         openApiStoredSourceDataFromLocalConfig({

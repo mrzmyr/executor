@@ -16,6 +16,7 @@ import {
 
 export { getFaviconUrlForRemoteUrl } from "@executor/source-core";
 
+
 export const McpConnectionAuthSchema = Schema.Union(
   Schema.Struct({
     kind: Schema.Literal("none"),
