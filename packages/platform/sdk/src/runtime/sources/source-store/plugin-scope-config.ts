@@ -29,19 +29,10 @@ export const createPluginScopeConfigEntrySchema = <
 export const pluginScopeConfigSourceFromConfig = <TConfig>(input: {
   source: Source;
   config: TConfig;
-  iconUrl?: string | null;
 }): ExecutorScopeConfigSource => ({
   ...scopeConfigSourceBaseFromSource({
     source: input.source,
   }),
-  ...(input.iconUrl ? { iconUrl: input.iconUrl } : {}),
   kind: input.source.kind as ExecutorScopeConfigSource["kind"],
   config: cloneJson(input.config),
 });
-
-export const configuredIconUrlFromConfigInput = (input: unknown): string | null =>
-  input && typeof input === "object" && "iconUrl" in input
-    ? (typeof input.iconUrl === "string"
-        ? input.iconUrl.trim() || null
-        : null)
-    : null;

@@ -23,7 +23,6 @@ import {
 } from "@executor/platform-sdk/plugins";
 import {
   SecretMaterialResolverService,
-  configuredIconUrlFromConfigInput,
   createPluginScopeConfigEntrySchema,
   pluginScopeConfigSourceFromConfig,
   provideExecutorRuntime,
@@ -320,10 +319,8 @@ const storedSourceDataFromInput = (
 const sourceConfigFromStored = (
   source: Source,
   stored: GraphqlStoredSourceData,
-  configSource: { iconUrl?: string } | null,
 ): GraphqlSourceConfigPayload => ({
   name: source.name,
-  ...(configSource?.iconUrl ? { iconUrl: configSource.iconUrl } : {}),
   endpoint: stored.endpoint,
   defaultHeaders: stored.defaultHeaders,
   auth: stored.auth,
@@ -385,6 +382,7 @@ export const graphqlSdkPlugin = (options: {
             endpoint: input.endpoint,
             title: input.name,
           }),
+          ...(input.iconUrl?.trim() ? { iconUrl: input.iconUrl.trim() } : {}),
         },
         stored: storedSourceDataFromInput(input),
       }),
@@ -396,18 +394,18 @@ export const graphqlSdkPlugin = (options: {
             endpoint: config.endpoint,
             title: config.name,
           }),
+          ...(config.iconUrl?.trim() ? { iconUrl: config.iconUrl.trim() } : {}),
         },
         stored: storedSourceDataFromInput(config),
       }),
-      toConfig: ({ source, stored, configSource }) =>
-        sourceConfigFromStored(source, normalizeStoredSourceData(stored), configSource),
+      toConfig: ({ source, stored }) =>
+        sourceConfigFromStored(source, normalizeStoredSourceData(stored)),
     },
     scopeConfig: {
-      toConfigSource: ({ source, stored, configInput }) =>
+      toConfigSource: ({ source, stored }) =>
         pluginScopeConfigSourceFromConfig({
           source,
           config: normalizeStoredSourceData(stored),
-          iconUrl: configuredIconUrlFromConfigInput(configInput),
         }),
       recoverStored: ({ config, loadedConfig }) =>
         graphqlStoredSourceDataFromLocalConfig({

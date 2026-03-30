@@ -11,6 +11,7 @@ import {
 
 export { getFaviconUrlForRemoteUrl } from "@executor/source-core";
 
+
 export const GraphqlConnectionAuthSchema = Schema.Union(
   Schema.Struct({
     kind: Schema.Literal("none"),
