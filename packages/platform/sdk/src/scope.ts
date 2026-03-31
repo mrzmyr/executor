@@ -3,8 +3,6 @@ import type {
 } from "./schema";
 
 export type ExecutorScopeDescriptor = {
-  scopeName: string;
-  scopeRoot?: string | null;
   actorScopeId?: ScopeId | null;
   resolutionScopeIds?: ReadonlyArray<ScopeId>;
   metadata?: Readonly<Record<string, unknown>>;

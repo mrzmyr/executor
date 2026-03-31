@@ -188,7 +188,6 @@ export type BoundScopeConfigStore = {
   writeProject: (
     config: ExecutorScopeConfig,
   ) => Effect.Effect<void, Error, never>;
-  resolveRelativePath: ScopeConfigStoreShape["resolveRelativePath"];
 };
 
 export type BoundScopeStateStore = {
@@ -303,7 +302,6 @@ const toScopeConfigStoreShape = (
 ): ScopeConfigStoreShape => ({
   load: input.load,
   writeProject: ({ config }) => input.writeProject(config),
-  resolveRelativePath: input.resolveRelativePath,
 });
 
 const toScopeStateStoreShape = (
