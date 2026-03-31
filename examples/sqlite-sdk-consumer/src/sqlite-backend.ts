@@ -23,7 +23,7 @@ import type {
   Execution,
   ExecutionInteraction,
   ExecutionStep,
-  LocalExecutorConfig,
+  ExecutorScopeConfig,
   LocalInstallation,
   SecretMaterial,
   SecretRef,
@@ -35,6 +35,9 @@ import {
   SourceCatalogIdSchema,
   SourceCatalogRevisionIdSchema,
 } from "@executor/platform-sdk/schema";
+import type {
+  SecretMaterialStoredDataRecord,
+} from "@executor/platform-sdk/runtime";
 import {
   contentHash,
   snapshotFromSourceCatalogSyncResult,
@@ -42,8 +45,6 @@ import {
 
 export type CreateSqliteExecutorBackendOptions = {
   databasePath?: string;
-  scopeName?: string;
-  scopeRoot?: string | null;
   scopeId?: string;
   actorScopeId?: string;
 };
@@ -382,7 +383,7 @@ const createStorageDomains = (
             }
           : null;
       },
-      upsert: (record: { secretId: SecretMaterial["id"]; data: unknown }) => {
+      upsert: (record: SecretMaterialStoredDataRecord) => {
         store.db.insert(secretMaterialStoredData).values({
           secretId: record.secretId,
           json: JSON.stringify(record.data),
@@ -568,8 +569,6 @@ export const createSqliteExecutorBackend = (
 
       return {
         scope: {
-          scopeName: options.scopeName ?? "SQLite SDK Example",
-          scopeRoot: options.scopeRoot ?? null,
           metadata: {
             kind: "sqlite",
             databasePath,
@@ -601,7 +600,7 @@ export const createSqliteExecutorBackend = (
             load: () => {
               const row = store.db.select().from(scopeConfigs).where(eq(scopeConfigs.key, "project")).get();
               const projectConfig = row
-                ? parseJson<LocalExecutorConfig>(row.projectConfigJson)
+                ? parseJson<ExecutorScopeConfig>(row.projectConfigJson)
                 : {};
               return {
                 config: projectConfig,
@@ -618,7 +617,6 @@ export const createSqliteExecutorBackend = (
                 set: { projectConfigJson: JSON.stringify(config) },
               }).run();
             },
-            resolveRelativePath: ({ path, scopeRoot }) => resolvePath(scopeRoot, path),
           },
           state: {
             load: () => {
