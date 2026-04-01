@@ -41,6 +41,8 @@ export type Executor<
     readonly schema: (
       toolId: string,
     ) => Effect.Effect<ToolSchema, ToolNotFoundError>;
+    /** Shared schema definitions across all tools */
+    readonly definitions: () => Effect.Effect<Record<string, unknown>>;
     readonly invoke: (
       toolId: string,
       args: unknown,
@@ -81,9 +83,9 @@ export type Executor<
 // Resolved services — what we need to build an Executor
 // ---------------------------------------------------------------------------
 
-type ToolRegistryService = Context.Tag.Service<typeof ToolRegistry>;
-type SecretStoreService = Context.Tag.Service<typeof SecretStore>;
-type PolicyEngineService = Context.Tag.Service<typeof PolicyEngine>;
+export type ToolRegistryService = Context.Tag.Service<typeof ToolRegistry>;
+export type SecretStoreService = Context.Tag.Service<typeof SecretStore>;
+export type PolicyEngineService = Context.Tag.Service<typeof PolicyEngine>;
 
 export interface ExecutorConfig<
   TPlugins extends readonly ExecutorPlugin<string, object>[] = [],
@@ -131,6 +133,7 @@ export const createExecutor = <
           readonly query?: string;
         }) => tools.list(filter),
         schema: (toolId: string) => tools.schema(toolId as ToolId),
+        definitions: () => tools.definitions(),
         invoke: (toolId: string, args: unknown, options?: InvokeOptions) => {
           const tid = toolId as ToolId;
           return Effect.gen(function* () {

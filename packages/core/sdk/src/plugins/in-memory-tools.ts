@@ -14,6 +14,7 @@ import {
   type ElicitationRequest,
 } from "../elicitation";
 import { definePlugin, type PluginContext } from "../plugin";
+import { hoistDefinitions } from "../schema-refs";
 
 // ---------------------------------------------------------------------------
 // In-memory tool definition — typed via Schema
@@ -66,7 +67,7 @@ export interface MemoryToolSdkAccess {
 // Plugin extension
 // ---------------------------------------------------------------------------
 
-export interface MemoryPluginExtension {
+export interface InMemoryToolsPluginExtension {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   readonly addTools: (
     tools: readonly MemoryToolDefinition<any, any>[],
@@ -77,24 +78,35 @@ export interface MemoryPluginExtension {
 // Registration builder
 // ---------------------------------------------------------------------------
 
-const toRegistration = (
+const toRegistrationWithDefs = (
   namespace: string,
   def: MemoryToolDefinition,
   pluginCtx: PluginContext,
-): ToolRegistration => {
+): { registration: ToolRegistration; definitions: Record<string, unknown> } => {
   const id = ToolId.make(`${namespace}.${def.name}`);
   const decode = Schema.decodeUnknownSync(def.inputSchema);
   const isEffectHandler = def.handler.length >= 2;
 
-  return {
+  // Convert to JSON Schema and hoist definitions
+  const inputJson = JSONSchema.make(def.inputSchema);
+  const outputJson = def.outputSchema ? JSONSchema.make(def.outputSchema) : undefined;
+
+  const inputHoist = hoistDefinitions(inputJson);
+  const outputHoist = hoistDefinitions(outputJson);
+
+  // Merge all definitions
+  const allDefs: Record<string, unknown> = {
+    ...inputHoist.defs,
+    ...outputHoist.defs,
+  };
+
+  const registration: ToolRegistration = {
     id,
     name: def.name,
     description: def.description,
     tags: def.tags ? [...def.tags] : undefined,
-    inputSchema: JSONSchema.make(def.inputSchema),
-    outputSchema: def.outputSchema
-      ? JSONSchema.make(def.outputSchema)
-      : undefined,
+    inputSchema: inputHoist.stripped,
+    outputSchema: outputHoist.stripped,
     mayElicit: isEffectHandler,
     invoke: (args, options?: InvokeOptions) => {
       const parsed = Effect.try({
@@ -202,6 +214,8 @@ const toRegistration = (
       );
     },
   };
+
+  return { registration, definitions: allDefs };
 };
 
 // ---------------------------------------------------------------------------
@@ -219,26 +233,43 @@ export function tool<TInput, TOutput>(
 // ---------------------------------------------------------------------------
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-export const memoryPlugin = (config: {
+export const inMemoryToolsPlugin = (config: {
   readonly namespace?: string;
   readonly tools: readonly MemoryToolDefinition<any, any>[];
 }) => {
   const ns = config.namespace ?? "memory";
-  return definePlugin<"memory", MemoryPluginExtension>({
-    key: "memory",
+  return definePlugin<"inMemoryTools", InMemoryToolsPluginExtension>({
+    key: "inMemoryTools",
     init: (ctx: PluginContext) =>
       Effect.gen(function* () {
-        const registrations = config.tools.map((t) =>
-          toRegistration(ns, t, ctx),
-        );
+        const results = config.tools.map((t) => toRegistrationWithDefs(ns, t, ctx));
+        
+        // Register all definitions first
+        const allDefs: Record<string, unknown> = {};
+        for (const { definitions } of results) {
+          Object.assign(allDefs, definitions);
+        }
+        yield* ctx.tools.registerDefinitions(allDefs);
+
+        // Then register tools with stripped schemas
+        const registrations = results.map(({ registration }) => registration);
         yield* ctx.tools.register(registrations);
 
         return {
           extension: {
             addTools: (newTools: readonly MemoryToolDefinition<any, any>[]) =>
-              ctx.tools.register(
-                newTools.map((t) => toRegistration(ns, t, ctx)),
-              ),
+              Effect.gen(function* () {
+                const newResults = newTools.map((t) => toRegistrationWithDefs(ns, t, ctx));
+                
+                const newDefs: Record<string, unknown> = {};
+                for (const { definitions } of newResults) {
+                  Object.assign(newDefs, definitions);
+                }
+                yield* ctx.tools.registerDefinitions(newDefs);
+
+                const newRegistrations = newResults.map(({ registration }) => registration);
+                yield* ctx.tools.register(newRegistrations);
+              }),
           },
           close: () =>
             ctx.tools.unregister(registrations.map((r) => r.id)),

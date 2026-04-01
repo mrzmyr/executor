@@ -68,6 +68,20 @@ export class ToolRegistry extends Context.Tag("@executor/sdk/ToolRegistry")<
       ToolNotFoundError | ToolInvocationError | ElicitationDeclinedError
     >;
 
+    /**
+     * Shared schema definitions across all tools.
+     * `$ref` pointers in tool schemas resolve against this store.
+     */
+    readonly definitions: () => Effect.Effect<Record<string, unknown>>;
+
+    /**
+     * Register named schema definitions into the shared store.
+     * Plugins call this before registering tools whose schemas use `$ref`.
+     */
+    readonly registerDefinitions: (
+      defs: Record<string, unknown>,
+    ) => Effect.Effect<void>;
+
     /** Register tools (used by plugins to push tools into the registry) */
     readonly register: (
       tools: readonly ToolRegistration[],

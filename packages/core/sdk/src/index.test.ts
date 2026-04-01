@@ -4,12 +4,13 @@ import { Effect, Exit, Schema } from "effect";
 import {
   createExecutor,
   makeTestConfig,
-  memoryPlugin,
+  inMemoryToolsPlugin,
   tool,
   FormElicitation,
   UrlElicitation,
   ElicitationResponse,
   type MemoryToolContext,
+  type ToolId,
 } from "./index";
 
 // ---------------------------------------------------------------------------
@@ -40,7 +41,7 @@ describe("SDK Executor", () => {
       const executor = yield* createExecutor(
         makeTestConfig({
           plugins: [
-            memoryPlugin({
+            inMemoryToolsPlugin({
               namespace: "inventory",
               tools: [
                 tool({
@@ -64,7 +65,7 @@ describe("SDK Executor", () => {
             }),
           ] as const,
         }),
-      );
+      )
 
       const tools = yield* executor.tools.list();
       expect(tools).toHaveLength(2);
@@ -78,7 +79,7 @@ describe("SDK Executor", () => {
       const executor = yield* createExecutor(
         makeTestConfig({
           plugins: [
-            memoryPlugin({
+            inMemoryToolsPlugin({
               namespace: "inventory",
               tools: [
                 tool({
@@ -104,7 +105,7 @@ describe("SDK Executor", () => {
       const executor = yield* createExecutor(
         makeTestConfig({
           plugins: [
-            memoryPlugin({
+            inMemoryToolsPlugin({
               namespace: "inventory",
               tools: [
                 tool({
@@ -145,7 +146,7 @@ describe("SDK Executor", () => {
       const executor = yield* createExecutor(
         makeTestConfig({
           plugins: [
-            memoryPlugin({
+            inMemoryToolsPlugin({
               namespace: "store",
               tools: [
                 tool({
@@ -181,15 +182,15 @@ describe("SDK Executor", () => {
       const executor = yield* createExecutor(
         makeTestConfig({
           plugins: [
-            memoryPlugin({ namespace: "runtime", tools: [] }),
+            inMemoryToolsPlugin({ namespace: "runtime", tools: [] }),
           ] as const,
         }),
       );
 
-      expect(executor.memory).toBeDefined();
-      expect(typeof executor.memory.addTools).toBe("function");
+      expect(executor.inMemoryTools).toBeDefined();
+      expect(typeof executor.inMemoryTools.addTools).toBe("function");
 
-      yield* executor.memory.addTools([
+      yield* executor.inMemoryTools.addTools([
         tool({
           name: "dynamicTool",
           description: "Added at runtime",
@@ -229,7 +230,7 @@ describe("SDK Executor", () => {
       const executor = yield* createExecutor(
         makeTestConfig({
           plugins: [
-            memoryPlugin({
+            inMemoryToolsPlugin({
               namespace: "auth",
               tools: [
                 tool({
@@ -281,7 +282,7 @@ describe("SDK Executor", () => {
       const executor = yield* createExecutor(
         makeTestConfig({
           plugins: [
-            memoryPlugin({
+            inMemoryToolsPlugin({
               namespace: "auth",
               tools: [
                 tool({
@@ -317,7 +318,7 @@ describe("SDK Executor", () => {
       const executor = yield* createExecutor(
         makeTestConfig({
           plugins: [
-            memoryPlugin({
+            inMemoryToolsPlugin({
               namespace: "auth",
               tools: [
                 tool({
@@ -349,7 +350,7 @@ describe("SDK Executor", () => {
       const executor = yield* createExecutor(
         makeTestConfig({
           plugins: [
-            memoryPlugin({
+            inMemoryToolsPlugin({
               namespace: "oauth",
               tools: [
                 tool({
@@ -395,7 +396,7 @@ describe("SDK Executor", () => {
       const executor = yield* createExecutor(
         makeTestConfig({
           plugins: [
-            memoryPlugin({
+            inMemoryToolsPlugin({
               namespace: "vault",
               tools: [
                 tool({
@@ -474,12 +475,138 @@ describe("SDK Executor", () => {
     }),
   );
 
+  // ---------------------------------------------------------------------------
+  // Schema $ref deduplication
+  // ---------------------------------------------------------------------------
+
+  it.effect("schema returns self-contained schemas with shared definitions resolved", () =>
+    Effect.gen(function* () {
+      const Address = Schema.Struct({
+        street: Schema.String,
+        city: Schema.String,
+        zip: Schema.String,
+      }).annotations({ identifier: "Address" });
+
+      const executor = yield* createExecutor(
+        makeTestConfig({
+          plugins: [
+            inMemoryToolsPlugin({
+              namespace: "crm",
+              tools: [
+                tool({
+                  name: "createContact",
+                  description: "Create a contact",
+                  inputSchema: Schema.Struct({
+                    name: Schema.String,
+                    homeAddress: Address,
+                    workAddress: Address,
+                  }),
+                  handler: (args: unknown) => args,
+                }),
+                tool({
+                  name: "createCompany",
+                  description: "Create a company",
+                  inputSchema: Schema.Struct({
+                    companyName: Schema.String,
+                    headquarters: Address,
+                  }),
+                  handler: (args: unknown) => args,
+                }),
+              ],
+            }),
+          ] as const,
+        }),
+      );
+
+      // Helper to dig into a JSON Schema object
+      const prop = (schema: unknown, ...path: string[]): unknown =>
+        path.reduce<unknown>((obj, key) =>
+          obj != null && typeof obj === "object" ? (obj as Record<string, unknown>)[key] : undefined, schema);
+
+      const contactSchema = yield* executor.tools.schema("crm.createContact");
+      const companySchema = yield* executor.tools.schema("crm.createCompany");
+
+      // Fields use $ref pointers — not inlined copies
+      const homeRef = prop(contactSchema.inputSchema, "properties", "homeAddress", "$ref");
+      const workRef = prop(contactSchema.inputSchema, "properties", "workAddress", "$ref");
+      const hqRef = prop(companySchema.inputSchema, "properties", "headquarters", "$ref");
+
+      expect(homeRef).toBeTypeOf("string");
+      expect(homeRef).toBe(workRef);
+      expect(homeRef).toBe(hqRef);
+
+      // schema() returns a self-contained schema: $defs are re-attached
+      // so the caller can use the schema directly (validation, type generation, etc.)
+      const refName = (homeRef as string).replace(/^#\/\$defs\//, "");
+      const contactDefs = prop(contactSchema.inputSchema, "$defs") as Record<string, unknown>;
+      const companyDefs = prop(companySchema.inputSchema, "$defs") as Record<string, unknown>;
+
+      expect(contactDefs[refName]).toBeDefined();
+      expect(companyDefs[refName]).toBeDefined();
+
+      // The re-attached definition describes the Address struct
+      expect(prop(contactDefs[refName], "properties", "street")).toBeDefined();
+      expect(prop(contactDefs[refName], "properties", "city")).toBeDefined();
+      expect(prop(contactDefs[refName], "properties", "zip")).toBeDefined();
+
+      // Only the referenced definitions are attached — not every definition in the store
+      expect(Object.keys(contactDefs)).toHaveLength(1);
+      expect(Object.keys(companyDefs)).toHaveLength(1);
+    }),
+
+  );
+
+  it.effect("definitions are stored once across tools, not duplicated", () =>
+    Effect.gen(function* () {
+      const Address = Schema.Struct({
+        street: Schema.String,
+        city: Schema.String,
+        zip: Schema.String,
+      }).annotations({ identifier: "Address" });
+
+      const executor = yield* createExecutor(
+        makeTestConfig({
+          plugins: [
+            inMemoryToolsPlugin({
+              namespace: "crm",
+              tools: [
+                tool({
+                  name: "createContact",
+                  inputSchema: Schema.Struct({
+                    name: Schema.String,
+                    homeAddress: Address,
+                    workAddress: Address,
+                  }),
+                  handler: (args: unknown) => args,
+                }),
+                tool({
+                  name: "createCompany",
+                  inputSchema: Schema.Struct({
+                    companyName: Schema.String,
+                    headquarters: Address,
+                  }),
+                  handler: (args: unknown) => args,
+                }),
+              ],
+            }),
+          ] as const,
+        }),
+      );
+
+      // The shared definitions store holds Address once —
+      // not duplicated per tool
+      const definitions = yield* executor.tools.definitions();
+      expect(definitions["Address"]).toBeDefined();
+      expect(Object.keys(definitions)).toHaveLength(1);
+    }),
+  );
+
   it.effect("close cleans up plugin resources", () =>
     Effect.gen(function* () {
       const executor = yield* createExecutor(
         makeTestConfig({
           plugins: [
-            memoryPlugin({
+            inMemoryToolsPlugin({
               namespace: "temp",
               tools: [
                 tool({

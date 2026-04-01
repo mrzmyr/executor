@@ -59,13 +59,21 @@ export {
 
 // Built-in plugins
 export {
-  memoryPlugin,
+  inMemoryToolsPlugin,
   tool,
   type MemoryToolDefinition,
   type MemoryToolContext,
   type MemoryToolSdkAccess,
-  type MemoryPluginExtension,
-} from "./plugins/memory";
+  type InMemoryToolsPluginExtension,
+} from "./plugins/in-memory-tools";
+
+// Schema ref utilities
+export { hoistDefinitions, collectRefs, reattachDefs } from "./schema-refs";
+
+// In-memory implementations
+export { makeInMemoryToolRegistry } from "./in-memory/tool-registry";
+export { makeInMemorySecretStore } from "./in-memory/secret-store";
+export { makeInMemoryPolicyEngine } from "./in-memory/policy-engine";
 
 // Testing
 export { makeTestConfig } from "./testing";
