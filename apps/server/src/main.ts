@@ -9,6 +9,7 @@ import { Layer } from "effect";
 import { addGroup } from "@executor/api";
 import { OpenApiGroup } from "@executor/plugin-openapi/api";
 import { ToolsHandlers } from "./handlers/tools";
+import { SourcesHandlers } from "./handlers/sources";
 import { SecretsHandlers } from "./handlers/secrets";
 import { OpenApiHandlersLive } from "./handlers/openapi";
 import { ExecutorServiceLive } from "./services/executor";
@@ -24,7 +25,7 @@ const ExecutorApiWithPlugins = addGroup(OpenApiGroup);
 // ---------------------------------------------------------------------------
 
 const ApiLive = HttpApiBuilder.api(ExecutorApiWithPlugins).pipe(
-  Layer.provide([ToolsHandlers, SecretsHandlers, OpenApiHandlersLive]),
+  Layer.provide([ToolsHandlers, SourcesHandlers, SecretsHandlers, OpenApiHandlersLive]),
   Layer.provide(ExecutorServiceLive),
 );
 

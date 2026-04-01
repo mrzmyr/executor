@@ -1,6 +1,6 @@
-import { useState, Suspense, useMemo } from "react";
+import { useState, Suspense } from "react";
 import { Link } from "@tanstack/react-router";
-import { Result, useAtomValue, useAtomRefresh, toolsAtom } from "@executor/react";
+import { Result, useAtomValue, useAtomRefresh, sourcesAtom } from "@executor/react";
 import type { SourcePlugin } from "@executor/react";
 import { openApiSourcePlugin } from "@executor/plugin-openapi/react";
 
@@ -16,25 +16,8 @@ const sourcePlugins: SourcePlugin[] = [openApiSourcePlugin];
 
 export function SourcesPage() {
   const [adding, setAdding] = useState<string | null>(null);
-  const tools = useAtomValue(toolsAtom());
-  const refreshTools = useAtomRefresh(toolsAtom());
-
-  const sources = useMemo(() => {
-    if (tools._tag !== "Success") return [];
-    const namespaces = new Map<string, number>();
-    for (const tool of tools.value) {
-      if (!tool.tags.includes("openapi")) continue;
-      // Namespace is the last tag (after op tags and "openapi")
-      const ns = tool.tags[tool.tags.length - 1];
-      if (ns && ns !== "openapi") {
-        namespaces.set(ns, (namespaces.get(ns) ?? 0) + 1);
-      }
-    }
-    return [...namespaces.entries()].map(([namespace, toolCount]) => ({
-      namespace,
-      toolCount,
-    }));
-  }, [tools]);
+  const sources = useAtomValue(sourcesAtom());
+  const refreshSources = useAtomRefresh(sourcesAtom());
 
   const plugin = adding
     ? sourcePlugins.find((p) => p.key === adding)
@@ -47,7 +30,7 @@ export function SourcesPage() {
         <AddComponent
           onComplete={() => {
             setAdding(null);
-            refreshTools();
+            refreshSources();
           }}
           onCancel={() => setAdding(null)}
         />
@@ -75,15 +58,15 @@ export function SourcesPage() {
         </div>
       </div>
 
-      {Result.match(tools, {
+      {Result.match(sources, {
         onInitial: () => (
           <p className="mt-4 text-sm text-muted-foreground">Loading…</p>
         ),
         onFailure: () => (
           <p className="mt-4 text-sm text-destructive">Failed to load sources</p>
         ),
-        onSuccess: () =>
-          sources.length === 0 ? (
+        onSuccess: ({ value }) =>
+          value.length === 0 ? (
             <div className="mt-8 flex flex-col items-center justify-center text-center">
               <div className="rounded-full bg-muted p-4">
                 <svg viewBox="0 0 24 24" fill="none" className="size-8 text-muted-foreground/50">
@@ -97,21 +80,19 @@ export function SourcesPage() {
             </div>
           ) : (
             <div className="mt-4 grid gap-2">
-              {sources.map((s) => (
+              {value.map((s) => (
                 <Link
-                  key={s.namespace}
+                  key={s.id}
                   to="/sources/$namespace"
-                  params={{ namespace: s.namespace }}
+                  params={{ namespace: s.id }}
                   className="flex items-center justify-between rounded-lg border border-border bg-card p-4 transition-colors hover:bg-accent/50 hover:border-primary/25"
                 >
                   <div>
-                    <p className="text-sm font-medium text-card-foreground">{s.namespace}</p>
-                    <p className="mt-0.5 text-xs text-muted-foreground">
-                      {s.toolCount} tool{s.toolCount !== 1 ? "s" : ""}
-                    </p>
+                    <p className="text-sm font-medium text-card-foreground">{s.name}</p>
+                    <p className="mt-0.5 text-xs text-muted-foreground">{s.id}</p>
                   </div>
                   <span className="rounded bg-secondary px-1.5 py-0.5 text-[10px] font-medium text-secondary-foreground">
-                    openapi
+                    {s.kind}
                   </span>
                 </Link>
               ))}

@@ -27,7 +27,6 @@ export interface MemoryToolDefinition<
 > {
   readonly name: string;
   readonly description?: string;
-  readonly tags?: readonly string[];
   readonly inputSchema: Schema.Schema<TInput>;
   readonly outputSchema?: Schema.Schema<TOutput>;
   readonly handler: MemoryToolHandler<TInput>;
@@ -113,9 +112,9 @@ const buildRegistration = (
   const registration: ToolRegistration = {
     id,
     pluginKey: "inMemoryTools",
+    sourceId: namespace,
     name: def.name,
     description: def.description,
-    tags: def.tags ? [...def.tags] : undefined,
     inputSchema: inputHoist.stripped,
     outputSchema: outputHoist.stripped,
     mayElicit: isEffect,

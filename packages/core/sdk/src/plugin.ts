@@ -3,6 +3,7 @@ import type { Effect } from "effect";
 import type { ToolRegistry } from "./tools";
 import type { SecretStore } from "./secrets";
 import type { PolicyEngine } from "./policies";
+import type { SourceRegistry } from "./sources";
 import type { Scope } from "./scope";
 
 // ---------------------------------------------------------------------------
@@ -12,6 +13,7 @@ import type { Scope } from "./scope";
 export interface PluginContext {
   readonly scope: Scope;
   readonly tools: Context.Tag.Service<typeof ToolRegistry>;
+  readonly sources: Context.Tag.Service<typeof SourceRegistry>;
   readonly secrets: Context.Tag.Service<typeof SecretStore>;
   readonly policies: Context.Tag.Service<typeof PolicyEngine>;
 }

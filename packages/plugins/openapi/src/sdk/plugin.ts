@@ -3,6 +3,7 @@ import { FetchHttpClient, HttpClient } from "@effect/platform";
 import type { Layer } from "effect";
 
 import {
+  Source,
   definePlugin,
   type ExecutorPlugin,
   type PluginContext,
@@ -57,7 +58,6 @@ export interface OpenApiPluginExtension {
 
   /** Remove all tools from a previously added spec by namespace */
   readonly removeSpec: (namespace: string) => Effect.Effect<void>;
-
 }
 
 // ---------------------------------------------------------------------------
@@ -77,9 +77,9 @@ const toRegistration = (
 ): ToolRegistration => ({
   id: ToolId.make(`${namespace}.${op.operationId}`),
   pluginKey: "openapi",
+  sourceId: namespace,
   name: op.operationId as string,
   description: operationDescription(op),
-  tags: [...op.tags, "openapi", namespace],
   inputSchema: Option.getOrUndefined(op.inputSchema),
   outputSchema: Option.getOrUndefined(op.outputSchema),
 });
@@ -103,6 +103,9 @@ export const openApiPlugin = (options?: {
   const httpClientLayer = options?.httpClientLayer ?? FetchHttpClient.layer;
   const operationStore = options?.operationStore ?? makeInMemoryOperationStore();
 
+  // Track added sources so we can list them
+  const addedSources = new Map<string, Source>();
+
   return definePlugin({
     key: "openapi",
     init: (ctx: PluginContext) =>
@@ -117,12 +120,23 @@ export const openApiPlugin = (options?: {
           }),
         );
 
-        yield* ctx.tools.addSourceProvider({
-          key: "openapi",
-          remove: (namespace: string) =>
+        // Register source manager so the core can list/remove/refresh our sources
+        yield* ctx.sources.addManager({
+          kind: "openapi",
+
+          list: () =>
+            Effect.sync(() => [...addedSources.values()]),
+
+          remove: (sourceId: string) =>
             Effect.gen(function* () {
-              yield* operationStore.removeByNamespace(namespace);
+              // Clean up operation store
+              yield* operationStore.removeByNamespace(sourceId);
+              // Remove tools from registry
+              yield* ctx.tools.unregisterBySource(sourceId);
+              // Remove from our tracking
+              addedSources.delete(sourceId);
             }),
+
           // TODO: refresh requires storing original config per namespace
         });
 
@@ -168,6 +182,15 @@ export const openApiPlugin = (options?: {
                 );
 
                 yield* ctx.tools.register(registrations);
+
+                // Track the source
+                const sourceName = Option.getOrElse(result.title, () => namespace);
+                addedSources.set(namespace, new Source({
+                  id: namespace,
+                  name: sourceName,
+                  kind: "openapi",
+                }));
+
                 return { toolCount: registrations.length };
               }),
 
@@ -177,16 +200,16 @@ export const openApiPlugin = (options?: {
                 if (toolIds.length > 0) {
                   yield* ctx.tools.unregister(toolIds);
                 }
+                addedSources.delete(namespace);
               }),
-
           },
 
           close: () =>
             Effect.gen(function* () {
-              const allTools = yield* ctx.tools.list({ tags: ["openapi"] });
-              if (allTools.length > 0) {
-                yield* ctx.tools.unregister(allTools.map((t) => t.id));
+              for (const sourceId of addedSources.keys()) {
+                yield* ctx.tools.unregisterBySource(sourceId);
               }
+              addedSources.clear();
             }),
         };
       }),

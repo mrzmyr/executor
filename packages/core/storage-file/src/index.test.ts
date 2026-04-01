@@ -41,22 +41,22 @@ describe("KvToolRegistry", () => {
           {
             id: ToolId.make("t1"),
             pluginKey: "test",
+            sourceId: "src-a",
             name: "tool-one",
             description: "First tool",
-            tags: ["alpha"],
           },
           {
             id: ToolId.make("t2"),
             pluginKey: "test",
+            sourceId: "src-b",
             name: "tool-two",
-            tags: ["beta"],
           },
         ]);
 
         const all = yield* reg.list();
         expect(all).toHaveLength(2);
 
-        const filtered = yield* reg.list({ tags: ["alpha"] });
+        const filtered = yield* reg.list({ sourceId: "src-a" });
         expect(filtered).toHaveLength(1);
         expect(filtered[0]!.name).toBe("tool-one");
       }),
@@ -75,6 +75,7 @@ describe("KvToolRegistry", () => {
           {
             id: ToolId.make("with-ref"),
             pluginKey: "test",
+            sourceId: "test-src",
             name: "with-ref",
             inputSchema: {
               type: "object",
@@ -96,7 +97,7 @@ describe("KvToolRegistry", () => {
       Effect.gen(function* () {
         const reg = makeKvToolRegistry(scopeKv(kv, "tools"), scopeKv(kv, "defs"));
         yield* reg.register([
-          { id: ToolId.make("del-me"), pluginKey: "test", name: "delete-me" },
+          { id: ToolId.make("del-me"), pluginKey: "test", sourceId: "test-src", name: "delete-me" },
         ]);
         expect(yield* reg.list()).toHaveLength(1);
 
@@ -111,8 +112,8 @@ describe("KvToolRegistry", () => {
       Effect.gen(function* () {
         const reg = makeKvToolRegistry(scopeKv(kv, "tools"), scopeKv(kv, "defs"));
         yield* reg.register([
-          { id: ToolId.make("a"), pluginKey: "test", name: "create-user", description: "Creates a user" },
-          { id: ToolId.make("b"), pluginKey: "test", name: "delete-user" },
+          { id: ToolId.make("a"), pluginKey: "test", sourceId: "test-src", name: "create-user", description: "Creates a user" },
+          { id: ToolId.make("b"), pluginKey: "test", sourceId: "test-src", name: "delete-user" },
         ]);
 
         const results = yield* reg.list({ query: "creates" });

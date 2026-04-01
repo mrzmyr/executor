@@ -13,7 +13,7 @@ export class Policy extends Schema.Class<Policy>("Policy")({
   action: PolicyAction,
   match: Schema.Struct({
     toolPattern: Schema.optional(Schema.String),
-    tags: Schema.optional(Schema.Array(Schema.String)),
+    sourceId: Schema.optional(Schema.String),
   }),
   priority: Schema.Number,
   createdAt: Schema.DateFromNumber,

@@ -10,6 +10,7 @@ import type {
   ToolListFilter,
   InvokeOptions,
 } from "./tools";
+import type { Source, SourceRegistry } from "./sources";
 import type { Policy, PolicyEngine } from "./policies";
 import type { Scope } from "./scope";
 import type {
@@ -53,8 +54,12 @@ export type Executor<
       | PolicyDeniedError
       | ElicitationDeclinedError
     >;
-    readonly removeSource: (namespace: string) => Effect.Effect<void>;
-    readonly refreshSource: (namespace: string) => Effect.Effect<void>;
+  };
+
+  readonly sources: {
+    readonly list: () => Effect.Effect<readonly Source[]>;
+    readonly remove: (sourceId: string) => Effect.Effect<void>;
+    readonly refresh: (sourceId: string) => Effect.Effect<void>;
   };
 
   readonly policies: {
@@ -94,6 +99,7 @@ export type Executor<
 // ---------------------------------------------------------------------------
 
 export type ToolRegistryService = Context.Tag.Service<typeof ToolRegistry>;
+export type SourceRegistryService = Context.Tag.Service<typeof SourceRegistry>;
 export type SecretStoreService = Context.Tag.Service<typeof SecretStore>;
 export type PolicyEngineService = Context.Tag.Service<typeof PolicyEngine>;
 
@@ -102,6 +108,7 @@ export interface ExecutorConfig<
 > {
   readonly scope: Scope;
   readonly tools: ToolRegistryService;
+  readonly sources: SourceRegistryService;
   readonly secrets: SecretStoreService;
   readonly policies: PolicyEngineService;
   readonly plugins?: TPlugins;
@@ -117,7 +124,7 @@ export const createExecutor = <
   config: ExecutorConfig<TPlugins>,
 ): Effect.Effect<Executor<TPlugins>, Error> =>
   Effect.gen(function* () {
-    const { scope, tools, secrets, policies, plugins = [] } = config;
+    const { scope, tools, sources, secrets, policies, plugins = [] } = config;
 
     // Initialize all plugins
     const handles = new Map<string, PluginHandle<object>>();
@@ -127,6 +134,7 @@ export const createExecutor = <
       const handle = yield* plugin.init({
         scope,
         tools,
+        sources,
         secrets,
         policies,
       });
@@ -148,8 +156,12 @@ export const createExecutor = <
             return yield* tools.invoke(tid, args, options);
           });
         },
-        removeSource: (namespace: string) => tools.removeSource(namespace),
-        refreshSource: (namespace: string) => tools.refreshSource(namespace),
+      },
+
+      sources: {
+        list: () => sources.list(),
+        remove: (sourceId: string) => sources.remove(sourceId),
+        refresh: (sourceId: string) => sources.refresh(sourceId),
       },
 
       policies: {

@@ -2,24 +2,21 @@ import { Effect } from "effect";
 
 import { ToolId } from "../ids";
 import { ToolNotFoundError, ToolInvocationError } from "../errors";
-import type { ToolRegistration, ToolInvoker, SourceProvider, ToolListFilter, InvokeOptions } from "../tools";
+import type { ToolRegistration, ToolInvoker, ToolListFilter, InvokeOptions } from "../tools";
 import { reattachDefs } from "../schema-refs";
 
 export const makeInMemoryToolRegistry = () => {
   const tools = new Map<string, ToolRegistration>();
   const invokers = new Map<string, ToolInvoker>();
-  const sourceProviders = new Map<string, SourceProvider>();
   const sharedDefs = new Map<string, unknown>();
 
   return {
     list: (filter?: ToolListFilter) =>
       Effect.sync(() => {
         let result = [...tools.values()];
-        if (filter?.tags?.length) {
-          const tagSet = new Set(filter.tags);
-          result = result.filter((t) =>
-            t.tags?.some((tag) => tagSet.has(tag)),
-          );
+        if (filter?.sourceId) {
+          const sid = filter.sourceId;
+          result = result.filter((t) => t.sourceId === sid);
         }
         if (filter?.query) {
           const q = filter.query.toLowerCase();
@@ -32,9 +29,9 @@ export const makeInMemoryToolRegistry = () => {
         return result.map((t) => ({
           id: t.id,
           pluginKey: t.pluginKey,
+          sourceId: t.sourceId,
           name: t.name,
           description: t.description,
-          tags: t.tags ? [...t.tags] : [],
         }));
       }),
 
@@ -99,48 +96,13 @@ export const makeInMemoryToolRegistry = () => {
         }
       }),
 
-    removeSource: (namespace: string) =>
-      Effect.gen(function* () {
-        const matching: ToolRegistration[] = [];
-        for (const t of tools.values()) {
-          if (t.tags?.includes(namespace)) {
-            matching.push(t);
-          }
-        }
-        if (matching.length === 0) return;
-
-        const pluginKey = matching[0]!.pluginKey;
-
-        for (const t of matching) {
-          tools.delete(t.id);
-        }
-
-        const provider = sourceProviders.get(pluginKey);
-        if (provider) {
-          yield* provider.remove(namespace);
-        }
-      }),
-
-    refreshSource: (namespace: string) =>
-      Effect.gen(function* () {
-        let pluginKey: string | null = null;
-        for (const t of tools.values()) {
-          if (t.tags?.includes(namespace)) {
-            pluginKey = t.pluginKey;
-            break;
-          }
-        }
-        if (!pluginKey) return;
-
-        const provider = sourceProviders.get(pluginKey);
-        if (provider?.refresh) {
-          yield* provider.refresh(namespace);
-        }
-      }),
-
-    addSourceProvider: (provider: SourceProvider) =>
+    unregisterBySource: (sourceId: string) =>
       Effect.sync(() => {
-        sourceProviders.set(provider.key, provider);
+        for (const [id, t] of tools) {
+          if (t.sourceId === sourceId) {
+            tools.delete(id);
+          }
+        }
       }),
   };
 };

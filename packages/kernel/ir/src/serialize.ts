@@ -32,8 +32,7 @@ export function serialize(catalog: LiveCatalog): typeof SerializedCatalog.Type {
   const tools = catalog.tools.map((tool) => ({
     path: tool.path,
     description: tool.description,
-    tags: tool.tags ? [...tool.tags] : undefined,
-    namespace: tool.namespace,
+    sourceId: tool.sourceId,
     input: schemaToRef(tool.input),
     output: schemaToRef(tool.output),
     error: schemaToRef(tool.error),
@@ -76,8 +75,7 @@ export function deserializeToJsonSchema(
     tools: serialized.tools.map((tool) => ({
       path: tool.path,
       description: tool.description,
-      tags: tool.tags,
-      namespace: tool.namespace,
+      sourceId: tool.sourceId,
       input: resolveRef(tool.input),
       output: resolveRef(tool.output),
       error: resolveRef(tool.error),

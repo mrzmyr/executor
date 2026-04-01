@@ -22,7 +22,10 @@ export { ExecutorApiClient } from "./client";
 // Query & mutation atoms
 export {
   toolsAtom,
+  sourceToolsAtom,
   toolSchemaAtom,
+  sourcesAtom,
+  sourceAtom,
   secretsAtom,
   secretStatusAtom,
   invokeTool,

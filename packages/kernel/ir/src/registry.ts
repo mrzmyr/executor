@@ -4,8 +4,7 @@ import type { JsonSchema7Root } from "effect/JSONSchema";
 export class ToolRegistration extends Schema.Class<ToolRegistration>("ToolRegistration")({
   path: Schema.String,
   description: Schema.optional(Schema.String),
-  tags: Schema.optional(Schema.Array(Schema.String)),
-  namespace: Schema.optional(Schema.String),
+  sourceId: Schema.String,
   input: Schema.optional(Schema.String),
   output: Schema.optional(Schema.String),
   error: Schema.optional(Schema.String),
@@ -20,8 +19,7 @@ export class SerializedCatalog extends Schema.Class<SerializedCatalog>("Serializ
 export interface LiveToolRegistration {
   readonly path: string;
   readonly description?: string;
-  readonly tags?: readonly string[];
-  readonly namespace?: string;
+  readonly sourceId: string;
   readonly input?: Schema.Schema.AnyNoContext;
   readonly output?: Schema.Schema.AnyNoContext;
   readonly error?: Schema.Schema.AnyNoContext;

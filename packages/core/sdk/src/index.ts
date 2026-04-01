@@ -18,10 +18,17 @@ export {
   ToolRegistry,
   ToolRegistration,
   ToolListFilter,
-  type SourceProvider,
   type ToolInvoker,
   type InvokeOptions,
 } from "./tools";
+
+// Sources
+export {
+  Source,
+  SourceRegistry,
+  makeInMemorySourceRegistry,
+  type SourceManager,
+} from "./sources";
 
 // Elicitation
 export {

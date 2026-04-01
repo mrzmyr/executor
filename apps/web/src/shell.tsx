@@ -1,6 +1,5 @@
 import { Link, useLocation } from "@tanstack/react-router";
-import { useMemo } from "react";
-import { useAtomValue, toolsAtom, Result } from "@executor/react";
+import { useAtomValue, sourcesAtom, Result } from "@executor/react";
 import type { ReactNode } from "react";
 
 // ---------------------------------------------------------------------------
@@ -28,40 +27,28 @@ function NavItem(props: { to: string; label: string; active: boolean }) {
 // ---------------------------------------------------------------------------
 
 function SourceList() {
-  const tools = useAtomValue(toolsAtom());
+  const sources = useAtomValue(sourcesAtom());
   const { pathname } = useLocation();
 
-  const sources = useMemo(() => {
-    if (tools._tag !== "Success") return [];
-    const namespaces = new Map<string, number>();
-    for (const tool of tools.value) {
-      if (!tool.tags.includes("openapi")) continue;
-      const ns = tool.tags[tool.tags.length - 1];
-      if (ns && ns !== "openapi") {
-        namespaces.set(ns, (namespaces.get(ns) ?? 0) + 1);
-      }
-    }
-    return [...namespaces.entries()].map(([ns, count]) => ({ namespace: ns, toolCount: count }));
-  }, [tools]);
-
-  if (tools._tag === "Initial" || tools.waiting) {
-    return <div className="px-2.5 py-2 text-[11px] text-muted-foreground/40">Loading…</div>;
-  }
-
-  if (sources.length === 0) {
-    return <div className="px-2.5 py-2 text-[11px] text-muted-foreground/40">No sources yet</div>;
-  }
-
-  return (
+  return Result.match(sources, {
+    onInitial: () => (
+      <div className="px-2.5 py-2 text-[11px] text-muted-foreground/40">Loading…</div>
+    ),
+    onFailure: () => (
+      <div className="px-2.5 py-2 text-[11px] text-muted-foreground/40">No sources yet</div>
+    ),
+    onSuccess: ({ value }) => value.length === 0 ? (
+      <div className="px-2.5 py-2 text-[11px] text-muted-foreground/40">No sources yet</div>
+    ) : (
     <div className="flex flex-col gap-px">
-      {sources.map((s) => {
-        const detailPath = `/sources/${s.namespace}`;
+      {value.map((s) => {
+        const detailPath = `/sources/${s.id}`;
         const active = pathname === detailPath || pathname.startsWith(`${detailPath}/`);
         return (
           <Link
-            key={s.namespace}
+            key={s.id}
             to="/sources/$namespace"
-            params={{ namespace: s.namespace }}
+            params={{ namespace: s.id }}
             className={[
               "group flex items-center gap-2 rounded-md px-2.5 py-1.5 text-[13px] transition-colors",
               active
@@ -69,13 +56,16 @@ function SourceList() {
                 : "text-sidebar-foreground hover:bg-sidebar-active/60 hover:text-foreground",
             ].join(" ")}
           >
-            <span className="flex-1 truncate">{s.namespace}</span>
-            <span className="text-[10px] tabular-nums text-muted-foreground/50">{s.toolCount}</span>
+            <span className="flex-1 truncate">{s.name}</span>
+            <span className="rounded bg-secondary/50 px-1 py-px text-[9px] font-medium text-muted-foreground/50">
+              {s.kind}
+            </span>
           </Link>
         );
       })}
     </div>
-  );
+    ),
+  });
 }
 
 // ---------------------------------------------------------------------------

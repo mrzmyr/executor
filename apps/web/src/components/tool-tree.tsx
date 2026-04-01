@@ -9,7 +9,6 @@ export interface ToolSummary {
   readonly name: string;
   readonly pluginKey: string;
   readonly description?: string;
-  readonly tags: readonly string[];
 }
 
 type TreeNode = {

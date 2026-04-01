@@ -32,7 +32,7 @@ export function ToolsPage() {
                   >
                     <div className="flex items-start justify-between gap-2">
                       <div className="min-w-0">
-                        <p className="text-sm font-medium text-card-foreground truncate">
+                        <p className="text-sm font-medium text-card-foreground truncate font-mono">
                           {t.name}
                         </p>
                         {t.description && (
@@ -41,18 +41,9 @@ export function ToolsPage() {
                           </p>
                         )}
                       </div>
-                      {t.tags.length > 0 && (
-                        <div className="flex shrink-0 gap-1">
-                          {t.tags.slice(0, 2).map((tag) => (
-                            <span
-                              key={tag}
-                              className="rounded bg-secondary px-1.5 py-0.5 text-[10px] font-medium text-secondary-foreground"
-                            >
-                              {tag}
-                            </span>
-                          ))}
-                        </div>
-                      )}
+                      <span className="shrink-0 rounded bg-secondary px-1.5 py-0.5 text-[10px] font-medium text-secondary-foreground">
+                        {t.sourceId}
+                      </span>
                     </div>
                   </div>
                 ))}

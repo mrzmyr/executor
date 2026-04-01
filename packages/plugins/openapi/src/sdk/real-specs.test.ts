@@ -117,8 +117,8 @@ describe("Real specs: Cloudflare API", () => {
       expect(tools.length).toBe(result.toolCount);
 
       for (const tool of tools) {
-        expect(tool.tags).toContain("openapi");
-        expect(tool.tags).toContain("cloudflare");
+        expect(tool.pluginKey).toBe("openapi");
+        expect(tool.sourceId).toBe("cloudflare");
       }
 
       const zoneTools = yield* executor.tools.list({ query: "zone" });

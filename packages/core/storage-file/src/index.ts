@@ -21,7 +21,7 @@
 //
 // ---------------------------------------------------------------------------
 
-import { scopeKv, ScopeId } from "@executor/sdk";
+import { scopeKv, ScopeId, makeInMemorySourceRegistry } from "@executor/sdk";
 import type { Kv, Scope, ExecutorConfig, ExecutorPlugin } from "@executor/sdk";
 
 import { makeKvToolRegistry } from "./tool-registry";
@@ -60,6 +60,7 @@ export const makeKvConfig = <
       scopeKv(kv, "tools"),
       scopeKv(kv, "defs"),
     ),
+    sources: makeInMemorySourceRegistry(),
     secrets: makeKvSecretStore(
       scopeKv(kv, "secrets"),
     ),

@@ -16,9 +16,9 @@ export const ToolsHandlers = HttpApiBuilder.group(
           return tools.map((t) => ({
             id: t.id,
             pluginKey: t.pluginKey,
+            sourceId: t.sourceId,
             name: t.name,
             description: t.description,
-            tags: [...t.tags],
             mayElicit: t.mayElicit,
           }));
         }),
@@ -33,20 +33,6 @@ export const ToolsHandlers = HttpApiBuilder.group(
         Effect.gen(function* () {
           const executor = yield* ExecutorService;
           return yield* executor.tools.invoke(path.toolId, payload.args);
-        }),
-      )
-      .handle("removeSource", ({ path }) =>
-        Effect.gen(function* () {
-          const executor = yield* ExecutorService;
-          yield* executor.tools.removeSource(path.namespace);
-          return { removed: true };
-        }),
-      )
-      .handle("refreshSource", ({ path }) =>
-        Effect.gen(function* () {
-          const executor = yield* ExecutorService;
-          yield* executor.tools.refreshSource(path.namespace);
-          return { refreshed: true };
         }),
       ),
 );

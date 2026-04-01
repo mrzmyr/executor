@@ -4,7 +4,9 @@ import {
   useAtomValue,
   useAtomSet,
   useAtomRefresh,
-  toolsAtom,
+  sourceToolsAtom,
+  sourcesAtom,
+  sourceAtom,
   removeSource,
   refreshSource,
   Result,
@@ -18,8 +20,10 @@ const DEFAULT_SCOPE = ScopeId.make("default");
 
 export function SourceDetailPage(props: { namespace: string }) {
   const { namespace } = props;
-  const tools = useAtomValue(toolsAtom());
-  const refreshTools = useAtomRefresh(toolsAtom());
+  const source = useAtomValue(sourceAtom(namespace));
+  const tools = useAtomValue(sourceToolsAtom(namespace));
+  const refreshSources = useAtomRefresh(sourcesAtom());
+  const refreshTools = useAtomRefresh(sourceToolsAtom(namespace));
   const doRemove = useAtomSet(removeSource, { mode: "promise" });
   const doRefresh = useAtomSet(refreshSource, { mode: "promise" });
   const navigate = useNavigate();
@@ -29,18 +33,17 @@ export function SourceDetailPage(props: { namespace: string }) {
   const [deleting, setDeleting] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
 
+  const sourceData = Result.isSuccess(source) ? source.value : null;
+
   const sourceTools: ToolSummary[] = useMemo(() => {
-    if (tools._tag !== "Success") return [];
-    return tools.value
-      .filter((t) => t.tags.includes(namespace))
-      .map((t) => ({
-        id: t.id,
-        name: t.name,
-        pluginKey: t.pluginKey,
-        description: t.description,
-        tags: [...t.tags],
-      }));
-  }, [tools, namespace]);
+    if (!Result.isSuccess(tools)) return [];
+    return tools.value.map((t) => ({
+      id: t.id,
+      name: t.name,
+      pluginKey: t.pluginKey,
+      description: t.description,
+    }));
+  }, [tools]);
 
   const selectedTool = useMemo(
     () => sourceTools.find((t) => t.id === selectedToolId) ?? null,
@@ -51,9 +54,9 @@ export function SourceDetailPage(props: { namespace: string }) {
     setDeleting(true);
     try {
       await doRemove({
-        path: { scopeId: DEFAULT_SCOPE, namespace },
+        path: { scopeId: DEFAULT_SCOPE, sourceId: namespace },
       });
-      refreshTools();
+      refreshSources();
       void navigate({ to: "/" });
     } catch {
       setDeleting(false);
@@ -65,9 +68,10 @@ export function SourceDetailPage(props: { namespace: string }) {
     setRefreshing(true);
     try {
       await doRefresh({
-        path: { scopeId: DEFAULT_SCOPE, namespace },
+        path: { scopeId: DEFAULT_SCOPE, sourceId: namespace },
       });
       refreshTools();
+      refreshSources();
     } finally {
       setRefreshing(false);
     }
@@ -79,10 +83,10 @@ export function SourceDetailPage(props: { namespace: string }) {
       <div className="flex h-12 shrink-0 items-center justify-between border-b border-border bg-background/95 px-4 backdrop-blur-sm">
         <div className="flex min-w-0 items-center gap-3">
           <h2 className="truncate text-sm font-semibold text-foreground">
-            {namespace}
+            {sourceData?.name ?? namespace}
           </h2>
           <span className="rounded bg-secondary px-1.5 py-0.5 text-[10px] font-medium text-secondary-foreground">
-            {sourceTools[0]?.pluginKey ?? "source"}
+            {sourceData?.kind ?? "source"}
           </span>
           {Result.isSuccess(tools) && (
             <span className="hidden text-[11px] tabular-nums text-muted-foreground/50 sm:block">

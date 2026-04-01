@@ -6,7 +6,7 @@ import { Effect, Schema } from "effect";
 
 import type { ToolId, ScopedKv } from "@executor/sdk";
 import { ToolNotFoundError, ToolInvocationError, ToolRegistration } from "@executor/sdk";
-import type { ToolInvoker, SourceProvider, ToolListFilter, InvokeOptions } from "@executor/sdk";
+import type { ToolInvoker, ToolListFilter, InvokeOptions } from "@executor/sdk";
 import { reattachDefs } from "@executor/sdk";
 
 // ---------------------------------------------------------------------------
@@ -26,7 +26,6 @@ export const makeKvToolRegistry = (
   defsKv: ScopedKv,
 ) => {
   const invokers = new Map<string, ToolInvoker>();
-  const sourceProviders = new Map<string, SourceProvider>();
 
   const getTool = (id: string): Effect.Effect<ToolRegistration | null> =>
     Effect.gen(function* () {
@@ -51,9 +50,9 @@ export const makeKvToolRegistry = (
     list: (filter?: ToolListFilter) =>
       Effect.gen(function* () {
         let tools = yield* getAllTools();
-        if (filter?.tags?.length) {
-          const tagSet = new Set(filter.tags);
-          tools = tools.filter((t) => t.tags?.some((tag) => tagSet.has(tag)));
+        if (filter?.sourceId) {
+          const sid = filter.sourceId;
+          tools = tools.filter((t) => t.sourceId === sid);
         }
         if (filter?.query) {
           const q = filter.query.toLowerCase();
@@ -66,9 +65,9 @@ export const makeKvToolRegistry = (
         return tools.map((t) => ({
           id: t.id,
           pluginKey: t.pluginKey,
+          sourceId: t.sourceId,
           name: t.name,
           description: t.description,
-          tags: t.tags ? [...t.tags] : [],
         }));
       }),
 
@@ -129,45 +128,14 @@ export const makeKvToolRegistry = (
         }
       }),
 
-    removeSource: (namespace: string) =>
+    unregisterBySource: (sourceId: string) =>
       Effect.gen(function* () {
         const allTools = yield* getAllTools();
-        const matching = allTools.filter((t) => t.tags?.includes(namespace));
-        if (matching.length === 0) return;
-
-        const pluginKey = matching[0]!.pluginKey;
-
-        for (const t of matching) {
-          yield* toolsKv.delete(t.id);
-        }
-
-        const provider = sourceProviders.get(pluginKey);
-        if (provider) {
-          yield* provider.remove(namespace);
-        }
-      }),
-
-    refreshSource: (namespace: string) =>
-      Effect.gen(function* () {
-        const allTools = yield* getAllTools();
-        let pluginKey: string | null = null;
         for (const t of allTools) {
-          if (t.tags?.includes(namespace)) {
-            pluginKey = t.pluginKey;
-            break;
+          if (t.sourceId === sourceId) {
+            yield* toolsKv.delete(t.id);
           }
         }
-        if (!pluginKey) return;
-
-        const provider = sourceProviders.get(pluginKey);
-        if (provider?.refresh) {
-          yield* provider.refresh(namespace);
-        }
-      }),
-
-    addSourceProvider: (provider: SourceProvider) =>
-      Effect.sync(() => {
-        sourceProviders.set(provider.key, provider);
       }),
   };
 };

@@ -6,6 +6,7 @@ import type { ExecutorPlugin } from "./plugin";
 import { makeInMemoryToolRegistry } from "./in-memory/tool-registry";
 import { makeInMemorySecretStore } from "./in-memory/secret-store";
 import { makeInMemoryPolicyEngine } from "./in-memory/policy-engine";
+import { makeInMemorySourceRegistry } from "./sources";
 
 // ---------------------------------------------------------------------------
 // makeTestConfig — one-liner to build a test ExecutorConfig
@@ -29,6 +30,7 @@ export const makeTestConfig = <
   return {
     scope,
     tools: makeInMemoryToolRegistry(),
+    sources: makeInMemorySourceRegistry(),
     secrets: makeInMemorySecretStore(),
     policies: makeInMemoryPolicyEngine(),
     plugins: options?.plugins,

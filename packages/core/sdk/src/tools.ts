@@ -14,9 +14,10 @@ import type {
 export class ToolMetadata extends Schema.Class<ToolMetadata>("ToolMetadata")({
   id: ToolId,
   pluginKey: Schema.String,
+  /** Source this tool belongs to (namespace identifier) */
+  sourceId: Schema.String,
   name: Schema.String,
   description: Schema.optional(Schema.String),
-  tags: Schema.Array(Schema.String),
   /** Whether this tool may request elicitation during invocation */
   mayElicit: Schema.optional(Schema.Boolean),
 }) {}
@@ -36,11 +37,12 @@ export class ToolInvocationResult extends Schema.Class<ToolInvocationResult>(
 }) {}
 
 // ---------------------------------------------------------------------------
-// ToolListFilter — filter for listing tools
+// ToolListFilter
 // ---------------------------------------------------------------------------
 
 export class ToolListFilter extends Schema.Class<ToolListFilter>("ToolListFilter")({
-  tags: Schema.optional(Schema.Array(Schema.String)),
+  /** Filter to tools belonging to a specific source */
+  sourceId: Schema.optional(Schema.String),
   query: Schema.optional(Schema.String),
 }) {}
 
@@ -54,7 +56,7 @@ export interface InvokeOptions {
 }
 
 // ---------------------------------------------------------------------------
-// ToolRegistry — unified view across all plugins
+// ToolRegistry — stores and invokes tools
 // ---------------------------------------------------------------------------
 
 export class ToolRegistry extends Context.Tag("@executor/sdk/ToolRegistry")<
@@ -108,40 +110,12 @@ export class ToolRegistry extends Context.Tag("@executor/sdk/ToolRegistry")<
       toolIds: readonly ToolId[],
     ) => Effect.Effect<void>;
 
-    /**
-     * Remove all tools belonging to a source (identified by namespace tag).
-     * Delegates cleanup to the registered SourceProvider.
-     */
-    readonly removeSource: (
-      namespace: string,
-    ) => Effect.Effect<void>;
-
-    /**
-     * Refresh a source — delegates to the registered SourceProvider.
-     */
-    readonly refreshSource: (
-      namespace: string,
-    ) => Effect.Effect<void>;
-
-    /** Register a source provider (called by plugins during init) */
-    readonly addSourceProvider: (
-      provider: SourceProvider,
+    /** Unregister all tools belonging to a source */
+    readonly unregisterBySource: (
+      sourceId: string,
     ) => Effect.Effect<void>;
   }
 >() {}
-
-// ---------------------------------------------------------------------------
-// SourceProvider — plugin-provided source lifecycle handler
-// ---------------------------------------------------------------------------
-
-export interface SourceProvider {
-  /** Plugin key this provider handles (e.g. "openapi", "mcp") */
-  readonly key: string;
-  /** Clean up plugin-internal state when a source is removed */
-  readonly remove: (namespace: string) => Effect.Effect<void>;
-  /** Re-fetch / re-register tools for a source */
-  readonly refresh?: (namespace: string) => Effect.Effect<void>;
-}
 
 // ---------------------------------------------------------------------------
 // ToolInvoker — plugin-provided invocation handler
@@ -167,9 +141,10 @@ export class ToolRegistration extends Schema.Class<ToolRegistration>(
 )({
   id: ToolId,
   pluginKey: Schema.String,
+  /** Source this tool belongs to (namespace identifier) */
+  sourceId: Schema.String,
   name: Schema.String,
   description: Schema.optional(Schema.String),
-  tags: Schema.optional(Schema.Array(Schema.String)),
   mayElicit: Schema.optional(Schema.Boolean),
   inputSchema: Schema.optional(Schema.Unknown),
   outputSchema: Schema.optional(Schema.Unknown),
