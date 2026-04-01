@@ -5,6 +5,7 @@
   "type": "module",
   "dependencies": {
     "@executor/plugin-openapi": "workspace:*",
+    "tailwindcss": "^4.1.10",
     "@executor/react": "workspace:*",
     "@executor/server": "workspace:*",
     "@tanstack/react-router": "^1.168.10",
@@ -15,6 +16,7 @@
     "@types/react": "^19.1.0",
     "@types/react-dom": "^19.1.0",
     "@types/node": "catalog:",
+    "@tailwindcss/vite": "^4.1.10",
     "@vitejs/plugin-react": "^4.5.2",
     "typescript": "^5.9.3",
     "vite": "^6.3.5"

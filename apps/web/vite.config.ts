@@ -1,5 +1,6 @@
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
+import tailwindcss from "@tailwindcss/vite";
 import { createApiHandler } from "@executor/server";
 
 const api = createApiHandler();
@@ -7,6 +8,7 @@ const api = createApiHandler();
 export default defineConfig({
   plugins: [
     react(),
+    tailwindcss(),
     {
       name: "executor-api",
       configureServer(server) {
