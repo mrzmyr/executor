@@ -3,7 +3,7 @@ import { Effect, JSONSchema, Schema } from "effect";
 import type { SecretId } from "../ids";
 import { ToolId } from "../ids";
 import { ToolInvocationError } from "../errors";
-import type { Secret } from "../secrets";
+import type { SecretRef } from "../secrets";
 import {
   ToolInvocationResult,
   type ToolRegistration,
@@ -53,13 +53,15 @@ export interface MemoryToolContext {
 /** SDK services available to in-memory tool handlers */
 export interface MemoryToolSdkAccess {
   readonly secrets: {
-    readonly list: () => Effect.Effect<readonly Secret[]>;
+    readonly list: () => Effect.Effect<readonly SecretRef[]>;
     readonly resolve: (secretId: SecretId) => Effect.Effect<string, unknown>;
-    readonly store: (input: {
+    readonly status: (secretId: SecretId) => Effect.Effect<"resolved" | "missing">;
+    readonly set: (input: {
+      readonly id: SecretId;
       readonly name: string;
       readonly value: string;
       readonly purpose?: string;
-    }) => Effect.Effect<Secret>;
+    }) => Effect.Effect<SecretRef, unknown>;
     readonly remove: (secretId: SecretId) => Effect.Effect<boolean, unknown>;
   };
 }
@@ -179,9 +181,10 @@ const makeInvoker = (
       sdk: {
         secrets: {
           list: () => pluginCtx.secrets.list(pluginCtx.scope.id),
-          resolve: (secretId) => pluginCtx.secrets.resolve(secretId),
-          store: (input) =>
-            pluginCtx.secrets.store({
+          resolve: (secretId) => pluginCtx.secrets.resolve(secretId, pluginCtx.scope.id),
+          status: (secretId) => pluginCtx.secrets.status(secretId, pluginCtx.scope.id),
+          set: (input) =>
+            pluginCtx.secrets.set({
               ...input,
               scopeId: pluginCtx.scope.id,
             }),

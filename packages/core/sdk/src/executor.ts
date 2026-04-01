@@ -1,7 +1,7 @@
 import { Context, Effect } from "effect";
 
 import type { ToolId, SecretId, PolicyId } from "./ids";
-import type { Secret, SecretStore } from "./secrets";
+import type { SecretRef, SecretStore } from "./secrets";
 import type {
   ToolMetadata,
   ToolSchema,
@@ -20,6 +20,7 @@ import type {
   ToolNotFoundError,
   ToolInvocationError,
   SecretNotFoundError,
+  SecretResolutionError,
   PolicyDeniedError,
 } from "./errors";
 import type { ElicitationDeclinedError } from "./elicitation";
@@ -65,14 +66,25 @@ export type Executor<
   };
 
   readonly secrets: {
-    readonly list: () => Effect.Effect<readonly Secret[]>;
-    readonly store: (input: {
+    readonly list: () => Effect.Effect<readonly SecretRef[]>;
+    /** Resolve a secret value by id */
+    readonly resolve: (
+      secretId: SecretId,
+    ) => Effect.Effect<string, SecretNotFoundError | SecretResolutionError>;
+    /** Check if a secret can be resolved */
+    readonly status: (
+      secretId: SecretId,
+    ) => Effect.Effect<"resolved" | "missing">;
+    /** Store a secret value (creates ref + writes to provider) */
+    readonly set: (input: {
+      readonly id: SecretId;
       readonly name: string;
       readonly value: string;
       readonly purpose?: string;
-    }) => Effect.Effect<Secret>;
+      readonly provider?: string;
+    }) => Effect.Effect<SecretRef, SecretResolutionError>;
     readonly remove: (
-      secretId: string,
+      secretId: SecretId,
     ) => Effect.Effect<boolean, SecretNotFoundError>;
   };
 
@@ -153,13 +165,17 @@ export const createExecutor = <
 
       secrets: {
         list: () => secrets.list(scope.id),
-        store: (input: {
+        resolve: (secretId: SecretId) => secrets.resolve(secretId, scope.id),
+        status: (secretId: SecretId) => secrets.status(secretId, scope.id),
+        set: (input: {
+          readonly id: SecretId;
           readonly name: string;
           readonly value: string;
           readonly purpose?: string;
-        }) => secrets.store({ ...input, scopeId: scope.id }),
-        remove: (secretId: string) =>
-          secrets.remove(secretId as SecretId),
+          readonly provider?: string;
+        }) => secrets.set({ ...input, scopeId: scope.id }),
+        remove: (secretId: SecretId) =>
+          secrets.remove(secretId),
       },
 
       close: () =>

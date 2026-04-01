@@ -34,7 +34,7 @@ export {
 } from "./elicitation";
 
 // Secrets
-export { Secret, SecretStore } from "./secrets";
+export { SecretRef, SecretStore, type SecretProvider } from "./secrets";
 
 // Policies
 export { Policy, PolicyAction, PolicyEngine } from "./policies";
@@ -73,7 +73,7 @@ export { hoistDefinitions, collectRefs, reattachDefs } from "./schema-refs";
 
 // In-memory implementations
 export { makeInMemoryToolRegistry } from "./in-memory/tool-registry";
-export { makeInMemorySecretStore } from "./in-memory/secret-store";
+export { makeInMemorySecretStore, makeInMemorySecretProvider } from "./in-memory/secret-store";
 export { makeInMemoryPolicyEngine } from "./in-memory/policy-engine";
 
 // Testing

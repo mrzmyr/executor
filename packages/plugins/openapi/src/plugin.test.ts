@@ -6,11 +6,12 @@ import {
   HttpApiEndpoint,
   HttpApiGroup,
   HttpClient,
+  HttpServerRequest,
   OpenApi,
 } from "@effect/platform";
 import { NodeHttpServer } from "@effect/platform-node";
 
-import { createExecutor, makeTestConfig } from "@executor/sdk";
+import { createExecutor, makeTestConfig, SecretId } from "@executor/sdk";
 import { openApiPlugin } from "./plugin";
 
 // ---------------------------------------------------------------------------
@@ -22,6 +23,11 @@ class Item extends Schema.Class<Item>("Item")({
   name: Schema.String,
 }) {}
 
+class EchoHeaders extends Schema.Class<EchoHeaders>("EchoHeaders")({
+  authorization: Schema.optional(Schema.String),
+  "x-static": Schema.optional(Schema.String),
+}) {}
+
 const ItemsGroup = HttpApiGroup.make("items")
   .add(
     HttpApiEndpoint.get("listItems", "/items").addSuccess(Schema.Array(Item)),
@@ -30,6 +36,9 @@ const ItemsGroup = HttpApiGroup.make("items")
     HttpApiEndpoint.get("getItem", "/items/:itemId")
       .setPath(Schema.Struct({ itemId: Schema.NumberFromString }))
       .addSuccess(Item),
+  )
+  .add(
+    HttpApiEndpoint.get("echoHeaders", "/echo-headers").addSuccess(EchoHeaders),
   );
 
 const TestApi = HttpApi.make("testApi").add(ItemsGroup);
@@ -57,6 +66,15 @@ const ItemsGroupLive = HttpApiBuilder.group(TestApi, "items", (handlers) =>
           name: "Unknown",
         },
       ),
+    )
+    .handle("echoHeaders", () =>
+      Effect.gen(function* () {
+        const req = yield* HttpServerRequest.HttpServerRequest;
+        return new EchoHeaders({
+          authorization: req.headers["authorization"],
+          "x-static": req.headers["x-static"],
+        });
+      }),
     ),
 );
 
@@ -95,6 +113,83 @@ layer(TestLayer)("OpenAPI Plugin", (it) => {
 
       expect(preview.operationCount).toBeGreaterThanOrEqual(2);
       expect(preview.servers).toBeDefined();
+    }),
+  );
+
+  it.effect("resolves secret-backed headers at invocation time", () =>
+    Effect.gen(function* () {
+      const httpClient = yield* HttpClient.HttpClient;
+      const clientLayer = Layer.succeed(HttpClient.HttpClient, httpClient);
+
+      const executor = yield* createExecutor(
+        makeTestConfig({
+          plugins: [
+            openApiPlugin({ httpClientLayer: clientLayer }),
+          ] as const,
+        }),
+      );
+
+      // Store a secret
+      yield* executor.secrets.set({
+        id: SecretId.make("test-api-token"),
+        name: "Test API Token",
+        value: "secret-value-123",
+      });
+
+      // Add spec with secret-backed header
+      yield* executor.openapi.addSpec({
+        spec: specJson,
+        namespace: "authed",
+        baseUrl: "",
+        headers: {
+          "Authorization": { secretId: "test-api-token", prefix: "Bearer " },
+          "X-Static": "hello",
+        },
+      });
+
+      // Invoke the echo endpoint — verifies secret was resolved and sent
+      const result = yield* executor.tools.invoke(
+        "authed.items.echoHeaders",
+        {},
+      );
+
+      expect(result.error).toBeNull();
+      const data = result.data as { authorization?: string; "x-static"?: string };
+      expect(data.authorization).toBe("Bearer secret-value-123");
+      expect(data["x-static"]).toBe("hello");
+    }),
+  );
+
+  it.effect("fails clearly when a secret is missing", () =>
+    Effect.gen(function* () {
+      const httpClient = yield* HttpClient.HttpClient;
+      const clientLayer = Layer.succeed(HttpClient.HttpClient, httpClient);
+
+      const executor = yield* createExecutor(
+        makeTestConfig({
+          plugins: [
+            openApiPlugin({ httpClientLayer: clientLayer }),
+          ] as const,
+        }),
+      );
+
+      // Add spec with secret-backed header but DON'T store the secret
+      yield* executor.openapi.addSpec({
+        spec: specJson,
+        namespace: "noauth",
+        baseUrl: "",
+        headers: {
+          "Authorization": { secretId: "missing-token", prefix: "Bearer " },
+        },
+      });
+
+      // Invoke — should fail with a clear error about the missing secret
+      const error = yield* Effect.flip(
+        executor.tools.invoke("noauth.items.listItems", {}),
+      );
+
+      expect(error._tag).toBe("ToolInvocationError");
+      expect((error as { message: string }).message).toContain("missing-token");
     }),
   );
 

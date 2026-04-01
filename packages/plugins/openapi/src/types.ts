@@ -94,13 +94,26 @@ export class OperationBinding extends Schema.Class<OperationBinding>(
 // Invocation
 // ---------------------------------------------------------------------------
 
+/**
+ * A header value — either a static string or a reference to a secret.
+ * Stored as JSON-serializable data.
+ */
+export const HeaderValue = Schema.Union(
+  Schema.String,
+  Schema.Struct({
+    secretId: Schema.String,
+    prefix: Schema.optional(Schema.String),
+  }),
+);
+export type HeaderValue = typeof HeaderValue.Type;
+
 export class InvocationConfig extends Schema.Class<InvocationConfig>(
   "InvocationConfig",
 )({
   baseUrl: Schema.String,
-  /** Static headers applied to every request (auth, custom headers, etc.) */
+  /** Headers applied to every request. Values can reference secrets. */
   headers: Schema.optionalWith(
-    Schema.Record({ key: Schema.String, value: Schema.String }),
+    Schema.Record({ key: Schema.String, value: HeaderValue }),
     { default: () => ({}) },
   ),
 }) {}

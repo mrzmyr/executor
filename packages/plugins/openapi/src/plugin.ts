@@ -29,12 +29,15 @@ import {
 // Plugin config
 // ---------------------------------------------------------------------------
 
+/** A header value — either a static string or a reference to a secret */
+export type HeaderValue = string | { readonly secretId: string; readonly prefix?: string };
+
 export interface OpenApiSpecConfig {
   readonly spec: string;
   readonly baseUrl?: string;
   readonly namespace?: string;
-  /** Static headers applied to every request for this spec */
-  readonly headers?: Record<string, string>;
+  /** Headers applied to every request. Values can reference secrets. */
+  readonly headers?: Record<string, HeaderValue>;
 }
 
 // ---------------------------------------------------------------------------
@@ -105,7 +108,12 @@ export const openApiPlugin = (options?: {
       Effect.gen(function* () {
         yield* ctx.tools.registerInvoker(
           "openapi",
-          makeOpenApiInvoker(operationStore, httpClientLayer),
+          makeOpenApiInvoker({
+            operationStore,
+            httpClientLayer,
+            secrets: ctx.secrets,
+            scopeId: ctx.scope.id,
+          }),
         );
 
         return {

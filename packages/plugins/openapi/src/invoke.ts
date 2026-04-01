@@ -9,11 +9,14 @@ import {
   type ToolInvoker,
   ToolInvocationResult,
   ToolInvocationError,
+  type ScopeId,
+  type SecretId,
 } from "@executor/sdk";
 
 import { OpenApiInvocationError } from "./errors";
 import type { OpenApiOperationStore } from "./operation-store";
 import {
+  type HeaderValue,
   type OperationBinding,
   InvocationConfig,
   InvocationResult,
@@ -116,8 +119,34 @@ const resolvePath = Effect.fn("OpenApi.resolvePath")(function* (
 });
 
 // ---------------------------------------------------------------------------
-// Header application
+// Header resolution — resolves secret refs at invocation time
 // ---------------------------------------------------------------------------
+
+const resolveHeaders = (
+  headers: Record<string, HeaderValue>,
+  secrets: { readonly resolve: (secretId: SecretId, scopeId: ScopeId) => Effect.Effect<string, unknown> },
+  scopeId: ScopeId,
+): Effect.Effect<Record<string, string>, ToolInvocationError> =>
+  Effect.gen(function* () {
+    const resolved: Record<string, string> = {};
+    for (const [name, value] of Object.entries(headers)) {
+      if (typeof value === "string") {
+        resolved[name] = value;
+      } else {
+        const secret = yield* secrets.resolve(value.secretId as SecretId, scopeId).pipe(
+          Effect.mapError(() =>
+            new ToolInvocationError({
+              toolId: "" as ToolId,
+              message: `Failed to resolve secret "${value.secretId}" for header "${name}"`,
+              cause: undefined,
+            }),
+          ),
+        );
+        resolved[name] = value.prefix ? `${value.prefix}${secret}` : secret;
+      }
+    }
+    return resolved;
+  });
 
 const applyHeaders = (
   request: HttpClientRequest.HttpClientRequest,
@@ -153,6 +182,8 @@ export const invoke = Effect.fn("OpenApi.invoke")(function* (
   operation: OperationBinding,
   args: Record<string, unknown>,
   config: InvocationConfig,
+  /** Pre-resolved headers (secrets already resolved) */
+  resolvedHeaders?: Record<string, string>,
 ) {
   const client = yield* HttpClient.HttpClient;
 
@@ -204,8 +235,8 @@ export const invoke = Effect.fn("OpenApi.invoke")(function* (
     }
   }
 
-  // Static headers (auth, custom headers, etc.)
-  request = applyHeaders(request, config.headers);
+  // Static headers (auth, custom headers, etc.) — use pre-resolved if available
+  request = applyHeaders(request, resolvedHeaders ?? {});
 
   // Execute
   const response = yield* client.execute(request).pipe(
@@ -247,13 +278,15 @@ export const invoke = Effect.fn("OpenApi.invoke")(function* (
 // ToolInvoker — bridges operation store + HTTP client into SDK invoker
 // ---------------------------------------------------------------------------
 
-export const makeOpenApiInvoker = (
-  operationStore: OpenApiOperationStore,
-  httpClientLayer: Layer.Layer<HttpClient.HttpClient>,
-): ToolInvoker => ({
+export const makeOpenApiInvoker = (opts: {
+  readonly operationStore: OpenApiOperationStore;
+  readonly httpClientLayer: Layer.Layer<HttpClient.HttpClient>;
+  readonly secrets: { readonly resolve: (secretId: SecretId, scopeId: ScopeId) => Effect.Effect<string, unknown> };
+  readonly scopeId: ScopeId;
+}): ToolInvoker => ({
   invoke: (toolId: ToolId, args: unknown, _options) =>
     Effect.gen(function* () {
-      const entry = yield* operationStore.get(toolId);
+      const entry = yield* opts.operationStore.get(toolId);
       if (!entry) {
         return yield* new ToolInvocationError({
           toolId,
@@ -265,6 +298,13 @@ export const makeOpenApiInvoker = (
       const { binding, config } = entry;
       const baseUrl = config.baseUrl;
 
+      // Resolve secret-backed headers
+      const resolvedHeaders = yield* resolveHeaders(
+        config.headers,
+        opts.secrets,
+        opts.scopeId,
+      );
+
       const clientWithBaseUrl = baseUrl
         ? Layer.effect(
             HttpClient.HttpClient,
@@ -274,13 +314,14 @@ export const makeOpenApiInvoker = (
                 HttpClientRequest.prependUrl(baseUrl),
               ),
             ),
-          ).pipe(Layer.provide(httpClientLayer))
-        : httpClientLayer;
+          ).pipe(Layer.provide(opts.httpClientLayer))
+        : opts.httpClientLayer;
 
       const result = yield* invoke(
         binding,
         (args ?? {}) as Record<string, unknown>,
         config,
+        resolvedHeaders,
       ).pipe(Effect.provide(clientWithBaseUrl));
 
       return new ToolInvocationResult({
@@ -289,14 +330,22 @@ export const makeOpenApiInvoker = (
         status: result.status,
       });
     }).pipe(
-      Effect.mapError((err) =>
-        err._tag === "ToolInvocationError"
-          ? err
-          : new ToolInvocationError({
-              toolId,
-              message: `OpenAPI invocation failed: ${err.message}`,
-              cause: err,
-            }),
-      ),
+      Effect.catchAll((err) => {
+        if (
+          typeof err === "object" &&
+          err !== null &&
+          "_tag" in err &&
+          (err as { _tag: string })._tag === "ToolInvocationError"
+        ) {
+          return Effect.fail(err as ToolInvocationError);
+        }
+        return Effect.fail(
+          new ToolInvocationError({
+            toolId,
+            message: `OpenAPI invocation failed: ${err instanceof Error ? err.message : String(err)}`,
+            cause: err,
+          }),
+        );
+      }),
     ),
 });

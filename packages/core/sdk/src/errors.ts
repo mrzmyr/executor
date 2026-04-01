@@ -23,7 +23,10 @@ export class SecretNotFoundError extends Schema.TaggedError<SecretNotFoundError>
 
 export class SecretResolutionError extends Schema.TaggedError<SecretResolutionError>()(
   "SecretResolutionError",
-  { secretId: SecretId, message: Schema.String },
+  {
+    secretId: SecretId,
+    message: Schema.String,
+  },
 ) {}
 
 export class PolicyDeniedError extends Schema.TaggedError<PolicyDeniedError>()(

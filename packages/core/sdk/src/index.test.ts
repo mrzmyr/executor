@@ -11,6 +11,7 @@ import {
   ElicitationResponse,
   type MemoryToolContext,
   type ToolId,
+  SecretId,
 } from "./index";
 
 // ---------------------------------------------------------------------------
@@ -212,16 +213,28 @@ describe("SDK Executor", () => {
     Effect.gen(function* () {
       const executor = yield* createExecutor(makeTestConfig());
 
-      const secret = yield* executor.secrets.store({
+      const secret = yield* executor.secrets.set({
+        id: SecretId.make("api-key"),
         name: "API Key",
         value: "sk_test_123",
         purpose: "auth",
       });
       expect(secret.name).toBe("API Key");
+      expect(secret.id).toBe("api-key");
 
       const listed = yield* executor.secrets.list();
       expect(listed).toHaveLength(1);
       expect(listed[0]!.name).toBe("API Key");
+
+      // Can resolve by id
+      const resolved = yield* executor.secrets.resolve(SecretId.make("api-key"));
+      expect(resolved).toBe("sk_test_123");
+
+      // Can check status
+      const status = yield* executor.secrets.status(SecretId.make("api-key"));
+      expect(status).toBe("resolved");
+      const missing = yield* executor.secrets.status(SecretId.make("nonexistent"));
+      expect(missing).toBe("missing");
     }),
   );
 
@@ -414,22 +427,19 @@ describe("SDK Executor", () => {
                     ctx: MemoryToolContext,
                   ) =>
                     Effect.gen(function* () {
-                      // Read the current secrets
-                      const secrets = yield* ctx.sdk.secrets.list();
-                      const existing = secrets.find(
-                        (s) => s.name === secretName,
-                      );
+                      // Try to resolve the existing secret by key
+                      const secretId = SecretId.make(secretName);
+                      const status = yield* ctx.sdk.secrets.status(secretId);
 
                       let oldValue = "<none>";
-                      if (existing) {
-                        oldValue = yield* ctx.sdk.secrets.resolve(
-                          existing.id,
-                        );
-                        yield* ctx.sdk.secrets.remove(existing.id);
+                      if (status === "resolved") {
+                        oldValue = yield* ctx.sdk.secrets.resolve(secretId);
+                        yield* ctx.sdk.secrets.remove(secretId);
                       }
 
                       // Store the new value
-                      yield* ctx.sdk.secrets.store({
+                      yield* ctx.sdk.secrets.set({
+                        id: secretId,
                         name: secretName,
                         value: newValue,
                         purpose: "api_key",
@@ -445,7 +455,8 @@ describe("SDK Executor", () => {
       );
 
       // 1. Write initial secret
-      yield* executor.secrets.store({
+      yield* executor.secrets.set({
+        id: SecretId.make("DB_PASSWORD"),
         name: "DB_PASSWORD",
         value: "hunter2",
         purpose: "database",
