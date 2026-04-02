@@ -62,6 +62,8 @@ export const invokeTool = ExecutorApiClient.mutation("tools", "invoke");
 
 export const setSecret = ExecutorApiClient.mutation("secrets", "set");
 
+export const resolveSecret = ExecutorApiClient.mutation("secrets", "resolve");
+
 export const removeSecret = ExecutorApiClient.mutation("secrets", "remove");
 
 export const removeSource = ExecutorApiClient.mutation("sources", "remove");

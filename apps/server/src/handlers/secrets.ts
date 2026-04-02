@@ -53,6 +53,13 @@ export const SecretsHandlers = HttpApiBuilder.group(
           return refToResponse(ref);
         }),
       )
+      .handle("resolve", ({ path }) =>
+        Effect.gen(function* () {
+          const executor = yield* ExecutorService;
+          const value = yield* executor.secrets.resolve(path.secretId);
+          return { secretId: path.secretId, value };
+        }),
+      )
       .handle("remove", ({ path }) =>
         Effect.gen(function* () {
           const executor = yield* ExecutorService;

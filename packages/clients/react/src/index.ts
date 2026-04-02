@@ -30,6 +30,7 @@ export {
   secretStatusAtom,
   invokeTool,
   setSecret,
+  resolveSecret,
   removeSecret,
   removeSource,
   refreshSource,
