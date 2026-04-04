@@ -14,12 +14,13 @@
     "test:watch": "vitest"
   },
   "dependencies": {
+    "@1password/op-js": "^0.1.13",
     "@1password/sdk": "^0.4.1-beta.1",
+    "@effect-atom/atom-react": "^0.5.0",
+    "@effect/platform": "catalog:",
     "@executor/api": "workspace:*",
     "@executor/sdk": "workspace:*",
-    "effect": "catalog:",
-    "@effect/platform": "catalog:",
-    "@effect-atom/atom-react": "^0.5.0"
+    "effect": "catalog:"
   },
   "devDependencies": {
     "@effect/vitest": "catalog:",
@@ -34,9 +35,17 @@
     "@executor/ui": "workspace:*"
   },
   "peerDependenciesMeta": {
-    "react": { "optional": true },
-    "@effect-atom/atom-react": { "optional": true },
-    "@executor/react": { "optional": true },
-    "@executor/ui": { "optional": true }
+    "react": {
+      "optional": true
+    },
+    "@effect-atom/atom-react": {
+      "optional": true
+    },
+    "@executor/react": {
+      "optional": true
+    },
+    "@executor/ui": {
+      "optional": true
+    }
   }
 }

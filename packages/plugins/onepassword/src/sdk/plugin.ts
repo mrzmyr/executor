@@ -12,7 +12,11 @@ import {
 import { OnePasswordConfig, Vault, ConnectionStatus } from "./types";
 import type { OnePasswordAuth } from "./types";
 import { OnePasswordError } from "./errors";
-import { makeOnePasswordClient, type ResolvedAuth, type OnePasswordClient } from "./client";
+import {
+  makeOnePasswordService,
+  type ResolvedAuth,
+  type OnePasswordService,
+} from "./service";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -79,13 +83,13 @@ const resolveAuth = (
   );
 };
 
-const getClientFromConfig = (
+const getServiceFromConfig = (
   config: OnePasswordConfig,
   ctx: PluginContext,
   timeoutMs: number,
-): Effect.Effect<OnePasswordClient, OnePasswordError> =>
+): Effect.Effect<OnePasswordService, OnePasswordError> =>
   resolveAuth(config.auth, ctx).pipe(
-    Effect.flatMap((resolved) => makeOnePasswordClient(resolved, timeoutMs)),
+    Effect.flatMap((resolved) => makeOnePasswordService(resolved, { timeoutMs })),
   );
 
 // ---------------------------------------------------------------------------
@@ -109,13 +113,8 @@ const makeProvider = (
           ? secretId
           : `op://${config.vaultId}/${secretId}/${CREDENTIAL_FIELD}`;
 
-        return getClientFromConfig(config, ctx, timeoutMs).pipe(
-          Effect.flatMap((op) =>
-            op.use(
-              (client) => client.secrets.resolve(uri),
-              "secret resolution",
-            ),
-          ),
+        return getServiceFromConfig(config, ctx, timeoutMs).pipe(
+          Effect.flatMap((svc) => svc.resolveSecret(uri)),
           Effect.map((v): string | null => v),
           Effect.orElseSucceed(() => null),
         );
@@ -127,13 +126,8 @@ const makeProvider = (
     getConfig().pipe(
       Effect.flatMap((config) => {
         if (!config) return Effect.succeed([] as { id: string; name: string }[]);
-        return getClientFromConfig(config, ctx, timeoutMs).pipe(
-          Effect.flatMap((op) =>
-            op.use(
-              (client) => client.items.list(config.vaultId),
-              "item listing",
-            ),
-          ),
+        return getServiceFromConfig(config, ctx, timeoutMs).pipe(
+          Effect.flatMap((svc) => svc.listItems(config.vaultId)),
           Effect.map((items) =>
             items.map((item) => ({ id: item.id, name: item.title })),
           ),
@@ -187,6 +181,8 @@ export interface OnePasswordPluginOptions {
   readonly kv: ScopedKv;
   /** Request timeout in ms (default: 15000) */
   readonly timeoutMs?: number;
+  /** Force use of the native SDK instead of the CLI (default: false) */
+  readonly preferSdk?: boolean;
 }
 
 export const onepasswordPlugin = (
@@ -222,11 +218,8 @@ export const onepasswordPlugin = (
                   error: "Not configured",
                 });
               }
-              const op = yield* getClientFromConfig(config, ctx, timeoutMs);
-              const vaults = yield* op.use(
-                (client) => client.vaults.list({ decryptDetails: true }),
-                "connection check",
-              );
+              const svc = yield* getServiceFromConfig(config, ctx, timeoutMs);
+              const vaults = yield* svc.listVaults();
               const vault = vaults.find((v) => v.id === config.vaultId);
               return new ConnectionStatus({
                 connected: true,
@@ -237,11 +230,11 @@ export const onepasswordPlugin = (
           listVaults: (auth) =>
             Effect.gen(function* () {
               const resolved = yield* resolveAuth(auth, ctx);
-              const op = yield* makeOnePasswordClient(resolved, timeoutMs);
-              const vaults = yield* op.use(
-                (client) => client.vaults.list({ decryptDetails: true }),
-                "vault listing",
-              );
+              const svc = yield* makeOnePasswordService(resolved, {
+                timeoutMs,
+                preferSdk: options.preferSdk,
+              });
+              const vaults = yield* svc.listVaults();
               return vaults
                 .map((v) => new Vault({ id: v.id, name: v.title }))
                 .sort((a, b) => a.name.localeCompare(b.name));
@@ -256,11 +249,8 @@ export const onepasswordPlugin = (
                   message: "1Password is not configured",
                 });
               }
-              const op = yield* getClientFromConfig(config, ctx, timeoutMs);
-              return yield* op.use(
-                (client) => client.secrets.resolve(uri),
-                "secret resolution",
-              );
+              const svc = yield* getServiceFromConfig(config, ctx, timeoutMs);
+              return yield* svc.resolveSecret(uri);
             }),
         };
 
