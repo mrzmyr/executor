@@ -467,10 +467,15 @@ export default function AddOpenApiSource(props: {
   const selectPreset = (index: number) => {
     setPresetIndex(index);
     const preset = index >= 0 ? presets[index] : null;
-    setCustomHeaders((ch) => [
-      ...(preset ? presetEntriesFromHeaderPreset(preset) : []),
-      ...ch.filter((h) => !h.fromPreset),
-    ]);
+    const userHeaders = customHeaders.filter((h) => !h.fromPreset);
+    if (preset) {
+      setCustomHeaders([...presetEntriesFromHeaderPreset(preset), ...userHeaders]);
+    } else if (index === -2 && userHeaders.length === 0) {
+      // "Custom" selected with no existing user headers — seed one empty row
+      setCustomHeaders([{ name: "", secretId: null, presetKey: undefined }]);
+    } else {
+      setCustomHeaders(userHeaders);
+    }
   };
 
   const addCustomHeader = () => {
@@ -635,8 +640,8 @@ export default function AddOpenApiSource(props: {
           <section className="space-y-2.5">
             <Label>Authentication</Label>
 
-            {/* Strategy picker — only when spec declares multiple strategies */}
-            {hasAuth && presets.length > 1 && (
+            {/* Strategy picker */}
+            {hasAuth && (
               <RadioGroup
                 value={String(presetIndex)}
                 onValueChange={(v) => selectPreset(Number(v))}
@@ -660,6 +665,18 @@ export default function AddOpenApiSource(props: {
                     )}
                   </label>
                 ))}
+
+                <label
+                  className={`flex items-center gap-2.5 rounded-lg border px-3 py-2 cursor-pointer transition-colors ${
+                    presetIndex === -2
+                      ? "border-primary/50 bg-primary/[0.03]"
+                      : "border-border hover:bg-accent/50"
+                  }`}
+                >
+                  <RadioGroupItem value="-2" />
+                  <span className="text-xs font-medium text-foreground">Custom</span>
+                  <span className="ml-auto text-[10px] text-muted-foreground">configure manually</span>
+                </label>
 
                 <label
                   className={`flex items-center gap-2.5 rounded-lg border px-3 py-2 cursor-pointer transition-colors ${
@@ -694,14 +711,16 @@ export default function AddOpenApiSource(props: {
               </div>
             )}
 
-            <Button
-              variant="outline"
-              size="sm"
-              className="w-full border-dashed"
-              onClick={addCustomHeader}
-            >
-              + Add header
-            </Button>
+            {(!hasAuth || presetIndex === -2) && (
+              <Button
+                variant="outline"
+                size="sm"
+                className="w-full border-dashed"
+                onClick={addCustomHeader}
+              >
+                + Add header
+              </Button>
+            )}
           </section>
 
           {/* Add error */}
