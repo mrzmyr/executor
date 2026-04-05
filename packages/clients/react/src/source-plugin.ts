@@ -1,6 +1,23 @@
 import type { ComponentType } from "react";
 
 /**
+ * A curated preset — a well-known API/service that can be added with one click.
+ * Each plugin provides its own presets.
+ */
+export interface SourcePreset {
+  /** Unique id (e.g. "stripe", "github-graphql") */
+  readonly id: string;
+  /** Display name */
+  readonly name: string;
+  /** One-line description */
+  readonly summary: string;
+  /** URL passed as `initialUrl` to the add form */
+  readonly url: string;
+  /** Optional icon URL (favicon, logo) */
+  readonly icon?: string;
+}
+
+/**
  * Contract between the shell and source plugins.
  *
  * The shell owns:
@@ -48,4 +65,7 @@ export interface SourcePlugin {
   readonly summary?: ComponentType<{
     readonly sourceId: string;
   }>;
+
+  /** Curated presets shown on the sources page for quick-add */
+  readonly presets?: readonly SourcePreset[];
 }

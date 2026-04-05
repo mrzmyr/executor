@@ -1,7 +1,7 @@
-import { useReducer, useCallback, Suspense } from "react";
+import { useReducer, useCallback, useMemo, Suspense } from "react";
 import { Link } from "@tanstack/react-router";
 import { Result, useAtomValue, useAtomRefresh, useAtomSet, sourcesAtom, detectSource } from "@executor/react";
-import type { SourcePlugin } from "@executor/react";
+import type { SourcePlugin, SourcePreset } from "@executor/react";
 import { openApiSourcePlugin } from "@executor/plugin-openapi/react";
 import { mcpSourcePlugin } from "@executor/plugin-mcp/react";
 import { googleDiscoverySourcePlugin } from "@executor/plugin-google-discovery/react";
@@ -46,6 +46,7 @@ type Action =
   | { type: "detect-unknown-kind"; kind: string }
   | { type: "detect-fail" }
   | { type: "add-manual"; pluginKey: string }
+  | { type: "add-preset"; pluginKey: string; url: string }
   | { type: "back" };
 
 const init: State = { step: "list", url: "", error: null, pluginKey: null, initialUrl: undefined };
@@ -66,6 +67,8 @@ function reducer(state: State, action: Action): State {
       return { ...state, step: "list", error: "Detection failed. Try adding a source manually." };
     case "add-manual":
       return { ...state, step: "adding", pluginKey: action.pluginKey, initialUrl: undefined };
+    case "add-preset":
+      return { ...state, step: "adding", pluginKey: action.pluginKey, initialUrl: action.url };
     case "back":
       return init;
     default:
@@ -196,6 +199,8 @@ export function SourcesPage() {
 
         <McpInstallCard className="mb-8 rounded-2xl border border-border bg-card/80 p-5" />
 
+        <PresetGrid plugins={sourcePlugins} dispatch={dispatch} />
+
         {Result.match(sources, {
           onInitial: () => (
             <p className="text-sm text-muted-foreground">Loading…</p>
@@ -256,6 +261,66 @@ export function SourcesPage() {
         })}
       </div>
     </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Preset grid
+// ---------------------------------------------------------------------------
+
+function PresetGrid(props: {
+  plugins: readonly SourcePlugin[];
+  dispatch: React.Dispatch<Action>;
+}) {
+  const allPresets = useMemo(() => {
+    const out: { preset: SourcePreset; pluginKey: string; pluginLabel: string }[] = [];
+    for (const plugin of props.plugins) {
+      for (const preset of plugin.presets ?? []) {
+        out.push({ preset, pluginKey: plugin.key, pluginLabel: plugin.label });
+      }
+    }
+    return out;
+  }, [props.plugins]);
+
+  if (allPresets.length === 0) return null;
+
+  return (
+    <section className="mb-8 space-y-3">
+      <div>
+        <h2 className="text-sm font-semibold text-foreground">Presets</h2>
+        <p className="mt-1 text-[13px] text-muted-foreground">
+          One-click setup for common APIs and services.
+        </p>
+      </div>
+      <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+        {allPresets.map(({ preset, pluginKey, pluginLabel }) => (
+          <button
+            key={`${pluginKey}-${preset.id}`}
+            onClick={() => props.dispatch({ type: "add-preset", pluginKey, url: preset.url })}
+            className="flex items-start gap-3 rounded-xl border border-border bg-card px-4 py-3 text-left transition-colors hover:border-primary/25 hover:bg-card/90"
+          >
+            <div className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-muted text-muted-foreground overflow-hidden">
+              {preset.icon ? (
+                <img src={preset.icon} alt="" className="size-5 object-contain" loading="lazy" />
+              ) : (
+                <svg viewBox="0 0 16 16" className="size-3.5" fill="none">
+                  <circle cx="8" cy="8" r="6" stroke="currentColor" strokeWidth="1.2" />
+                </svg>
+              )}
+            </div>
+            <div className="min-w-0 flex-1">
+              <div className="flex items-center gap-2">
+                <span className="truncate text-sm font-medium text-foreground">{preset.name}</span>
+                <span className="shrink-0 rounded bg-secondary px-1.5 py-0.5 text-[10px] font-medium text-secondary-foreground">
+                  {pluginLabel}
+                </span>
+              </div>
+              <p className="mt-0.5 text-xs text-muted-foreground line-clamp-1">{preset.summary}</p>
+            </div>
+          </button>
+        ))}
+      </div>
+    </section>
   );
 }
 

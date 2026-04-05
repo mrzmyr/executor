@@ -1,9 +1,6 @@
 import { lazy } from "react";
 import type { SourcePlugin } from "@executor/react";
-
-// ---------------------------------------------------------------------------
-// MCP source plugin — lazy-loaded components
-// ---------------------------------------------------------------------------
+import { mcpPresets } from "../sdk/presets";
 
 export const mcpSourcePlugin: SourcePlugin = {
   key: "mcp",
@@ -11,4 +8,5 @@ export const mcpSourcePlugin: SourcePlugin = {
   add: lazy(() => import("./AddMcpSource")),
   edit: lazy(() => import("./EditMcpSource")),
   summary: lazy(() => import("./McpSourceSummary")),
+  presets: mcpPresets,
 };

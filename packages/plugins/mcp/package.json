@@ -6,7 +6,8 @@
   "exports": {
     ".": "./src/sdk/index.ts",
     "./api": "./src/api/index.ts",
-    "./react": "./src/react/index.ts"
+    "./react": "./src/react/index.ts",
+    "./presets": "./src/sdk/presets.ts"
   },
   "scripts": {
     "typecheck": "bunx tsc --noEmit -p tsconfig.json",
