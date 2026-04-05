@@ -338,16 +338,29 @@ function run(target) {
 if (process.env.EXECUTOR_BIN_PATH) run(process.env.EXECUTOR_BIN_PATH);
 
 const scriptDir = path.dirname(fs.realpathSync(__filename));
-const cached = path.join(scriptDir, process.platform === "win32" ? ".executor.exe" : ".executor");
+const binary = process.platform === "win32" ? "executor.exe" : "executor";
+const runtimeBinary = path.join(scriptDir, "runtime", binary);
+const legacyCached = path.join(scriptDir, process.platform === "win32" ? ".executor.exe" : ".executor");
+
+const resolveInstalledBinary = () => {
+  if (fs.existsSync(runtimeBinary)) {
+    return runtimeBinary;
+  }
+  if (fs.existsSync(legacyCached)) {
+    return legacyCached;
+  }
+  return null;
+};
 
 const installIfNeeded = () => {
-  if (fs.existsSync(cached)) {
-    return true;
+  const existing = resolveInstalledBinary();
+  if (existing) {
+    return existing;
   }
 
   const installer = path.resolve(scriptDir, "..", "postinstall.cjs");
   if (!fs.existsSync(installer)) {
-    return false;
+    return null;
   }
 
   console.error("executor binary is missing; downloading release asset...");
@@ -365,15 +378,16 @@ const installIfNeeded = () => {
     process.exit(result.status);
   }
 
-  return fs.existsSync(cached);
+  return resolveInstalledBinary();
 };
 
-if (!installIfNeeded()) {
+const installedBinary = installIfNeeded();
+if (!installedBinary) {
   console.error("executor binary is missing. Reinstall the package or run 'npm rebuild executor'.");
   process.exit(1);
 }
 
-run(cached);
+run(installedBinary);
 `;
 
 // ---------------------------------------------------------------------------
@@ -388,6 +402,7 @@ const os = require("os");
 
 const packageDir = path.dirname(fs.realpathSync(__filename));
 const binDir = path.join(packageDir, "bin");
+const runtimeDir = path.join(binDir, "runtime");
 const packageJson = JSON.parse(fs.readFileSync(path.join(packageDir, "package.json"), "utf8"));
 
 const repositoryUrl = typeof packageJson.repository === "string"
@@ -402,7 +417,8 @@ const platformMap = { darwin: "darwin", linux: "linux", win32: "windows" };
 const platform = platformMap[os.platform()] || os.platform();
 const arch = os.arch() === "arm64" ? "arm64" : "x64";
 const binary = platform === "windows" ? "executor.exe" : "executor";
-const cachedBinary = path.join(binDir, platform === "win32" ? ".executor.exe" : ".executor");
+const cachedBinary = path.join(runtimeDir, binary);
+const legacyCachedBinary = path.join(binDir, platform === "win32" ? ".executor.exe" : ".executor");
 
 const isMusl = (() => {
   if (platform !== "linux") return false;
@@ -442,20 +458,22 @@ const download = async () => {
 
 const extract = () => {
   fs.mkdirSync(binDir, { recursive: true });
+  fs.rmSync(runtimeDir, { recursive: true, force: true });
+  fs.mkdirSync(runtimeDir, { recursive: true });
 
   if (platform === "linux") {
-    run("tar", ["-xzf", archivePath, "-C", binDir]);
+    run("tar", ["-xzf", archivePath, "-C", runtimeDir]);
     return;
   }
 
   if (platform === "darwin") {
-    run("unzip", ["-o", archivePath, "-d", binDir]);
+    run("unzip", ["-o", archivePath, "-d", runtimeDir]);
     return;
   }
 
   const command = [
     "$ErrorActionPreference = 'Stop'",
-    "Expand-Archive -LiteralPath '" + archivePath.replace(/'/g, "''") + "' -DestinationPath '" + binDir.replace(/'/g, "''") + "' -Force",
+    "Expand-Archive -LiteralPath '" + archivePath.replace(/'/g, "''") + "' -DestinationPath '" + runtimeDir.replace(/'/g, "''") + "' -Force",
   ].join("; ");
   run("powershell.exe", ["-NoLogo", "-NoProfile", "-Command", command]);
 };
@@ -465,15 +483,13 @@ const extract = () => {
     await download();
     extract();
 
-    const extractedBinary = path.join(binDir, binary);
-    if (!fs.existsSync(extractedBinary)) {
-      throw new Error("Expected extracted binary at " + extractedBinary);
+    if (!fs.existsSync(cachedBinary)) {
+      throw new Error("Expected extracted binary at " + cachedBinary);
     }
 
-    if (fs.existsSync(cachedBinary)) {
-      fs.unlinkSync(cachedBinary);
+    if (fs.existsSync(legacyCachedBinary)) {
+      fs.unlinkSync(legacyCachedBinary);
     }
-    fs.renameSync(extractedBinary, cachedBinary);
     fs.chmodSync(cachedBinary, 0o755);
     fs.rmSync(archivePath, { force: true });
     console.log("executor: installed " + assetBase + " from GitHub Releases");
