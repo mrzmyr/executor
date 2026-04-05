@@ -242,7 +242,8 @@ export const graphqlPlugin = (options?: {
             Effect.gen(function* () {
               const trimmed = url.trim();
               if (!trimmed) return null;
-              try { new URL(trimmed); } catch { return null; }
+              const parsed = yield* Effect.try(() => new URL(trimmed)).pipe(Effect.option);
+              if (parsed._tag === "None") return null;
 
               const ok = yield* introspect(trimmed).pipe(
                 Effect.provide(httpClientLayer),

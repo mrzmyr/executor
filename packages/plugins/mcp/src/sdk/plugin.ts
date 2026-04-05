@@ -355,7 +355,8 @@ export const mcpPlugin = (options?: {
                 refreshToken = yield* ctx.secrets
                   .resolve(auth.refreshTokenSecretId as any, ctx.scope.id)
                   .pipe(
-                    Effect.catchAll(() => Effect.succeed(undefined)),
+                    Effect.option,
+                    Effect.map((o) => o._tag === "Some" ? o.value : undefined),
                   );
               }
 
@@ -391,17 +392,18 @@ export const mcpPlugin = (options?: {
               yield* bindingStore.removeSource(sourceId);
               yield* ctx.tools.unregisterBySource(sourceId);
               addedSources.delete(sourceId);
-            }).pipe(Effect.catchAll(() => Effect.void)),
+            }),
 
           detect: (url: string) =>
             Effect.gen(function* () {
               const trimmed = url.trim();
               if (!trimmed) return null;
-              try { new URL(trimmed); } catch { return null; }
+              const parsed = yield* Effect.try(() => new URL(trimmed)).pipe(
+                Effect.option,
+              );
+              if (parsed._tag === "None") return null;
 
-              const name = (() => {
-                try { return new URL(trimmed).hostname; } catch { return "mcp"; }
-              })();
+              const name = parsed.value.hostname || "mcp";
               const namespace = deriveMcpNamespace({ endpoint: trimmed });
 
               const connector = createMcpConnector({
@@ -489,17 +491,11 @@ export const mcpPlugin = (options?: {
           Effect.gen(function* () {
             const trimmed = endpoint.trim();
             if (!trimmed)
-              return yield* Effect.fail(
-                remoteConnectionError("Endpoint URL is required"),
-              );
+              return yield* remoteConnectionError("Endpoint URL is required");
 
-            const name = (() => {
-              try {
-                return new URL(trimmed).hostname;
-              } catch {
-                return "mcp";
-              }
-            })();
+            const name = yield* Effect.try(() => new URL(trimmed).hostname).pipe(
+              Effect.orElseSucceed(() => "mcp"),
+            );
             const namespace = deriveMcpNamespace({ endpoint: trimmed });
 
             // Try connecting directly
@@ -548,10 +544,8 @@ export const mcpPlugin = (options?: {
               } satisfies McpProbeResult;
             }
 
-            return yield* Effect.fail(
-              remoteConnectionError(
-                "Could not connect to MCP endpoint and no OAuth was detected",
-              ),
+            return yield* remoteConnectionError(
+              "Could not connect to MCP endpoint and no OAuth was detected",
             );
           });
 
@@ -618,10 +612,8 @@ export const mcpPlugin = (options?: {
           Effect.gen(function* () {
             const sd = yield* bindingStore.getSourceConfig(namespace);
             if (!sd)
-              return yield* Effect.fail(
-                remoteConnectionError(
-                  `No stored config for MCP source "${namespace}"`,
-                ),
+              return yield* remoteConnectionError(
+                `No stored config for MCP source "${namespace}"`,
               );
 
             const ci = yield* resolveConnectorInput(sd);
@@ -659,9 +651,7 @@ export const mcpPlugin = (options?: {
           Effect.gen(function* () {
             const endpoint = input.endpoint.trim();
             if (!endpoint)
-              return yield* Effect.fail(
-                mcpOAuthError("MCP OAuth requires an endpoint"),
-              );
+              return yield* mcpOAuthError("MCP OAuth requires an endpoint");
 
             let fullEndpoint = endpoint;
             if (
@@ -706,19 +696,13 @@ export const mcpPlugin = (options?: {
         const completeOAuth = (input: McpOAuthCompleteInput) =>
           Effect.gen(function* () {
             if (input.error)
-              return yield* Effect.fail(
-                mcpOAuthError(`OAuth error: ${input.error}`),
-              );
+              return yield* mcpOAuthError(`OAuth error: ${input.error}`);
             if (!input.code)
-              return yield* Effect.fail(
-                mcpOAuthError("Missing OAuth authorization code"),
-              );
+              return yield* mcpOAuthError("Missing OAuth authorization code");
 
             const session = oauthSessions.get(input.state);
             if (!session)
-              return yield* Effect.fail(
-                mcpOAuthError(`OAuth session not found: ${input.state}`),
-              );
+              return yield* mcpOAuthError(`OAuth session not found: ${input.state}`);
 
             const exchanged = yield* exchangeMcpOAuthCode({
               session,

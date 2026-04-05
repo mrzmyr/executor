@@ -56,7 +56,9 @@ export const makeKvToolRegistry = (
   const getDefsMap = (): Effect.Effect<Map<string, unknown>> =>
     Effect.gen(function* () {
       const entries = yield* defsKv.list();
-      const defs = new Map(entries.map((e) => [e.key, JSON.parse(e.value)]));
+      const defs = yield* Effect.try(() =>
+        new Map(entries.map((e) => [e.key, JSON.parse(e.value)])),
+      ).pipe(Effect.orDie);
       for (const [k, v] of runtimeDefs) defs.set(k, v);
       return defs;
     });
@@ -118,6 +120,7 @@ export const makeKvToolRegistry = (
         defsKv,
         Effect.gen(function* () {
           for (const [name, schema] of Object.entries(newDefs)) {
+            // @effect-diagnostics-next-line preferSchemaOverJson:off
             yield* defsKv.set(name, JSON.stringify(schema));
           }
         }),

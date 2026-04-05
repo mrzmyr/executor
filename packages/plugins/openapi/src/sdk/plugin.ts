@@ -206,11 +206,8 @@ export const openApiPlugin = (options?: {
             Effect.gen(function* () {
               const trimmed = url.trim();
               if (!trimmed) return null;
-              try {
-                new URL(trimmed);
-              } catch {
-                return null;
-              }
+              const parsed = yield* Effect.try(() => new URL(trimmed)).pipe(Effect.option);
+              if (parsed._tag === "None") return null;
 
               // Try fetching the URL and parsing as OpenAPI spec
               // parse() handles both URLs directly and spec text
@@ -348,10 +345,7 @@ export const openApiPlugin = (options?: {
               }),
           },
 
-          close: () =>
-            Effect.gen(function* () {
-              yield* runtimeTools.close();
-            }),
+          close: () => runtimeTools.close(),
         };
       }),
   });

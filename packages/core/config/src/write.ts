@@ -125,7 +125,7 @@ export const writeConfig = (
 ): Effect.Effect<void, PlatformError, FileSystem.FileSystem> =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
-    const text = JSON.stringify(config, null, 2) + "\n";
+    const text = yield* Effect.try(() => JSON.stringify(config, null, 2) + "\n").pipe(Effect.orDie);
     yield* fs.writeFileString(path, text);
   });
 

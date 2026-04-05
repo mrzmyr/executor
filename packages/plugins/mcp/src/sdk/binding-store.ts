@@ -150,6 +150,7 @@ const makeStore = (
     Effect.gen(function* () {
       const raw = yield* sources.get(namespace);
       if (!raw) return null;
+      // @effect-diagnostics-next-line preferSchemaOverJson:off
       const source = JSON.parse(raw) as McpStoredSource;
       return source.config;
     }),

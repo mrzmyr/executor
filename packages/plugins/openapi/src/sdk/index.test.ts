@@ -58,6 +58,7 @@ const spec = OpenApi.fromApi(PetstoreApi);
 describe("OpenAPI plugin", () => {
   it.effect("parses and extracts operations from Effect HttpApi spec", () =>
     Effect.gen(function* () {
+      // @effect-diagnostics-next-line preferSchemaOverJson:off
       const doc = yield* parse(JSON.stringify(spec));
       const result = yield* extract(doc);
 
@@ -68,6 +69,7 @@ describe("OpenAPI plugin", () => {
 
   it.effect("extracts listPets with output schema", () =>
     Effect.gen(function* () {
+      // @effect-diagnostics-next-line preferSchemaOverJson:off
       const doc = yield* parse(JSON.stringify(spec));
       const result = yield* extract(doc);
 
@@ -91,6 +93,7 @@ describe("OpenAPI plugin", () => {
 
   it.effect("extracts createPet with request body from payload", () =>
     Effect.gen(function* () {
+      // @effect-diagnostics-next-line preferSchemaOverJson:off
       const doc = yield* parse(JSON.stringify(spec));
       const result = yield* extract(doc);
 
@@ -116,6 +119,7 @@ describe("OpenAPI plugin", () => {
 
   it.effect("extracts getPet with path template", () =>
     Effect.gen(function* () {
+      // @effect-diagnostics-next-line preferSchemaOverJson:off
       const doc = yield* parse(JSON.stringify(spec));
       const result = yield* extract(doc);
 
@@ -130,6 +134,7 @@ describe("OpenAPI plugin", () => {
 
   it.effect("extracts error responses", () =>
     Effect.gen(function* () {
+      // @effect-diagnostics-next-line preferSchemaOverJson:off
       const doc = yield* parse(JSON.stringify(spec));
       const result = yield* extract(doc);
 
@@ -145,6 +150,7 @@ describe("OpenAPI plugin", () => {
 
   it.effect("round-trips: generated spec paths match HttpApi definition", () =>
     Effect.gen(function* () {
+      // @effect-diagnostics-next-line preferSchemaOverJson:off
       const doc = yield* parse(JSON.stringify(spec));
       const result = yield* extract(doc);
 
@@ -158,6 +164,7 @@ describe("OpenAPI plugin", () => {
 
   it.effect("compileToolDefinitions produces nested group.leaf paths", () =>
     Effect.gen(function* () {
+      // @effect-diagnostics-next-line preferSchemaOverJson:off
       const doc = yield* parse(JSON.stringify(spec));
       const result = yield* extract(doc);
       const defs = compileToolDefinitions(result.operations);

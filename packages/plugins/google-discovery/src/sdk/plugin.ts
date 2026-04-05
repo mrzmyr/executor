@@ -309,7 +309,8 @@ export const googleDiscoveryPlugin = (options?: {
             Effect.gen(function* () {
               const trimmed = url.trim();
               if (!trimmed) return null;
-              try { new URL(trimmed); } catch { return null; }
+              const parsed = yield* Effect.try(() => new URL(trimmed)).pipe(Effect.option);
+              if (parsed._tag === "None") return null;
 
               // Only probe URLs that look like Google Discovery docs
               const isGoogleUrl = trimmed.includes("googleapis.com");

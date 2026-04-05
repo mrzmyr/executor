@@ -180,6 +180,7 @@ export const introspect = Effect.fn("GraphQL.introspect")(function* (
 
   if (json.errors && Array.isArray(json.errors) && json.errors.length > 0) {
     return yield* new GraphqlIntrospectionError({
+      // @effect-diagnostics-next-line preferSchemaOverJson:off
       message: `Introspection returned errors: ${JSON.stringify(json.errors)}`,
       error: undefined,
     });

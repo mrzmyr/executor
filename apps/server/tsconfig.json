@@ -15,7 +15,7 @@
     "plugins": [
       {
         "name": "@effect/language-service",
-        "diagnostics": {
+        "diagnosticSeverity": {
           "globalErrorInEffectFailure": "off"
         }
       }

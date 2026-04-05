@@ -200,9 +200,8 @@ const resolveConnectorInput = (
         refreshToken = yield* secrets
           .resolve(auth.refreshTokenSecretId as SecretId, scopeId)
           .pipe(
-            Effect.catchAll(() =>
-              Effect.succeed(undefined as string | undefined),
-            ),
+            Effect.option,
+            Effect.map((o) => o._tag === "Some" ? o.value : undefined),
           );
       }
 

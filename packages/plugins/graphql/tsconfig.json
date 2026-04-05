@@ -14,8 +14,7 @@
     "plugins": [
       {
         "name": "@effect/language-service",
-        "diagnostics": {
-          "preferSchemaOverJson": "off",
+        "diagnosticSeverity": {
           "globalErrorInEffectFailure": "off"
         }
       }
