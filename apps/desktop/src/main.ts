@@ -32,16 +32,49 @@ const CLI_BIN_PATH = join(CLI_BIN_DIR, process.platform === "win32" ? "executor.
 // CLI install — copy sidecar to ~/.executor/bin and patch shell PATH
 // ---------------------------------------------------------------------------
 
+const getInstalledCliVersion = (): string | null => {
+  if (!existsSync(CLI_BIN_PATH)) return null;
+  try {
+    const { execFileSync } = require("node:child_process") as typeof import("node:child_process");
+    return execFileSync(CLI_BIN_PATH, ["--version"], {
+      timeout: 5000,
+      encoding: "utf-8",
+    }).trim();
+  } catch {
+    return null;
+  }
+};
+
 const installCli = (): void => {
   if (isDev) return;
 
   const sidecar = join(process.resourcesPath, binaryName);
   if (!existsSync(sidecar)) return;
 
+  // Check if installed version is already same or newer
+  const appVersion = app.getVersion();
+  const installedVersion = getInstalledCliVersion();
+  if (installedVersion) {
+    const parse = (v: string) => v.replace(/^v/, "").split(/[.-]/).map((s) => {
+      const n = parseInt(s, 10);
+      return isNaN(n) ? 0 : n;
+    });
+    const installed = parse(installedVersion);
+    const bundled = parse(appVersion);
+    const len = Math.max(installed.length, bundled.length);
+    let cmp = 0;
+    for (let i = 0; i < len && cmp === 0; i++) {
+      cmp = (installed[i] ?? 0) - (bundled[i] ?? 0);
+    }
+    if (cmp >= 0) return; // Already up to date or newer
+  }
+
   // Copy binary
   mkdirSync(CLI_BIN_DIR, { recursive: true });
   copyFileSync(sidecar, CLI_BIN_PATH);
   try { chmodSync(CLI_BIN_PATH, 0o755); } catch {}
+  console.log(`Installed executor CLI ${appVersion} to ${CLI_BIN_PATH}` +
+    (installedVersion ? ` (was ${installedVersion})` : ""));
 
   // Copy WASM if present
   const wasm = join(process.resourcesPath, "emscripten-module.wasm");
