@@ -1,25 +1,45 @@
 // ---------------------------------------------------------------------------
-// Cloud API — reuses @executor/server's composed API layer
+// Cloud API — core handlers from @executor/api + cloud-specific plugins
 // ---------------------------------------------------------------------------
 
 import {
   HttpApiBuilder,
+  HttpApiSwagger,
   HttpMiddleware,
   HttpServer,
 } from "@effect/platform";
 import { Effect, Layer } from "effect";
 
+import { addGroup, CoreHandlers, ExecutorService, ExecutionEngineService } from "@executor/api";
 import { createExecutionEngine } from "@executor/execution";
 import { makeUserStore } from "@executor/storage-postgres";
-import {
-  ApiLayer,
-  ExecutorService,
-  ExecutionEngineService,
-} from "@executor/server";
+import { OpenApiGroup, OpenApiExtensionService, OpenApiHandlers } from "@executor/plugin-openapi/api";
+import { McpGroup, McpExtensionService, McpHandlers } from "@executor/plugin-mcp/api";
+import { GoogleDiscoveryGroup, GoogleDiscoveryExtensionService, GoogleDiscoveryHandlers } from "@executor/plugin-google-discovery/api";
+import { GraphqlGroup, GraphqlExtensionService, GraphqlHandlers } from "@executor/plugin-graphql/api";
 
 import { createTeamExecutor } from "./services/executor";
 import { parseSessionId, validateSession } from "./auth/session";
 import type { DrizzleDb } from "./services/db";
+
+// ---------------------------------------------------------------------------
+// Cloud API — core + cloud plugins (no onepassword)
+// ---------------------------------------------------------------------------
+
+const CloudApi = addGroup(OpenApiGroup)
+  .add(McpGroup)
+  .add(GoogleDiscoveryGroup)
+  .add(GraphqlGroup);
+
+const CloudApiBase = HttpApiBuilder.api(CloudApi).pipe(
+  Layer.provide(CoreHandlers),
+  Layer.provide(Layer.mergeAll(
+    OpenApiHandlers,
+    McpHandlers,
+    GoogleDiscoveryHandlers,
+    GraphqlHandlers,
+  )),
+);
 
 // ---------------------------------------------------------------------------
 // Create API handler with auth-based executor resolution
@@ -29,7 +49,6 @@ export const createCloudApiHandler = (db: DrizzleDb, encryptionKey: string) => {
   const userStore = makeUserStore(db);
 
   return async (request: Request): Promise<Response> => {
-    // Resolve auth from cookie
     const sessionId = parseSessionId(request.headers.get("cookie"));
     if (!sessionId) {
       return Response.json({ error: "Unauthorized" }, { status: 401 });
@@ -48,15 +67,24 @@ export const createCloudApiHandler = (db: DrizzleDb, encryptionKey: string) => {
     const team = await userStore.getTeam(session.teamId);
     const teamName = team?.name ?? "Unknown Team";
 
-    // Create per-request executor
     const executor = await Effect.runPromise(
       createTeamExecutor(db, session.teamId, teamName, encryptionKey),
+    );
+
+    const pluginExtensions = Layer.mergeAll(
+      Layer.succeed(OpenApiExtensionService, executor.openapi),
+      Layer.succeed(McpExtensionService, executor.mcp),
+      Layer.succeed(GoogleDiscoveryExtensionService, executor.googleDiscovery),
+      Layer.succeed(GraphqlExtensionService, executor.graphql),
     );
 
     const engine = createExecutionEngine({ executor });
 
     const handler = HttpApiBuilder.toWebHandler(
-      ApiLayer.pipe(
+      HttpApiSwagger.layer().pipe(
+        Layer.provideMerge(HttpApiBuilder.middlewareOpenApi()),
+        Layer.provideMerge(CloudApiBase),
+        Layer.provideMerge(pluginExtensions),
         Layer.provideMerge(Layer.succeed(ExecutorService, executor)),
         Layer.provideMerge(Layer.succeed(ExecutionEngineService, engine)),
         Layer.provideMerge(HttpServer.layerContext),

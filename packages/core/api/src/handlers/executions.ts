@@ -1,13 +1,12 @@
 import { HttpApiBuilder } from "@effect/platform";
 import { Effect } from "effect";
 
-import { ExecutorApi } from "@executor/api";
+import { ExecutorApi } from "../api";
 import {
   formatExecuteResult,
   formatPausedExecution,
-  type ExecutionEngine,
 } from "@executor/execution";
-import { ExecutionEngineService } from "../services/engine";
+import { ExecutionEngineService } from "../services";
 
 export const ExecutionsHandlers = HttpApiBuilder.group(
   ExecutorApi,

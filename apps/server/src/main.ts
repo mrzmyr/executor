@@ -4,69 +4,41 @@ import {
   HttpMiddleware,
   HttpServer,
 } from "@effect/platform";
-import { Effect, Layer } from "effect";
+import { Layer } from "effect";
 
-import { addGroup } from "@executor/api";
+import { addGroup, CoreHandlers, ExecutorService, ExecutionEngineService } from "@executor/api";
 import { createExecutionEngine } from "@executor/execution";
-import { OpenApiGroup } from "@executor/plugin-openapi/api";
-import { McpGroup } from "@executor/plugin-mcp/api";
-import { GoogleDiscoveryGroup } from "@executor/plugin-google-discovery/api";
-import { OnePasswordGroup } from "@executor/plugin-onepassword/api";
-import { GraphqlGroup } from "@executor/plugin-graphql/api";
-import { ToolsHandlers } from "./handlers/tools";
-import { SourcesHandlers } from "./handlers/sources";
-import { SecretsHandlers } from "./handlers/secrets";
-import { ExecutionsHandlers } from "./handlers/executions";
-import { ScopeHandlers } from "./handlers/scope";
-import { OpenApiHandlersLive } from "./handlers/openapi";
-import { McpSourceHandlersLive } from "./handlers/mcp-source";
-import { GoogleDiscoveryHandlersLive } from "./handlers/google-discovery";
-import { OnePasswordHandlersLive } from "./handlers/onepassword";
-import { GraphqlHandlersLive } from "./handlers/graphql";
-import { ExecutorService, ExecutorServiceLayer, getExecutor, type ApiExecutor } from "./services/executor";
-import { ExecutionEngineService } from "./services/engine";
+import { OpenApiGroup, OpenApiHandlers, OpenApiExtensionService } from "@executor/plugin-openapi/api";
+import { McpGroup, McpHandlers, McpExtensionService } from "@executor/plugin-mcp/api";
+import { GoogleDiscoveryGroup, GoogleDiscoveryHandlers, GoogleDiscoveryExtensionService } from "@executor/plugin-google-discovery/api";
+import { OnePasswordGroup, OnePasswordHandlers, OnePasswordExtensionService } from "@executor/plugin-onepassword/api";
+import { GraphqlGroup, GraphqlHandlers, GraphqlExtensionService } from "@executor/plugin-graphql/api";
+import { createLocalExecutor } from "./services/executor";
 import { createMcpRequestHandler, type McpRequestHandler } from "./mcp";
 
 // ---------------------------------------------------------------------------
-// Composed API — core + plugin groups
+// Local server API — core + all plugin groups
 // ---------------------------------------------------------------------------
 
-const ExecutorApiWithPlugins = addGroup(OpenApiGroup)
+const LocalApi = addGroup(OpenApiGroup)
   .add(McpGroup)
   .add(GoogleDiscoveryGroup)
   .add(OnePasswordGroup)
   .add(GraphqlGroup);
 
-// ---------------------------------------------------------------------------
-// API Layer
-// ---------------------------------------------------------------------------
-
-const ApiBase = HttpApiBuilder.api(ExecutorApiWithPlugins).pipe(
-  Layer.provide([
-    ToolsHandlers,
-    SourcesHandlers,
-    SecretsHandlers,
-    ExecutionsHandlers,
-    ScopeHandlers,
-    OpenApiHandlersLive,
-    McpSourceHandlersLive,
-    GoogleDiscoveryHandlersLive,
-    OnePasswordHandlersLive,
-    GraphqlHandlersLive,
-  ]),
+const LocalApiBase = HttpApiBuilder.api(LocalApi).pipe(
+  Layer.provide(CoreHandlers),
+  Layer.provide(Layer.mergeAll(
+    OpenApiHandlers,
+    McpHandlers,
+    GoogleDiscoveryHandlers,
+    OnePasswordHandlers,
+    GraphqlHandlers,
+  )),
 );
 
 // ---------------------------------------------------------------------------
-// Composable API layer — for use with Effect platform HTTP servers
-// ---------------------------------------------------------------------------
-
-export const ApiLayer = HttpApiSwagger.layer().pipe(
-  Layer.provideMerge(HttpApiBuilder.middlewareOpenApi()),
-  Layer.provideMerge(ApiBase),
-);
-
-// ---------------------------------------------------------------------------
-// Shared server — API + MCP from the same executor + engine instance
+// Server handlers
 // ---------------------------------------------------------------------------
 
 export type ServerHandlers = {
@@ -77,11 +49,23 @@ export type ServerHandlers = {
   readonly mcp: McpRequestHandler;
 };
 
-const createApiHandlerWithExecutor = (executor: ApiExecutor, engine: ReturnType<typeof createExecutionEngine>) =>
-  HttpApiBuilder.toWebHandler(
+export const createServerHandlers = async (): Promise<ServerHandlers> => {
+  const executor = await createLocalExecutor();
+  const engine = createExecutionEngine({ executor });
+
+  const pluginExtensions = Layer.mergeAll(
+    Layer.succeed(OpenApiExtensionService, executor.openapi),
+    Layer.succeed(McpExtensionService, executor.mcp),
+    Layer.succeed(GoogleDiscoveryExtensionService, executor.googleDiscovery),
+    Layer.succeed(OnePasswordExtensionService, executor.onepassword),
+    Layer.succeed(GraphqlExtensionService, executor.graphql),
+  );
+
+  const api = HttpApiBuilder.toWebHandler(
     HttpApiSwagger.layer().pipe(
       Layer.provideMerge(HttpApiBuilder.middlewareOpenApi()),
-      Layer.provideMerge(ApiBase),
+      Layer.provideMerge(LocalApiBase),
+      Layer.provideMerge(pluginExtensions),
       Layer.provideMerge(Layer.succeed(ExecutorService, executor)),
       Layer.provideMerge(Layer.succeed(ExecutionEngineService, engine)),
       Layer.provideMerge(HttpServer.layerContext),
@@ -89,40 +73,7 @@ const createApiHandlerWithExecutor = (executor: ApiExecutor, engine: ReturnType<
     { middleware: HttpMiddleware.logger },
   );
 
-export const createServerHandlersWithExecutor = async (
-  executor: ApiExecutor,
-): Promise<ServerHandlers> => {
-  const engine = createExecutionEngine({ executor });
-  const api = createApiHandlerWithExecutor(executor, engine);
   const mcp = createMcpRequestHandler({ engine });
 
   return { api, mcp };
 };
-
-export const createServerHandlers = async (): Promise<ServerHandlers> =>
-  createServerHandlersWithExecutor(await getExecutor());
-
-// ---------------------------------------------------------------------------
-// Backwards compat — standalone API handler (no MCP)
-// ---------------------------------------------------------------------------
-
-const ExecutionEngineLayer = Layer.effect(
-  ExecutionEngineService,
-  Effect.map(ExecutorService, (executor) => createExecutionEngine({ executor })),
-);
-
-export const createApiHandler = () =>
-  HttpApiBuilder.toWebHandler(
-    HttpApiSwagger.layer().pipe(
-      Layer.provideMerge(HttpApiBuilder.middlewareOpenApi()),
-      Layer.provideMerge(ApiBase),
-      Layer.provideMerge(ExecutionEngineLayer),
-      Layer.provideMerge(ExecutorServiceLayer),
-      Layer.provideMerge(HttpServer.layerContext),
-    ),
-    { middleware: HttpMiddleware.logger },
-  );
-
-export type ApiHandler = ReturnType<typeof createApiHandler>;
-
-export { ExecutorServiceLayer } from "./services/executor";

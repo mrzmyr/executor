@@ -4,7 +4,7 @@
 
 import { Effect } from "effect";
 
-import { createExecutor, scopeKv } from "@executor/sdk";
+import { createExecutor } from "@executor/sdk";
 import type { DrizzleDb } from "@executor/storage-postgres";
 import { makePgConfig, makePgKv } from "@executor/storage-postgres";
 import {
@@ -23,9 +23,6 @@ import {
   graphqlPlugin,
   makeKvOperationStore as makeKvGraphqlOperationStore,
 } from "@executor/plugin-graphql";
-import { onepasswordPlugin } from "@executor/plugin-onepassword";
-
-import type { ApiPlugins } from "@executor/server";
 
 // ---------------------------------------------------------------------------
 // Create a fresh executor for a team (stateless, per-request)
@@ -56,10 +53,7 @@ export const createTeamExecutor = (
         graphqlPlugin({
           operationStore: makeKvGraphqlOperationStore(kv, "graphql"),
         }),
-        onepasswordPlugin({
-          kv: scopeKv(kv, "onepassword"),
-        }),
-      ] as const satisfies ApiPlugins,
+      ] as const,
     });
 
     return yield* createExecutor(config);

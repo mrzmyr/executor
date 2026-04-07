@@ -1,8 +1,10 @@
-import { Context, Effect, Layer, ManagedRuntime } from "effect";
+import { Effect } from "effect";
 import { SqliteClient } from "@effect/sql-sqlite-bun";
 import * as SqlClient from "@effect/sql/SqlClient";
 import { NodeFileSystem } from "@effect/platform-node";
 import * as fs from "node:fs";
+import { homedir } from "node:os";
+import { join } from "node:path";
 
 import { createExecutor, scopeKv } from "@executor/sdk";
 import {
@@ -15,89 +17,41 @@ import { withConfigFile } from "@executor/config";
 import {
   openApiPlugin,
   makeKvOperationStore,
-  type OpenApiPluginExtension,
 } from "@executor/plugin-openapi";
 import {
   mcpPlugin,
   makeKvBindingStore,
-  type McpPluginExtension,
 } from "@executor/plugin-mcp";
 import {
   googleDiscoveryPlugin,
   makeKvBindingStore as makeKvGoogleDiscoveryBindingStore,
-  type GoogleDiscoveryPluginExtension,
 } from "@executor/plugin-google-discovery";
 import {
   graphqlPlugin,
   makeKvOperationStore as makeKvGraphqlOperationStore,
-  type GraphqlPluginExtension,
 } from "@executor/plugin-graphql";
 import { keychainPlugin } from "@executor/plugin-keychain";
 import { fileSecretsPlugin } from "@executor/plugin-file-secrets";
-import {
-  onepasswordPlugin,
-  type OnePasswordExtension,
-} from "@executor/plugin-onepassword";
-
-import type { Executor, ExecutorPlugin } from "@executor/sdk";
-
-// Plugins that have API routes — the minimum set ExecutorService must expose
-export type ApiPlugins = readonly [
-  ExecutorPlugin<"openapi", OpenApiPluginExtension>,
-  ExecutorPlugin<"mcp", McpPluginExtension>,
-  ExecutorPlugin<"googleDiscovery", GoogleDiscoveryPluginExtension>,
-  ExecutorPlugin<"graphql", GraphqlPluginExtension>,
-  ExecutorPlugin<"onepassword", OnePasswordExtension>,
-];
-
-type ServerPlugins = readonly [
-  ...ApiPlugins,
-  ReturnType<typeof fileSecretsPlugin>,
-];
-export type ServerExecutor = Executor<ServerPlugins>;
-
-// ExecutorService is typed to ApiPlugins so any executor with at least
-// those plugins can be provided (both local server and cloud)
-export type ApiExecutor = Executor<ApiPlugins>;
-export type ServerExecutorHandle = {
-  readonly executor: ApiExecutor;
-  readonly dispose: () => Promise<void>;
-};
-
-// ---------------------------------------------------------------------------
-// Service tag
-// ---------------------------------------------------------------------------
-
-export class ExecutorService extends Context.Tag("ExecutorService")<
-  ExecutorService,
-  ApiExecutor
->() {}
+import { onepasswordPlugin } from "@executor/plugin-onepassword";
 
 // ---------------------------------------------------------------------------
 // Data directory
 // ---------------------------------------------------------------------------
 
-import { homedir } from "node:os";
-import { join } from "node:path";
-
-const resolveDataDir = (): string => {
-  if (process.env.EXECUTOR_DATA_DIR) return process.env.EXECUTOR_DATA_DIR;
-  return join(homedir(), ".executor");
+const resolveDbPath = (): string => {
+  const dataDir = process.env.EXECUTOR_DATA_DIR ?? join(homedir(), ".executor");
+  fs.mkdirSync(dataDir, { recursive: true });
+  return `${dataDir}/data.db`;
 };
 
-const DATA_DIR = resolveDataDir();
-
-fs.mkdirSync(DATA_DIR, { recursive: true });
-
-const DB_PATH = `${DATA_DIR}/data.db`;
-
 // ---------------------------------------------------------------------------
-// Executor Layer — SQLite-backed, scoped to ManagedRuntime lifetime
+// Create a local executor — returns the full typed executor
 // ---------------------------------------------------------------------------
 
-const ExecutorLayer = Layer.effect(
-  ExecutorService,
-  Effect.gen(function* () {
+export const createLocalExecutor = async () => {
+  const dbPath = resolveDbPath();
+
+  const program = Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
 
     yield* migrate.pipe(Effect.catchAll((e) => Effect.die(e)));
@@ -110,7 +64,7 @@ const ExecutorLayer = Layer.effect(
     const configPath = join(cwd, "executor.jsonc");
     const fsLayer = NodeFileSystem.layer;
 
-    return (yield* createExecutor({
+    return yield* createExecutor({
       ...config,
       plugins: [
         openApiPlugin({
@@ -146,48 +100,44 @@ const ExecutorLayer = Layer.effect(
           kv: scopeKv(scopedKv, "onepassword"),
         }),
       ] as const,
-    })) as ApiExecutor;
-  }),
-).pipe(Layer.provide(SqliteClient.layer({ filename: DB_PATH })));
+    });
+  }).pipe(
+    Effect.provide(SqliteClient.layer({ filename: dbPath })),
+  );
+
+  return Effect.runPromise(program);
+};
 
 // ---------------------------------------------------------------------------
-// ManagedRuntime — shared singleton for production, scoped handles for dev HMR
+// Shared singleton for production, scoped handles for dev HMR
 // ---------------------------------------------------------------------------
 
-export const createServerExecutorHandle =
-  async (): Promise<ServerExecutorHandle> => {
-    const runtime = ManagedRuntime.make(ExecutorLayer);
-    const executor = await runtime.runPromise(ExecutorService);
+export type LocalExecutor = Awaited<ReturnType<typeof createLocalExecutor>>;
 
-    return {
-      executor,
-      dispose: async () => {
-        await Effect.runPromise(executor.close()).catch(() => undefined);
-        await runtime.dispose().catch(() => undefined);
-      },
-    };
+export const createExecutorHandle = async () => {
+  const executor = await createLocalExecutor();
+  return {
+    executor,
+    dispose: async () => {
+      await Effect.runPromise(executor.close()).catch(() => undefined);
+    },
   };
+};
 
-let sharedHandlePromise: Promise<ServerExecutorHandle> | null = null;
+export type ExecutorHandle = Awaited<ReturnType<typeof createExecutorHandle>>;
 
-const loadSharedHandle = (): Promise<ServerExecutorHandle> => {
+let sharedHandlePromise: ReturnType<typeof createExecutorHandle> | null = null;
+
+const loadSharedHandle = () => {
   if (!sharedHandlePromise) {
-    sharedHandlePromise = createServerExecutorHandle();
+    sharedHandlePromise = createExecutorHandle();
   }
   return sharedHandlePromise;
 };
 
-/**
- * Get the shared executor instance. The ManagedRuntime keeps the SQLite
- * connection (and everything else) alive until the process exits.
- */
-export const getExecutor = (): Promise<ApiExecutor> =>
+export const getExecutor = () =>
   loadSharedHandle().then((handle) => handle.executor);
 
-/**
- * Dispose the shared executor/runtime. Mainly useful in development when the
- * backend module graph is hot-reloaded and we need fresh plugin init.
- */
 export const disposeExecutor = async (): Promise<void> => {
   const currentHandlePromise = sharedHandlePromise;
   sharedHandlePromise = null;
@@ -196,19 +146,7 @@ export const disposeExecutor = async (): Promise<void> => {
   await handle?.dispose().catch(() => undefined);
 };
 
-/**
- * Dispose and eagerly recreate the shared executor.
- */
-export const reloadExecutor = async (): Promise<ApiExecutor> => {
-  await disposeExecutor();
+export const reloadExecutor = () => {
+  disposeExecutor();
   return getExecutor();
 };
-
-/**
- * Provide `ExecutorService` to an Effect layer using the shared runtime.
- * Used by the API handler.
- */
-export const ExecutorServiceLayer = Layer.effect(
-  ExecutorService,
-  Effect.promise(() => getExecutor()),
-);
