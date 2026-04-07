@@ -8,6 +8,7 @@
   },
   "dependencies": {
     "@effect/platform": "catalog:",
+    "@executor/execution": "workspace:*",
     "@executor/sdk": "workspace:*",
     "effect": "catalog:"
   },
