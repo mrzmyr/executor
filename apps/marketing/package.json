@@ -13,7 +13,7 @@
   },
   "dependencies": {
     "@astrojs/tailwind": "^6.0.2",
-    "@astrojs/vercel": "^10.0.4",
+    "@astrojs/cloudflare": "^13.0.0",
     "@executor/sdk": "workspace:*",
     "@executor/plugin-openapi": "workspace:*",
     "@executor/plugin-graphql": "workspace:*",
