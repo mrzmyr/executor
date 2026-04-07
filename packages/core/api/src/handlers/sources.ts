@@ -1,8 +1,8 @@
 import { HttpApiBuilder } from "@effect/platform";
 import { Effect } from "effect";
 
-import { ExecutorApi } from "@executor/api";
-import { ExecutorService } from "../services/executor";
+import { ExecutorApi } from "../api";
+import { ExecutorService } from "../services";
 
 export const SourcesHandlers = HttpApiBuilder.group(
   ExecutorApi,
