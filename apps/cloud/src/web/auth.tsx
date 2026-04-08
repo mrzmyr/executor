@@ -23,7 +23,7 @@ type AuthTeam = {
 // Auth atom — typed query against CloudAuthApi
 // ---------------------------------------------------------------------------
 
-export const authAtom: ReturnType<typeof CloudApiClient.query<"cloudAuth", "me">> =
+export const authAtom =
   CloudApiClient.query("cloudAuth", "me", {
     timeToLive: "5 minutes",
   });

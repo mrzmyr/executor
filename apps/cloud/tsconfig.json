@@ -8,8 +8,8 @@
     "skipLibCheck": true,
     "outDir": "dist",
     "rootDir": ".",
-    "declaration": true,
-    "declarationMap": true,
+    "declaration": false,
+    "declarationMap": false,
     "sourceMap": true,
     "jsx": "react-jsx",
     "plugins": [
