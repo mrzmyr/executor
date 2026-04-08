@@ -71,7 +71,7 @@ export interface InvokeOptions {
 // ToolRegistry — stores and invokes tools
 // ---------------------------------------------------------------------------
 
-export class ToolRegistry extends Context.Tag("@executor/sdk/ToolRegistry")<
+export class ToolRegistry extends Context.Tag("@executor-js/core/ToolRegistry")<
   ToolRegistry,
   {
     readonly list: (filter?: ToolListFilter) => Effect.Effect<readonly ToolMetadata[]>;

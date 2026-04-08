@@ -7,7 +7,7 @@ import {
   type SecretProvider,
   type ScopedKv,
   SecretId,
-} from "@executor/sdk";
+} from "@executor-js/core";
 
 import { OnePasswordConfig, Vault, ConnectionStatus } from "./types";
 import type { OnePasswordAuth } from "./types";

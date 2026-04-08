@@ -12,7 +12,7 @@
     "test:watch": "vitest"
   },
   "dependencies": {
-    "@executor/sdk": "workspace:*",
+    "@executor-js/core": "workspace:*",
     "effect": "catalog:"
   },
   "devDependencies": {

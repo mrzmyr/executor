@@ -18,7 +18,7 @@
     "@executor/plugin-openapi": "workspace:*",
     "@executor/react": "workspace:*",
     "@executor/runtime-dynamic-worker": "workspace:*",
-    "@executor/sdk": "workspace:*",
+    "@executor-js/core": "workspace:*",
     "@executor/storage-postgres": "workspace:*",
     "@modelcontextprotocol/sdk": "^1.29.0",
     "@tanstack/react-router": "catalog:",

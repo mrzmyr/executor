@@ -13,8 +13,8 @@
   },
   "dependencies": {
     "@cfworker/json-schema": "^4.1.1",
+    "@executor-js/core": "workspace:*",
     "@executor/execution": "workspace:*",
-    "@executor/sdk": "workspace:*",
     "@modelcontextprotocol/sdk": "^1.12.1",
     "effect": "catalog:",
     "zod": "^4.3.0"

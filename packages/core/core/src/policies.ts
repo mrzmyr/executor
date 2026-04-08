@@ -24,7 +24,7 @@ export class PolicyCheckInput extends Schema.Class<PolicyCheckInput>("PolicyChec
   toolId: ToolId,
 }) {}
 
-export class PolicyEngine extends Context.Tag("@executor/sdk/PolicyEngine")<
+export class PolicyEngine extends Context.Tag("@executor-js/core/PolicyEngine")<
   PolicyEngine,
   {
     readonly list: (scopeId: ScopeId) => Effect.Effect<readonly Policy[]>;

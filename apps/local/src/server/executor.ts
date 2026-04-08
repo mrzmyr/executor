@@ -6,7 +6,7 @@ import * as fs from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
-import { createExecutor, scopeKv } from "@executor/sdk";
+import { createExecutor, scopeKv } from "@executor-js/core";
 import {
   makeSqliteKv,
   makeKvConfig,

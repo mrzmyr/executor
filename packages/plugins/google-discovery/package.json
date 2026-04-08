@@ -17,7 +17,7 @@
   "dependencies": {
     "@effect/platform": "catalog:",
     "@executor/api": "workspace:*",
-    "@executor/sdk": "workspace:*",
+    "@executor-js/core": "workspace:*",
     "effect": "catalog:"
   },
   "peerDependencies": {

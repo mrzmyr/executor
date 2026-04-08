@@ -21,7 +21,7 @@ import {
   ScopeId,
   SecretId,
   type InvokeOptions,
-} from "@executor/sdk";
+} from "@executor-js/core";
 import { openApiPlugin } from "./plugin";
 
 const autoApprove: InvokeOptions = { onElicitation: "accept-all" };

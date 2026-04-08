@@ -1,4 +1,4 @@
-import type { ScopeId } from "@executor/sdk";
+import type { ScopeId } from "@executor-js/core";
 import { OnePasswordClient } from "./client";
 
 // ---------------------------------------------------------------------------

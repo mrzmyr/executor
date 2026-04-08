@@ -55,7 +55,7 @@ export class SetSecretInput extends Schema.Class<SetSecretInput>("SetSecretInput
 // SecretStore — manages refs + delegates resolution to providers
 // ---------------------------------------------------------------------------
 
-export class SecretStore extends Context.Tag("@executor/sdk/SecretStore")<
+export class SecretStore extends Context.Tag("@executor-js/core/SecretStore")<
   SecretStore,
   {
     /** List all secret refs for a scope */

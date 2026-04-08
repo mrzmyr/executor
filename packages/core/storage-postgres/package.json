@@ -8,7 +8,9 @@
     "./schema": "./src/schema.ts"
   },
   "dependencies": {
-    "@executor/sdk": "workspace:*",
+    "@effect/sql": "catalog:",
+    "@effect/sql-pg": "^0.28.0",
+    "@executor-js/core": "workspace:*",
     "drizzle-orm": "catalog:",
     "effect": "catalog:",
     "pg": "^8.16.0"

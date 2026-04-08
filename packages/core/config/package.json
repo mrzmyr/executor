@@ -12,6 +12,7 @@
   },
   "dependencies": {
     "@effect/platform": "catalog:",
+    "@executor-js/core": "workspace:*",
     "effect": "catalog:",
     "jsonc-parser": "^3.3.1"
   },

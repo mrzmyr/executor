@@ -65,7 +65,7 @@ export interface SourceManager {
 // ---------------------------------------------------------------------------
 
 export class SourceRegistry extends Context.Tag(
-  "@executor/sdk/SourceRegistry",
+  "@executor-js/core/SourceRegistry",
 )<
   SourceRegistry,
   {
