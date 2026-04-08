@@ -13,7 +13,7 @@
   "dependencies": {
     "@executor/sdk": "workspace:*",
     "@executor/codemode-core": "workspace:*",
-    "@executor/runtime-secure-exec": "workspace:*",
+    "@executor/runtime-quickjs": "workspace:*",
     "effect": "catalog:"
   },
   "devDependencies": {

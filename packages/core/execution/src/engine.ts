@@ -8,7 +8,7 @@ import type {
   ElicitationContext,
 } from "@executor/sdk";
 import type { CodeExecutor, ExecuteResult, SandboxToolInvoker } from "@executor/codemode-core";
-import { makeSecureExecExecutor } from "@executor/runtime-secure-exec";
+import { makeQuickJsExecutor } from "@executor/runtime-quickjs";
 
 import {
   makeExecutorToolInvoker,
@@ -282,7 +282,7 @@ const runEffect = <A>(effect: Effect.Effect<A, unknown>): Promise<A> =>
 
 export const createExecutionEngine = (config: ExecutionEngineConfig): ExecutionEngine => {
   const { executor } = config;
-  const codeExecutor = config.codeExecutor ?? makeSecureExecExecutor();
+  const codeExecutor = config.codeExecutor ?? makeQuickJsExecutor();
   const pausedExecutions = new Map<string, PausedExecution>();
   let nextId = 0;
 

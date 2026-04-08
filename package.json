@@ -52,7 +52,9 @@
     "@types/react": "^19.1.0",
     "@types/react-dom": "^19.1.0",
     "typescript": "^5.9.3",
-    "tailwindcss": "^4.2.2"
+    "tailwindcss": "^4.2.2",
+    "quickjs-emscripten": "^0.31.0",
+    "@jitl/quickjs-wasmfile-release-sync": "0.31.0"
   },
   "scripts": {
     "dev": "turbo run dev --filter='!@executor/desktop' --filter='!@executor/cloud'",

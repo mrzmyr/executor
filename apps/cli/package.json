@@ -24,8 +24,8 @@
     "@executor/api": "workspace:*",
     "@executor/runtime-quickjs": "workspace:*",
     "@executor/local": "workspace:*",
-    "@jitl/quickjs-wasmfile-release-sync": "*",
-    "quickjs-emscripten": "*",
+    "@jitl/quickjs-wasmfile-release-sync": "catalog:",
+    "quickjs-emscripten": "catalog:",
     "effect": "catalog:"
   },
   "devDependencies": {

@@ -14,7 +14,7 @@
   "dependencies": {
     "@executor/codemode-core": "workspace:*",
     "effect": "catalog:",
-    "quickjs-emscripten": "^0.31.0"
+    "quickjs-emscripten": "catalog:"
   },
   "devDependencies": {
     "@effect/vitest": "catalog:",
