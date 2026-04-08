@@ -4,7 +4,7 @@
 
 import { Context, Effect, Layer } from "effect";
 import { resolve } from "node:path";
-import * as sharedSchema from "@executor/storage-postgres";
+import * as sharedSchema from "@executor/storage-postgres/schema";
 import * as cloudSchema from "./schema";
 import type { DrizzleDb } from "@executor/storage-postgres";
 

@@ -31,7 +31,6 @@ export { makePgSecretStore } from "./secret-store";
 export { makePgPolicyEngine } from "./policy-engine";
 export { encrypt, decrypt } from "./crypto";
 export type { DrizzleDb } from "./types";
-export * from "./schema";
 
 // ---------------------------------------------------------------------------
 // Convenience: build a full ExecutorConfig from a Drizzle DB instance
