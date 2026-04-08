@@ -1,4 +1,5 @@
 import { describe, expect, it } from "@effect/vitest";
+import { assertRight } from "@effect/vitest/utils";
 import { Config, ConfigProvider, Effect } from "effect";
 
 import { createEnv, Env, makeEnv } from "./index";
@@ -21,11 +22,10 @@ describe("makeEnv", () => {
       )(Effect.either(AppEnv.config)),
     );
 
-    expect(parsed._tag).toBe("Right");
-    if (parsed._tag === "Right") {
-      expect(parsed.right.PORT).toBe(8080);
-      expect(parsed.right.HOST).toBe("0.0.0.0");
-    }
+    assertRight(parsed, {
+      PORT: 8080,
+      HOST: "0.0.0.0",
+    });
 
     expect(AppEnv.Default).toBeDefined();
   });
