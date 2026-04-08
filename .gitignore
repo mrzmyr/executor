@@ -50,3 +50,5 @@ apps/desktop/resources/
 .nitro/
 .output/
 .tanstack/
+.env*
+!.env.example

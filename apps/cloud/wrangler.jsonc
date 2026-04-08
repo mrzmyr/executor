@@ -1,0 +1,25 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "executor-cloud",
+  "compatibility_date": "2025-04-01",
+  "compatibility_flags": ["nodejs_compat"],
+  "main": "@tanstack/react-start/server-entry",
+  "routes": [
+    { "pattern": "executor.sh", "custom_domain": true }
+  ],
+  "observability": {
+    "enabled": true
+  },
+  "services": [
+    {
+      "binding": "MARKETING",
+      "service": "executor-marketing"
+    }
+  ],
+  "hyperdrive": [
+    {
+      "binding": "HYPERDRIVE",
+      "id": "776c27dfec5f47f59343603b35a7b4c2"
+    }
+  ]
+}

@@ -4,6 +4,7 @@
   "private": true,
   "type": "module",
   "dependencies": {
+    "@cloudflare/vite-plugin": "^1.31.1",
     "@effect-atom/atom": "^0.5.0",
     "@effect-atom/atom-react": "^0.5.0",
     "@effect/platform": "catalog:",
@@ -35,12 +36,15 @@
     "@vitejs/plugin-react": "catalog:",
     "portless": "^0.10.1",
     "typescript": "catalog:",
-    "vite": "catalog:"
+    "vite": "catalog:",
+    "wrangler": "^4.81.0"
   },
   "scripts": {
     "dev": "op run --env-file=.env -- portless run --name executor-cloud vite dev",
     "build": "vite build",
-    "start": "bun ./server.ts",
+    "preview": "vite preview",
+    "deploy": "vite build && wrangler deploy",
+    "cf-typegen": "wrangler types",
     "typecheck": "tsc --noEmit"
   }
 }

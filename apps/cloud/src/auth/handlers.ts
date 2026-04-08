@@ -32,7 +32,8 @@ export const CloudAuthPublicHandlers = HttpApiBuilder.group(
         Effect.gen(function* () {
           const workos = yield* WorkOSAuth;
           const req = yield* HttpServerRequest.HttpServerRequest;
-          const origin = new URL(req.url, `http://${req.headers["host"]}`).origin;
+          const proto = req.headers["x-forwarded-proto"] ?? "https";
+          const origin = new URL(req.url, `${proto}://${req.headers["host"]}`).origin;
           const url = workos.getAuthorizationUrl(`${origin}${AUTH_PATHS.callback}`);
           return HttpServerResponse.redirect(url, { status: 302 });
         }),
