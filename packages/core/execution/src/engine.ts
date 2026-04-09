@@ -302,6 +302,7 @@ export const createExecutionEngine = (config: ExecutionEngineConfig): ExecutionE
   ): Effect.Effect<ExecutionResult> =>
     Effect.race(
       Fiber.join(fiber).pipe(
+        Effect.orDie,
         Effect.map((result): ExecutionResult => ({ status: "completed", result })),
       ),
       Deferred.await(pauseSignal).pipe(
