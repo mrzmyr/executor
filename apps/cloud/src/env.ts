@@ -58,7 +58,7 @@ export const server = createEnv(serverShape, {
 // ---------------------------------------------------------------------------
 
 export const cf = {
-  hyperdrive: cfEnv.HYPERDRIVE,
-  loader: cfEnv.LOADER,
-  marketing: cfEnv.MARKETING,
-} as const;
+  get hyperdrive() { return cfEnv.HYPERDRIVE; },
+  get loader() { return cfEnv.LOADER; },
+  get marketing() { return cfEnv.MARKETING; },
+};
