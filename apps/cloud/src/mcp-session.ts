@@ -31,8 +31,9 @@ export type McpSessionInit = {
   lastName?: string;
 };
 
-// Alarm fires after 10 minutes of inactivity to clean up the DO.
-const SESSION_TTL_MS = 10 * 60 * 1000;
+// Alarm fires after 60s of inactivity — clean up before Cloudflare evicts
+// so we can return a clear "timed out" message on the next request.
+const SESSION_TTL_MS = 60 * 1000;
 
 // ---------------------------------------------------------------------------
 // Team resolution
@@ -127,13 +128,12 @@ export class McpSessionDO extends DurableObject {
    */
   async handleRequest(request: Request): Promise<Response> {
     if (!this.initialized || !this.transport) {
-      // DO was evicted and lost in-memory state — tell client to reconnect
       return new Response(
         JSON.stringify({
           jsonrpc: "2.0",
           error: {
             code: -32001,
-            message: "Session expired — please reconnect",
+            message: "Session timed out after 60s of inactivity — please reconnect",
           },
           id: null,
         }),
