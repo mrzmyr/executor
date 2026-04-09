@@ -2,8 +2,6 @@
 
 [1Password](https://1password.com) integration for the executor. Provides a secret source that resolves values from a 1Password vault, backed by either the desktop app (connect.sock) or a service account token.
 
-Pairs with [`@executor/sdk`](https://www.npmjs.com/package/@executor/sdk) (promise-based) or [`@executor/core`](https://www.npmjs.com/package/@executor/core) (Effect-based).
-
 ## Install
 
 ```sh
@@ -16,7 +14,7 @@ npm install @executor/sdk @executor/plugin-onepassword
 
 ```ts
 import { createExecutor } from "@executor/sdk";
-import { onepasswordPlugin } from "@executor/plugin-onepassword/core";
+import { onepasswordPlugin } from "@executor/plugin-onepassword";
 
 const executor = await createExecutor({
   scope: { name: "my-app" },
@@ -44,9 +42,13 @@ await executor.onepassword.configure({
 });
 ```
 
-## Effect entry point
+## Using with Effect
 
-If you're using `@executor/core` directly, the same import path works — this plugin does not ship a separate promise entry.
+If you're building on `@executor/sdk/core` (the raw Effect entry), import this plugin from its `/core` subpath instead:
+
+```ts
+import { onepasswordPlugin } from "@executor/plugin-onepassword/core";
+```
 
 ## Status
 

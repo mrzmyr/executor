@@ -8,8 +8,6 @@ OS-keychain-backed secret store for the executor. Reads and writes secrets to:
 
 Secrets are encrypted at rest by the operating system and never touch your project's filesystem.
 
-Pairs with [`@executor/sdk`](https://www.npmjs.com/package/@executor/sdk) (promise-based) or [`@executor/core`](https://www.npmjs.com/package/@executor/core) (Effect-based).
-
 ## Install
 
 ```sh
@@ -44,9 +42,9 @@ if (executor.keychain.isSupported) {
 
 Secrets written through this plugin are available to every other plugin that resolves secrets by ID — so you can store a token once and use it across `@executor/plugin-openapi`, `@executor/plugin-graphql`, etc. via `{ secretId, prefix }` headers.
 
-## Effect entry point
+## Using with Effect
 
-If you're using `@executor/core` directly, import from the `/core` subpath:
+If you're building on `@executor/sdk/core` (the raw Effect entry), import this plugin from its `/core` subpath instead:
 
 ```ts
 import { keychainPlugin } from "@executor/plugin-keychain/core";

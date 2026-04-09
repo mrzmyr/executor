@@ -1,8 +1,8 @@
 # @executor/sdk
 
-A promise-based SDK for building executors that wire together tool sources, secrets, and policies across MCP, OpenAPI, GraphQL, and custom plugins — without requiring any knowledge of [Effect](https://effect.website/).
+A TypeScript SDK for building executors that wire together tool sources, secrets, and policies across MCP, OpenAPI, GraphQL, and custom plugins.
 
-The default export is a promise-based wrapper that flattens every API to `async`/`await`. If you're already comfortable with Effect, import from the `/core` subpath (see [Effect entry point](#effect-entry-point) below) — it's the same package, same version, same symbols, just the underlying Effect surface.
+Everything is `async`/`await`. Plug in any combination of plugins, register your own tools, and invoke them through a unified catalog.
 
 ## Install
 
@@ -131,15 +131,15 @@ const value = await executor.secrets.resolve("github-token");
 
 Plugins accept `{ secretId, prefix }` wherever a header value is expected, so you never write tokens into source configs.
 
-## Effect entry point
+## Using with Effect
 
-If you're using Effect directly and want the raw Effect-based primitives, import from the `/core` subpath:
+The SDK is built on [Effect](https://effect.website/) under the hood. If you want the raw Effect-based primitives instead of the promise wrapper, import from the `/core` subpath:
 
 ```ts
-import { createExecutor, makeInMemoryToolRegistry, makeInMemorySourceRegistry, makeInMemorySecretStore, makeInMemoryPolicyEngine } from "@executor/sdk/core";
+import { createExecutor } from "@executor/sdk/core";
 ```
 
-`/core` exposes `createExecutor` returning an `Effect`, the `ToolRegistry` / `SourceRegistry` / `SecretStore` / `PolicyEngine` Context tags, the in-memory store factories, and every branded ID + error class. Every `@executor/plugin-*` also ships a `/core` subpath that pairs with this entry.
+`/core` exposes `createExecutor` returning an `Effect`, the `ToolRegistry` / `SourceRegistry` / `SecretStore` / `PolicyEngine` Context tags, the in-memory store factories, and every branded ID + error class. Every `@executor/plugin-*` ships a matching `/core` subpath.
 
 ## Status
 

@@ -2,8 +2,6 @@
 
 Register [Model Context Protocol](https://modelcontextprotocol.io) servers as tool sources for an executor. Supports both stdio-launched servers and remote (HTTP) servers, with optional OAuth.
 
-Pairs with [`@executor/sdk`](https://www.npmjs.com/package/@executor/sdk) (promise-based) or [`@executor/core`](https://www.npmjs.com/package/@executor/core) (Effect-based).
-
 ## Install
 
 ```sh
@@ -48,9 +46,9 @@ const result = await executor.tools.invoke(
 );
 ```
 
-## Effect entry point
+## Using with Effect
 
-If you're using `@executor/core` directly, import from the `/core` subpath:
+If you're building on `@executor/sdk/core` (the raw Effect entry), import this plugin from its `/core` subpath instead:
 
 ```ts
 import { mcpPlugin } from "@executor/plugin-mcp/core";

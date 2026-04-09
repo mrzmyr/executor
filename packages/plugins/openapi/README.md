@@ -2,8 +2,6 @@
 
 Load [OpenAPI](https://www.openapis.org/) specifications into an executor. Every operation in the spec becomes an invokable tool with a JSON-Schema input, automatic request building, and optional secret-backed auth.
 
-Pairs with [`@executor/sdk`](https://www.npmjs.com/package/@executor/sdk) (promise-based) or [`@executor/core`](https://www.npmjs.com/package/@executor/core) (Effect-based).
-
 ## Install
 
 ```sh

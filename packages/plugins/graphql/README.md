@@ -2,8 +2,6 @@
 
 Introspect a GraphQL endpoint and expose its queries and mutations as invokable tools on an executor.
 
-Pairs with [`@executor/sdk`](https://www.npmjs.com/package/@executor/sdk) (promise-based) or [`@executor/core`](https://www.npmjs.com/package/@executor/core) (Effect-based).
-
 ## Install
 
 ```sh
@@ -56,9 +54,9 @@ await executor.graphql.addSource({
 });
 ```
 
-## Effect entry point
+## Using with Effect
 
-If you're using `@executor/core` directly, import from the `/core` subpath:
+If you're building on `@executor/sdk/core` (the raw Effect entry), import this plugin from its `/core` subpath instead:
 
 ```ts
 import { graphqlPlugin } from "@executor/plugin-graphql/core";

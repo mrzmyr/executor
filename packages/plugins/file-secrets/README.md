@@ -2,8 +2,6 @@
 
 File-backed secret store for the executor. Persists secrets to a single JSON file at an XDG-compliant path so they survive between process restarts — useful for local development, CLIs, and scripts where a system keychain isn't available.
 
-Pairs with [`@executor/sdk`](https://www.npmjs.com/package/@executor/sdk) (promise-based) or [`@executor/core`](https://www.npmjs.com/package/@executor/core) (Effect-based).
-
 ## Install
 
 ```sh
@@ -40,9 +38,9 @@ console.log("Secret file:", executor.fileSecrets.filePath);
 
 Secrets written through `executor.secrets.set(...)` become available to every other plugin that resolves them, so you can (for example) store a GitHub token here and have `@executor/plugin-openapi` or `@executor/plugin-graphql` pick it up via `{ secretId, prefix }` headers.
 
-## Effect entry point
+## Using with Effect
 
-If you're using `@executor/core` directly, import from the `/core` subpath:
+If you're building on `@executor/sdk/core` (the raw Effect entry), import this plugin from its `/core` subpath instead:
 
 ```ts
 import { fileSecretsPlugin } from "@executor/plugin-file-secrets/core";

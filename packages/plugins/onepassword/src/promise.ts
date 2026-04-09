@@ -1,9 +1,4 @@
-/**
- * Public types for @executor/plugin-onepassword.
- *
- * The plugin factory requires an Effect-based ScopedKv and must be
- * imported from '@executor/plugin-onepassword/core'.
- */
+export { onepasswordPlugin } from "./sdk/plugin";
 export type {
   OnePasswordExtension,
   OnePasswordPluginOptions,

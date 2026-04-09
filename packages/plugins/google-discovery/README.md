@@ -2,8 +2,6 @@
 
 Turn any [Google Discovery API](https://developers.google.com/discovery) (Calendar, Gmail, Drive, Sheets, etc.) into a set of executor tools. Handles the discovery document, OAuth flow, and per-request token binding.
 
-Pairs with [`@executor/sdk`](https://www.npmjs.com/package/@executor/sdk) (promise-based) or [`@executor/core`](https://www.npmjs.com/package/@executor/core) (Effect-based).
-
 ## Install
 
 ```sh
@@ -45,9 +43,9 @@ A curated set of common Google APIs is available from the `/presets` subpath:
 import { googleDiscoveryPresets } from "@executor/plugin-google-discovery/presets";
 ```
 
-## Effect entry point
+## Using with Effect
 
-If you're using `@executor/core` directly, import from the `/core` subpath:
+If you're building on `@executor/sdk/core` (the raw Effect entry), import this plugin from its `/core` subpath instead:
 
 ```ts
 import { googleDiscoveryPlugin } from "@executor/plugin-google-discovery/core";

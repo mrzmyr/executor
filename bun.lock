@@ -235,7 +235,7 @@
     },
     "packages/core/sdk": {
       "name": "@executor/sdk",
-      "version": "0.0.1-beta.4",
+      "version": "0.0.1-beta.5",
       "dependencies": {
         "effect": "catalog:",
       },
@@ -390,7 +390,7 @@
     },
     "packages/plugins/file-secrets": {
       "name": "@executor/plugin-file-secrets",
-      "version": "0.0.1-beta.4",
+      "version": "0.0.1-beta.5",
       "dependencies": {
         "@executor/sdk": "workspace:*",
         "effect": "catalog:",
@@ -404,7 +404,7 @@
     },
     "packages/plugins/google-discovery": {
       "name": "@executor/plugin-google-discovery",
-      "version": "0.0.1-beta.4",
+      "version": "0.0.1-beta.5",
       "dependencies": {
         "@effect/platform": "catalog:",
         "@executor/api": "workspace:*",
@@ -436,7 +436,7 @@
     },
     "packages/plugins/graphql": {
       "name": "@executor/plugin-graphql",
-      "version": "0.0.1-beta.4",
+      "version": "0.0.1-beta.5",
       "dependencies": {
         "@effect/platform": "catalog:",
         "@effect/platform-node": "catalog:",
@@ -472,7 +472,7 @@
     },
     "packages/plugins/keychain": {
       "name": "@executor/plugin-keychain",
-      "version": "0.0.1-beta.4",
+      "version": "0.0.1-beta.5",
       "dependencies": {
         "@executor/sdk": "workspace:*",
         "@napi-rs/keyring": "^1.2.0",
@@ -488,7 +488,7 @@
     },
     "packages/plugins/mcp": {
       "name": "@executor/plugin-mcp",
-      "version": "0.0.1-beta.4",
+      "version": "0.0.1-beta.5",
       "dependencies": {
         "@effect/platform": "catalog:",
         "@effect/platform-node": "catalog:",
@@ -526,7 +526,7 @@
     },
     "packages/plugins/onepassword": {
       "name": "@executor/plugin-onepassword",
-      "version": "0.0.1-beta.4",
+      "version": "0.0.1-beta.5",
       "dependencies": {
         "@1password/op-js": "^0.1.13",
         "@1password/sdk": "^0.4.1-beta.1",
@@ -557,7 +557,7 @@
     },
     "packages/plugins/openapi": {
       "name": "@executor/plugin-openapi",
-      "version": "0.0.1-beta.4",
+      "version": "0.0.1-beta.5",
       "dependencies": {
         "@apidevtools/swagger-parser": "^12.1.0",
         "@effect/platform": "catalog:",
