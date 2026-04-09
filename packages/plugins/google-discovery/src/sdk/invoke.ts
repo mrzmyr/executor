@@ -277,7 +277,6 @@ const invoke = Effect.fn("GoogleDiscovery.invoke")(function* (input: {
         return yield* new GoogleDiscoveryInvocationError({
           message: `Missing required ${parameter.location} parameter: ${parameter.name}`,
           statusCode: Option.none(),
-          error: undefined,
         });
       }
       continue;
@@ -327,7 +326,7 @@ const invoke = Effect.fn("GoogleDiscovery.invoke")(function* (input: {
         new GoogleDiscoveryInvocationError({
           message: `HTTP request failed: ${err.message}`,
           statusCode: Option.none(),
-          error: err,
+          cause: err,
         }),
     ),
   );

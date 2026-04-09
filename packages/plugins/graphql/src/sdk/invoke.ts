@@ -109,7 +109,7 @@ export const invoke = Effect.fn("GraphQL.invoke")(function* (
         new GraphqlInvocationError({
           message: `GraphQL request failed: ${err.message}`,
           statusCode: Option.none(),
-          error: err,
+          cause: err,
         }),
     ),
   );

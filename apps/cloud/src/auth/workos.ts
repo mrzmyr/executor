@@ -28,13 +28,10 @@ const make = Effect.gen(function* () {
   const use = <A>(fn: (wos: WorkOS) => Promise<A>) =>
     Effect.tryPromise({
       try: () => fn(workos),
-      catch: (cause) => cause,
+      catch: (e) => e,
     }).pipe(
-      Effect.tapError((cause) =>
-        Effect.sync(() => {
-          // eslint-disable-next-line no-console
-          console.error("[workos] call failed:", cause);
-        }),
+      Effect.tapErrorCause((cause) =>
+        Effect.logError("workos call failed", cause),
       ),
       Effect.mapError(() => new WorkOSError()),
       Effect.withSpan("workos"),

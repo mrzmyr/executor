@@ -16,13 +16,10 @@ const makeService = (store: RawStore) => {
   const use = <A>(fn: (s: RawStore) => Promise<A>) =>
     Effect.tryPromise({
       try: () => fn(store),
-      catch: (cause) => cause,
+      catch: (e) => e,
     }).pipe(
-      Effect.tapError((cause) =>
-        Effect.sync(() => {
-          // eslint-disable-next-line no-console
-          console.error("[user_store] query failed:", cause);
-        }),
+      Effect.tapErrorCause((cause) =>
+        Effect.logError("user_store query failed", cause),
       ),
       Effect.mapError(() => new UserStoreError()),
       Effect.withSpan("user_store"),

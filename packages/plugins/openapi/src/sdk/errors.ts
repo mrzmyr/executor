@@ -1,10 +1,10 @@
-import { Schema } from "effect";
+import { Data, Schema } from "effect";
+import type { Option } from "effect";
 
 export class OpenApiParseError extends Schema.TaggedError<OpenApiParseError>()(
   "OpenApiParseError",
   {
     message: Schema.String,
-    error: Schema.Defect,
   },
 ) {}
 
@@ -15,11 +15,10 @@ export class OpenApiExtractionError extends Schema.TaggedError<OpenApiExtraction
   },
 ) {}
 
-export class OpenApiInvocationError extends Schema.TaggedError<OpenApiInvocationError>()(
+export class OpenApiInvocationError extends Data.TaggedError(
   "OpenApiInvocationError",
-  {
-    message: Schema.String,
-    statusCode: Schema.optionalWith(Schema.Number, { as: "Option" }),
-    error: Schema.Defect,
-  },
-) {}
+)<{
+  readonly message: string;
+  readonly statusCode: Option.Option<number>;
+  readonly cause?: unknown;
+}> {}

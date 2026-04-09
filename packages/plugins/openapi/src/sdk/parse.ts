@@ -20,7 +20,6 @@ export const parse = Effect.fn("OpenApi.parse")(function* (input: string) {
     catch: (error) =>
       new OpenApiParseError({
         message: `Failed to parse OpenAPI document: ${error instanceof Error ? error.message : String(error)}`,
-        error,
       }),
   });
 

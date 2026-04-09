@@ -149,29 +149,36 @@ export const introspect = Effect.fn("GraphQL.introspect")(function* (
   }
 
   const response = yield* client.execute(request).pipe(
+    Effect.tapErrorCause((cause) =>
+      Effect.logError("graphql introspection: request failed", cause),
+    ),
     Effect.mapError(
       (err) =>
         new GraphqlIntrospectionError({
           message: `Failed to reach GraphQL endpoint: ${err.message}`,
-          error: err,
         }),
     ),
   );
 
   if (response.status !== 200) {
     const body = yield* response.text.pipe(Effect.catchAll(() => Effect.succeed("")));
+    yield* Effect.logError(
+      `graphql introspection: status ${response.status}`,
+      body,
+    );
     return yield* new GraphqlIntrospectionError({
-      message: `Introspection failed with status ${response.status}: ${body}`,
-      error: undefined,
+      message: `Introspection failed with status ${response.status}`,
     });
   }
 
   const raw = yield* response.json.pipe(
+    Effect.tapErrorCause((cause) =>
+      Effect.logError("graphql introspection: JSON parse failed", cause),
+    ),
     Effect.mapError(
-      (err) =>
+      () =>
         new GraphqlIntrospectionError({
           message: `Failed to parse introspection response as JSON`,
-          error: err,
         }),
     ),
   );
@@ -179,17 +186,18 @@ export const introspect = Effect.fn("GraphQL.introspect")(function* (
   const json = raw as { data?: IntrospectionResult; errors?: unknown[] };
 
   if (json.errors && Array.isArray(json.errors) && json.errors.length > 0) {
+    yield* Effect.logError(
+      `graphql introspection: endpoint returned errors`,
+      json.errors,
+    );
     return yield* new GraphqlIntrospectionError({
-      // @effect-diagnostics-next-line preferSchemaOverJson:off
-      message: `Introspection returned errors: ${JSON.stringify(json.errors)}`,
-      error: undefined,
+      message: `Introspection returned ${json.errors.length} error(s)`,
     });
   }
 
   if (!json.data?.__schema) {
     return yield* new GraphqlIntrospectionError({
       message: "Introspection response missing __schema",
-      error: undefined,
     });
   }
 
@@ -216,6 +224,5 @@ export const parseIntrospectionJson = (
     catch: (err) =>
       new GraphqlIntrospectionError({
         message: `Failed to parse introspection JSON: ${err instanceof Error ? err.message : String(err)}`,
-        error: err,
       }),
   });

@@ -1,10 +1,10 @@
-import { Schema } from "effect";
+import { Data, Schema } from "effect";
+import type { Option } from "effect";
 
 export class GraphqlIntrospectionError extends Schema.TaggedError<GraphqlIntrospectionError>()(
   "GraphqlIntrospectionError",
   {
     message: Schema.String,
-    error: Schema.Defect,
   },
 ) {}
 
@@ -15,11 +15,10 @@ export class GraphqlExtractionError extends Schema.TaggedError<GraphqlExtraction
   },
 ) {}
 
-export class GraphqlInvocationError extends Schema.TaggedError<GraphqlInvocationError>()(
+export class GraphqlInvocationError extends Data.TaggedError(
   "GraphqlInvocationError",
-  {
-    message: Schema.String,
-    statusCode: Schema.optionalWith(Schema.Number, { as: "Option" }),
-    error: Schema.Defect,
-  },
-) {}
+)<{
+  readonly message: string;
+  readonly statusCode: Option.Option<number>;
+  readonly cause?: unknown;
+}> {}

@@ -1,4 +1,4 @@
-import { Schema } from "effect";
+import { Data, Schema } from "effect";
 
 import { ToolId, SecretId, PolicyId } from "./ids";
 
@@ -7,14 +7,13 @@ export class ToolNotFoundError extends Schema.TaggedError<ToolNotFoundError>()(
   { toolId: ToolId },
 ) {}
 
-export class ToolInvocationError extends Schema.TaggedError<ToolInvocationError>()(
+export class ToolInvocationError extends Data.TaggedError(
   "ToolInvocationError",
-  {
-    toolId: ToolId,
-    message: Schema.String,
-    cause: Schema.optional(Schema.Unknown),
-  },
-) {}
+)<{
+  readonly toolId: ToolId;
+  readonly message: string;
+  readonly cause?: unknown;
+}> {}
 
 export class SecretNotFoundError extends Schema.TaggedError<SecretNotFoundError>()(
   "SecretNotFoundError",

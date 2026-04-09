@@ -1,21 +1,20 @@
-import { Schema } from "effect";
+import { Data, Schema } from "effect";
+import type { Option } from "effect";
 
-export class GoogleDiscoveryParseError extends Schema.TaggedError<GoogleDiscoveryParseError>()(
+export class GoogleDiscoveryParseError extends Data.TaggedError(
   "GoogleDiscoveryParseError",
-  {
-    message: Schema.String,
-    error: Schema.Defect,
-  },
-) {}
+)<{
+  readonly message: string;
+  readonly cause?: unknown;
+}> {}
 
-export class GoogleDiscoveryInvocationError extends Schema.TaggedError<GoogleDiscoveryInvocationError>()(
+export class GoogleDiscoveryInvocationError extends Data.TaggedError(
   "GoogleDiscoveryInvocationError",
-  {
-    message: Schema.String,
-    statusCode: Schema.optionalWith(Schema.Number, { as: "Option" }),
-    error: Schema.Defect,
-  },
-) {}
+)<{
+  readonly message: string;
+  readonly statusCode: Option.Option<number>;
+  readonly cause?: unknown;
+}> {}
 
 export class GoogleDiscoveryOAuthError extends Schema.TaggedError<GoogleDiscoveryOAuthError>()(
   "GoogleDiscoveryOAuthError",

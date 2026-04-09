@@ -76,7 +76,6 @@ const resolvePath = Effect.fn("OpenApi.resolvePath")(function* (
         return yield* new OpenApiInvocationError({
           message: `Missing required path parameter: ${param.name}`,
           statusCode: Option.none(),
-          error: undefined,
         });
       }
       continue;
@@ -111,7 +110,6 @@ const resolvePath = Effect.fn("OpenApi.resolvePath")(function* (
     return yield* new OpenApiInvocationError({
       message: `Unresolved path parameters: ${[...new Set(unresolved)].join(", ")}`,
       statusCode: Option.none(),
-      error: undefined,
     });
   }
 
@@ -245,7 +243,7 @@ export const invoke = Effect.fn("OpenApi.invoke")(function* (
         new OpenApiInvocationError({
           message: `HTTP request failed: ${err.message}`,
           statusCode: Option.none(),
-          error: err,
+          cause: err,
         }),
     ),
   );

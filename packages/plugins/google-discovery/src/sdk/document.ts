@@ -140,8 +140,8 @@ const DiscoveryDocumentModel = Schema.Struct({
 });
 type DiscoveryDocument = typeof DiscoveryDocumentModel.Type;
 
-const toParseError = (message: string, error: unknown) =>
-  new GoogleDiscoveryParseError({ message, error });
+const toParseError = (message: string, cause: unknown) =>
+  new GoogleDiscoveryParseError({ message, cause });
 
 const decodeUnknownWith = <A>(
   message: string,
@@ -436,7 +436,6 @@ const manifestMethodFromMethod = (input: {
     if (!method.httpMethod) {
       return yield* new GoogleDiscoveryParseError({
         message: `Google Discovery method '${methodId}' is missing httpMethod`,
-        error: new Error(`Missing httpMethod for ${methodId}`),
       });
     }
 
@@ -509,7 +508,6 @@ export const extractGoogleDiscoveryManifest = Effect.fn(
     return yield* new GoogleDiscoveryParseError({
       message:
         "Google Discovery document is missing one of: name, version, rootUrl",
-      error: new Error("Invalid document"),
     });
   }
 
