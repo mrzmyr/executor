@@ -37,7 +37,7 @@ describe("SDK Executor", () => {
   it.effect("creates an executor with no plugins", () =>
     Effect.gen(function* () {
       const executor = yield* createExecutor(makeTestConfig());
-      expect(executor.scope.name).toBe("test");
+      expect(executor.scope.name).toBe("/test");
       expect(yield* executor.tools.list()).toHaveLength(0);
     }),
   );
