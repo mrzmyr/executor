@@ -13,9 +13,10 @@
     "preview": "vite preview",
     "deploy": "vite build && wrangler deploy",
     "cf-typegen": "wrangler types",
-    "typecheck": "tsc --noEmit",
+    "typecheck": "tsgo --noEmit",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "typecheck:slow": "tsc --noEmit"
   },
   "dependencies": {
     "@cloudflare/vite-plugin": "^1.31.1",
