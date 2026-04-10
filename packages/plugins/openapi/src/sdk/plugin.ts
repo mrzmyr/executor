@@ -192,6 +192,7 @@ export const openApiPlugin = (options?: {
                       id: s.namespace,
                       name: s.name,
                       kind: "openapi",
+                      url: s.config.baseUrl,
                       runtime: false,
                       canRemove: true,
                       canRefresh: false,
