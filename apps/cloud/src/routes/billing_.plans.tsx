@@ -95,7 +95,6 @@ function PlansPage() {
               const isCanceling = eligibility?.canceling ?? false;
               const isCurrent = status === "active" && !isCanceling;
               const isScheduled = status === "scheduled";
-              const isActionable = action !== "none";
               const label = isCanceling ? "Resume" : (ACTION_LABELS[action] ?? "Select");
               const isUpgradeAction = action === "upgrade" || action === "activate";
 
