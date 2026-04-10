@@ -67,11 +67,16 @@ type InviteAction =
 
 function inviteReducer(state: InviteState, action: InviteAction): InviteState {
   switch (action.type) {
-    case "setEmail": return { ...state, email: action.email };
-    case "setRole": return { ...state, roleSlug: action.roleSlug };
-    case "send": return { ...state, status: "sending", error: null };
-    case "error": return { ...state, status: "error", error: action.message };
-    case "reset": return initialInviteState;
+    case "setEmail":
+      return { ...state, email: action.email };
+    case "setRole":
+      return { ...state, roleSlug: action.roleSlug };
+    case "send":
+      return { ...state, status: "sending", error: null };
+    case "error":
+      return { ...state, status: "error", error: action.message };
+    case "reset":
+      return initialInviteState;
   }
 }
 
@@ -192,7 +197,12 @@ function TeamPage() {
                     ) : (
                       <div className="flex size-8 items-center justify-center rounded-full bg-muted text-[0.625rem] font-semibold text-muted-foreground">
                         {member.name
-                          ? member.name.split(" ").map((n) => n[0]).join("").slice(0, 2).toUpperCase()
+                          ? member.name
+                              .split(" ")
+                              .map((n) => n[0])
+                              .join("")
+                              .slice(0, 2)
+                              .toUpperCase()
                           : member.email[0]!.toUpperCase()}
                       </div>
                     )}
@@ -260,13 +270,21 @@ function TeamPage() {
                                       key={role.slug}
                                       className="text-[0.75rem]"
                                       disabled={role.slug === member.role}
-                                      onClick={() => handleChangeRole(member.id, role.slug, role.name)}
+                                      onClick={() =>
+                                        handleChangeRole(member.id, role.slug, role.name)
+                                      }
                                     >
                                       {role.name}
                                       {role.slug === member.role && (
                                         <span className="ml-auto text-muted-foreground/50">
                                           <svg viewBox="0 0 16 16" fill="none" className="size-3">
-                                            <path d="M3.5 8.5L6.5 11.5L12.5 5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+                                            <path
+                                              d="M3.5 8.5L6.5 11.5L12.5 5"
+                                              stroke="currentColor"
+                                              strokeWidth="1.5"
+                                              strokeLinecap="round"
+                                              strokeLinejoin="round"
+                                            />
                                           </svg>
                                         </span>
                                       )}
@@ -285,7 +303,9 @@ function TeamPage() {
                           </DropdownMenuItem>
                         </DropdownMenuContent>
                       </DropdownMenu>
-                    ) : <div />}
+                    ) : (
+                      <div />
+                    )}
                   </div>
                 ))}
               </div>
@@ -352,7 +372,10 @@ function InviteDialog(props: {
 
         <div className="grid gap-4 py-3">
           <div className="grid gap-1.5">
-            <Label htmlFor="invite-email" className="text-[0.6875rem] font-medium uppercase tracking-wider text-muted-foreground">
+            <Label
+              htmlFor="invite-email"
+              className="text-[0.6875rem] font-medium uppercase tracking-wider text-muted-foreground"
+            >
               Email
             </Label>
             <Input
@@ -360,18 +383,28 @@ function InviteDialog(props: {
               type="email"
               placeholder="colleague@company.com"
               value={state.email}
-              onChange={(e) => dispatch({ type: "setEmail", email: (e.target as HTMLInputElement).value })}
-              onKeyDown={(e) => { if (e.key === "Enter") handleInvite(); }}
+              onChange={(e) =>
+                dispatch({ type: "setEmail", email: (e.target as HTMLInputElement).value })
+              }
+              onKeyDown={(e) => {
+                if (e.key === "Enter") handleInvite();
+              }}
               className="text-[0.8125rem] h-9"
             />
           </div>
 
           {props.roles.length > 0 && (
             <div className="grid gap-1.5">
-              <Label htmlFor="invite-role" className="text-[0.6875rem] font-medium uppercase tracking-wider text-muted-foreground">
+              <Label
+                htmlFor="invite-role"
+                className="text-[0.6875rem] font-medium uppercase tracking-wider text-muted-foreground"
+              >
                 Role
               </Label>
-              <Select value={state.roleSlug} onValueChange={(v) => dispatch({ type: "setRole", roleSlug: v })}>
+              <Select
+                value={state.roleSlug}
+                onValueChange={(v) => dispatch({ type: "setRole", roleSlug: v })}
+              >
                 <SelectTrigger id="invite-role" className="h-9 text-[0.8125rem]">
                   <SelectValue placeholder="Select a role" />
                 </SelectTrigger>
@@ -395,7 +428,9 @@ function InviteDialog(props: {
 
         <DialogFooter>
           <DialogClose asChild>
-            <Button variant="ghost" size="sm">Cancel</Button>
+            <Button variant="ghost" size="sm">
+              Cancel
+            </Button>
           </DialogClose>
           <Button
             size="sm"

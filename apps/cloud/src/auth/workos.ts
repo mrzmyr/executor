@@ -159,8 +159,7 @@ const make = Effect.gen(function* () {
       ),
 
     /** Get a user by ID. */
-    getUser: (userId: string) =>
-      use((wos) => wos.userManagement.getUser(userId)),
+    getUser: (userId: string) => use((wos) => wos.userManagement.getUser(userId)),
 
     /** Send an organization invitation. */
     sendInvitation: (params: { email: string; organizationId: string; roleSlug?: string }) =>
@@ -174,27 +173,19 @@ const make = Effect.gen(function* () {
 
     /** Remove an organization membership. */
     deleteOrgMembership: (membershipId: string) =>
-      use((wos) =>
-        wos.userManagement.deleteOrganizationMembership(membershipId),
-      ),
+      use((wos) => wos.userManagement.deleteOrganizationMembership(membershipId)),
 
     /** Get the role for a membership. */
     getOrgMembership: (membershipId: string) =>
-      use((wos) =>
-        wos.userManagement.getOrganizationMembership(membershipId),
-      ),
+      use((wos) => wos.userManagement.getOrganizationMembership(membershipId)),
 
     /** Update a membership's role. */
     updateOrgMembershipRole: (membershipId: string, roleSlug: string) =>
-      use((wos) =>
-        wos.userManagement.updateOrganizationMembership(membershipId, { roleSlug }),
-      ),
+      use((wos) => wos.userManagement.updateOrganizationMembership(membershipId, { roleSlug })),
 
     /** List available roles for an organization. */
     listOrgRoles: (organizationId: string) =>
-      use((wos) =>
-        wos.organizations.listOrganizationRoles({ organizationId }),
-      ),
+      use((wos) => wos.organizations.listOrganizationRoles({ organizationId })),
   };
 });
 

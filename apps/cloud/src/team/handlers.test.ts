@@ -19,12 +19,17 @@ type StubOverrides = {
 };
 
 const stubWorkOS = (overrides: StubOverrides = {}) =>
-  Layer.succeed(WorkOSAuth, new Proxy({} as WorkOSAuth["Type"], {
-    get: (_target, prop) => {
-      if (prop in overrides) return (overrides as Record<string, unknown>)[prop as string];
-      return () => { throw new Error(`WorkOSAuth.${String(prop)} not stubbed`); };
-    },
-  }));
+  Layer.succeed(
+    WorkOSAuth,
+    new Proxy({} as WorkOSAuth["Type"], {
+      get: (_target, prop) => {
+        if (prop in overrides) return (overrides as Record<string, unknown>)[prop as string];
+        return () => {
+          throw new Error(`WorkOSAuth.${String(prop)} not stubbed`);
+        };
+      },
+    }),
+  );
 
 // ---------------------------------------------------------------------------
 // Fixtures
@@ -52,8 +57,20 @@ const fakeMemberships = [
 ];
 
 const fakeUsers: Record<string, any> = {
-  user_admin: { email: "admin@test.com", firstName: "Admin", lastName: null, profilePictureUrl: null, lastSignInAt: "2026-04-09T00:00:00Z" },
-  user_member: { email: "member@test.com", firstName: "Member", lastName: null, profilePictureUrl: null, lastSignInAt: null },
+  user_admin: {
+    email: "admin@test.com",
+    firstName: "Admin",
+    lastName: null,
+    profilePictureUrl: null,
+    lastSignInAt: "2026-04-09T00:00:00Z",
+  },
+  user_member: {
+    email: "member@test.com",
+    firstName: "Member",
+    lastName: null,
+    profilePictureUrl: null,
+    lastSignInAt: null,
+  },
 };
 
 const fakeRoles = [
@@ -76,10 +93,7 @@ const requireAdmin = Effect.gen(function* () {
 });
 
 const provide = (auth: typeof adminAuth, workosOverrides: StubOverrides = {}) =>
-  Layer.mergeAll(
-    Layer.succeed(AuthContext, auth),
-    stubWorkOS(workosOverrides),
-  );
+  Layer.mergeAll(Layer.succeed(AuthContext, auth), stubWorkOS(workosOverrides));
 
 const withMembers: StubOverrides = {
   listOrgMembers: () => Effect.succeed({ data: fakeMemberships }),
@@ -114,10 +128,12 @@ describe("Team handlers", () => {
         expect(members[0]).toMatchObject({ email: "admin@test.com", isCurrentUser: true });
         expect(members[1]).toMatchObject({ email: "member@test.com", isCurrentUser: false });
       }).pipe(
-        Effect.provide(provide(adminAuth, {
-          ...withMembers,
-          getUser: (id: string) => Effect.succeed(fakeUsers[id]),
-        })),
+        Effect.provide(
+          provide(adminAuth, {
+            ...withMembers,
+            getUser: (id: string) => Effect.succeed(fakeUsers[id]),
+          }),
+        ),
       ),
     );
   });
@@ -132,9 +148,11 @@ describe("Team handlers", () => {
 
         expect(roles).toEqual(fakeRoles);
       }).pipe(
-        Effect.provide(provide(adminAuth, {
-          listOrgRoles: () => Effect.succeed({ data: fakeRoles }),
-        })),
+        Effect.provide(
+          provide(adminAuth, {
+            listOrgRoles: () => Effect.succeed({ data: fakeRoles }),
+          }),
+        ),
       ),
     );
   });
@@ -165,10 +183,12 @@ describe("Team handlers", () => {
 
         expect(result.email).toBe("new@test.com");
       }).pipe(
-        Effect.provide(provide(adminAuth, {
-          ...withMembers,
-          sendInvitation: (p: any) => Effect.succeed({ id: "inv_1", email: p.email }),
-        })),
+        Effect.provide(
+          provide(adminAuth, {
+            ...withMembers,
+            sendInvitation: (p: any) => Effect.succeed({ id: "inv_1", email: p.email }),
+          }),
+        ),
       ),
     );
 
@@ -193,10 +213,12 @@ describe("Team handlers", () => {
         const workos = yield* WorkOSAuth;
         yield* workos.deleteOrgMembership("mem_member");
       }).pipe(
-        Effect.provide(provide(adminAuth, {
-          ...withMembers,
-          deleteOrgMembership: () => Effect.void,
-        })),
+        Effect.provide(
+          provide(adminAuth, {
+            ...withMembers,
+            deleteOrgMembership: () => Effect.void,
+          }),
+        ),
       ),
     );
 
@@ -221,10 +243,12 @@ describe("Team handlers", () => {
         const workos = yield* WorkOSAuth;
         yield* workos.updateOrgMembershipRole("mem_member", "admin");
       }).pipe(
-        Effect.provide(provide(adminAuth, {
-          ...withMembers,
-          updateOrgMembershipRole: () => Effect.void,
-        })),
+        Effect.provide(
+          provide(adminAuth, {
+            ...withMembers,
+            updateOrgMembershipRole: () => Effect.void,
+          }),
+        ),
       ),
     );
 
