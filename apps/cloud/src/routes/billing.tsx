@@ -45,7 +45,8 @@ function BillingPage() {
 
   // Find renewal date from subscriptions
   const sub = customer?.subscriptions?.find(
-    (s: any) => s.planId === (activePlan?.id ?? "free") && (s.status === "active" || s.status === "trialing"),
+    (s: any) =>
+      s.planId === (activePlan?.id ?? "free") && (s.status === "active" || s.status === "trialing"),
   );
 
   const executions = customer?.balances?.executions;
