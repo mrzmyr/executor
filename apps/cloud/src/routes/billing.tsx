@@ -1,6 +1,8 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useCustomer, useListPlans } from "autumn-js/react";
 
+type Plan = NonNullable<ReturnType<typeof useListPlans>["data"]>[number];
+
 export const Route = createFileRoute("/billing")({
   component: BillingPage,
 });
@@ -28,8 +30,7 @@ function BillingPage() {
     );
   }
 
-  // Find current plan via customerEligibility from useListPlans
-  const allPlans = plans ?? [];
+  const allPlans: Plan[] = plans ?? [];
   const activePlan = allPlans.find(
     (p) => p.customerEligibility?.status === "active" && p.id !== "free",
   );

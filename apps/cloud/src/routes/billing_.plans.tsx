@@ -2,6 +2,8 @@ import { useState } from "react";
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useCustomer, useListPlans } from "autumn-js/react";
 
+type Plan = NonNullable<ReturnType<typeof useListPlans>["data"]>[number];
+
 export const Route = createFileRoute("/billing_/plans")({
   component: PlansPage,
 });
@@ -44,8 +46,7 @@ function PlansPage() {
 
   const isLoading = customerLoading || plansLoading;
 
-  const allPlans = plans ?? [];
-  const paidPlans = allPlans.filter((p) => p.id === "hobby" || p.id === "professional");
+  const paidPlans: Plan[] = (plans ?? []).filter((p) => p.id === "hobby" || p.id === "professional");
 
   return (
     <div className="min-h-0 flex-1 overflow-y-auto">
