@@ -1,14 +1,21 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
-import { useCustomer } from "autumn-js/react";
+import { useCustomer, useListPlans } from "autumn-js/react";
 
 export const Route = createFileRoute("/billing")({
   component: BillingPage,
 });
 
-function BillingPage() {
-  const { data: customer, openCustomerPortal, isLoading } = useCustomer();
+const PLAN_TAGLINES: Record<string, string> = {
+  free: "For trying things out",
+  hobby: "For individuals and small teams",
+  professional: "For teams that need more",
+};
 
-  if (isLoading) {
+function BillingPage() {
+  const { data: customer, openCustomerPortal, isLoading: customerLoading } = useCustomer();
+  const { data: plans, isLoading: plansLoading } = useListPlans();
+
+  if (customerLoading || plansLoading) {
     return (
       <div className="min-h-0 flex-1 overflow-y-auto">
         <div className="mx-auto max-w-3xl px-6 py-10 lg:px-8 lg:py-14">
@@ -21,24 +28,27 @@ function BillingPage() {
     );
   }
 
-  const allSubs = customer?.subscriptions ?? [];
-  const scheduledSub = allSubs.find((s: any) => s.status === "scheduled" && s.planId !== "free");
-  const activeSubs = allSubs.filter((s: any) => s.status === "active" || s.status === "trialing");
-  const paidSubs = activeSubs.filter((s: any) => s.planId !== "free");
-  const activePaid = paidSubs.find((s: any) => s.canceledAt == null);
-  const cancelingSub = paidSubs.find((s: any) => s.canceledAt != null);
-  const currentPlan = activePaid ?? cancelingSub;
-  const isCanceling = !activePaid && cancelingSub != null;
-  const isSwitching = isCanceling && scheduledSub != null;
-  const planId = activePaid?.planId ?? (isSwitching ? scheduledSub.planId : "free");
-  const executions = customer?.balances?.executions;
+  // Find current plan via customerEligibility from useListPlans
+  const activePlan = (plans ?? []).find(
+    (p) => p.customerEligibility?.status === "active" && p.id !== "free",
+  );
+  const scheduledPlan = (plans ?? []).find(
+    (p) => p.customerEligibility?.status === "scheduled" && p.id !== "free",
+  );
+  const isCanceling = activePlan?.customerEligibility?.canceling ?? false;
+  const isSwitching = isCanceling && scheduledPlan != null;
 
-  const planInfo: Record<string, { name: string; tagline: string }> = {
-    free: { name: "Free", tagline: "For trying things out" },
-    hobby: { name: "Hobby", tagline: "For individuals and small teams" },
-    professional: { name: "Professional", tagline: "For teams that need more" },
-  };
-  const plan = planInfo[planId] ?? planInfo.free;
+  const displayPlan = isSwitching ? scheduledPlan : activePlan;
+  const planId = displayPlan?.id ?? "free";
+  const planName = displayPlan?.name ?? "Free";
+  const tagline = PLAN_TAGLINES[planId] ?? "";
+
+  // Find renewal date from subscriptions
+  const sub = customer?.subscriptions?.find(
+    (s: any) => s.planId === (activePlan?.id ?? "free") && (s.status === "active" || s.status === "trialing"),
+  );
+
+  const executions = customer?.balances?.executions;
 
   return (
     <div className="min-h-0 flex-1 overflow-y-auto">
@@ -49,36 +59,34 @@ function BillingPage() {
 
         {/* Current plan */}
         <div className="flex items-center justify-between py-4">
-          <div className="flex items-center gap-3">
-            <div>
-              <div className="flex items-center gap-2">
-                <p className="text-[0.8125rem] font-medium text-foreground leading-none">
-                  {plan.name}
-                </p>
-                {isSwitching && (
-                  <span className="rounded-full bg-amber-500/10 px-1.5 py-0.5 text-[0.625rem] font-medium text-amber-600 dark:text-amber-400 leading-none">
-                    Switching
-                  </span>
-                )}
-                {isCanceling && !isSwitching && (
-                  <span className="rounded-full bg-amber-500/10 px-1.5 py-0.5 text-[0.625rem] font-medium text-amber-600 dark:text-amber-400 leading-none">
-                    Canceling
-                  </span>
-                )}
-              </div>
-              <p className="mt-1 text-[0.75rem] text-muted-foreground/70 leading-none">
-                {isSwitching && currentPlan?.currentPeriodEnd
-                  ? `Starts ${new Date(currentPlan.currentPeriodEnd).toLocaleDateString(undefined, { month: "long", day: "numeric", year: "numeric" })}`
-                  : isCanceling && currentPlan?.currentPeriodEnd
-                    ? `Access until ${new Date(currentPlan.currentPeriodEnd).toLocaleDateString(undefined, { month: "long", day: "numeric", year: "numeric" })}`
-                    : currentPlan?.currentPeriodEnd
-                      ? `Renews ${new Date(currentPlan.currentPeriodEnd).toLocaleDateString(undefined, { month: "long", day: "numeric", year: "numeric" })}`
-                      : plan.tagline}
+          <div>
+            <div className="flex items-center gap-2">
+              <p className="text-[0.8125rem] font-medium text-foreground leading-none">
+                {planName}
               </p>
+              {isSwitching && (
+                <span className="rounded-full bg-amber-500/10 px-1.5 py-0.5 text-[0.625rem] font-medium text-amber-600 dark:text-amber-400 leading-none">
+                  Switching
+                </span>
+              )}
+              {isCanceling && !isSwitching && (
+                <span className="rounded-full bg-amber-500/10 px-1.5 py-0.5 text-[0.625rem] font-medium text-amber-600 dark:text-amber-400 leading-none">
+                  Canceling
+                </span>
+              )}
             </div>
+            <p className="mt-1 text-[0.75rem] text-muted-foreground/70 leading-none">
+              {isSwitching && sub?.currentPeriodEnd
+                ? `Starts ${new Date(sub.currentPeriodEnd).toLocaleDateString(undefined, { month: "long", day: "numeric", year: "numeric" })}`
+                : isCanceling && sub?.currentPeriodEnd
+                  ? `Access until ${new Date(sub.currentPeriodEnd).toLocaleDateString(undefined, { month: "long", day: "numeric", year: "numeric" })}`
+                  : sub?.currentPeriodEnd
+                    ? `Renews ${new Date(sub.currentPeriodEnd).toLocaleDateString(undefined, { month: "long", day: "numeric", year: "numeric" })}`
+                    : tagline}
+            </p>
           </div>
           <div className="flex items-center gap-2">
-            {currentPlan && !isCanceling && (
+            {activePlan && !isCanceling && (
               <button
                 type="button"
                 onClick={() => openCustomerPortal()}
