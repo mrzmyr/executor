@@ -225,6 +225,11 @@ const handleAutumnRequest = async (request: Request): Promise<Response> => {
       }),
     );
 
+    if (statusCode >= 400) {
+      console.error("[autumn] upstream error:", statusCode, response);
+      return Response.json({ error: "Billing request failed" }, { status: statusCode });
+    }
+
     return Response.json(response, { status: statusCode });
   });
 
