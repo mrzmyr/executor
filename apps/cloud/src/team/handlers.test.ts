@@ -51,7 +51,12 @@ const memberAuth = {
   avatarUrl: null,
 };
 
-type FakeMembership = { id: string; userId: string; status: string; role: { slug: string } };
+type FakeMembership = {
+  id: string;
+  userId: string;
+  status: string;
+  role: { slug: string };
+};
 type FakeUser = {
   email: string;
   firstName: string | null;
@@ -62,8 +67,18 @@ type FakeUser = {
 type FakeRole = { slug: string; name: string };
 
 const fakeMemberships: FakeMembership[] = [
-  { id: "mem_admin", userId: "user_admin", status: "active", role: { slug: "admin" } },
-  { id: "mem_member", userId: "user_member", status: "active", role: { slug: "member" } },
+  {
+    id: "mem_admin",
+    userId: "user_admin",
+    status: "active",
+    role: { slug: "admin" },
+  },
+  {
+    id: "mem_member",
+    userId: "user_member",
+    status: "active",
+    role: { slug: "member" },
+  },
 ];
 
 const fakeUsers: Record<string, FakeUser> = {
@@ -135,8 +150,14 @@ describe("Team handlers", () => {
         );
 
         expect(members).toHaveLength(2);
-        expect(members[0]).toMatchObject({ email: "admin@test.com", isCurrentUser: true });
-        expect(members[1]).toMatchObject({ email: "member@test.com", isCurrentUser: false });
+        expect(members[0]).toMatchObject({
+          email: "admin@test.com",
+          isCurrentUser: true,
+        });
+        expect(members[1]).toMatchObject({
+          email: "member@test.com",
+          isCurrentUser: false,
+        });
       }).pipe(
         Effect.provide(
           provide(adminAuth, {
@@ -154,7 +175,10 @@ describe("Team handlers", () => {
         const auth = yield* AuthContext;
         const workos = yield* WorkOSAuth;
         const result = yield* workos.listOrgRoles(auth.organizationId);
-        const roles = result.data.map((r: FakeRole) => ({ slug: r.slug, name: r.name }));
+        const roles = result.data.map((r: FakeRole) => ({
+          slug: r.slug,
+          name: r.name,
+        }));
 
         expect(roles).toEqual(fakeRoles);
       }).pipe(
@@ -209,7 +233,10 @@ describe("Team handlers", () => {
           Effect.gen(function* () {
             yield* requireAdmin;
             const workos = yield* WorkOSAuth;
-            yield* workos.sendInvitation({ email: "x", organizationId: "org_1" });
+            yield* workos.sendInvitation({
+              email: "x",
+              organizationId: "org_1",
+            });
           }),
         );
         expect(error).toBeInstanceOf(Forbidden);
