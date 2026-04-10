@@ -616,7 +616,7 @@ export default function AddMcpSource(props: {
                 className="gap-1.5"
               >
                 {!probe.requiresOAuth && (
-                  <label
+                  <Label
                     className={`flex items-center gap-2.5 rounded-lg border px-3 py-2 cursor-pointer transition-colors ${
                       remoteAuthMode === "none"
                         ? "border-primary/50 bg-primary/[0.03]"
@@ -628,10 +628,10 @@ export default function AddMcpSource(props: {
                     <span className="ml-auto text-[10px] text-muted-foreground">
                       no auth header
                     </span>
-                  </label>
+                  </Label>
                 )}
 
-                <label
+                <Label
                   className={`flex items-center gap-2.5 rounded-lg border px-3 py-2 cursor-pointer transition-colors ${
                     remoteAuthMode === "header"
                       ? "border-primary/50 bg-primary/[0.03]"
@@ -643,10 +643,10 @@ export default function AddMcpSource(props: {
                   <span className="ml-auto text-[10px] text-muted-foreground">
                     use a secret-backed auth header
                   </span>
-                </label>
+                </Label>
 
                 {probe.requiresOAuth && (
-                  <label
+                  <Label
                     className={`flex items-center gap-2.5 rounded-lg border px-3 py-2 cursor-pointer transition-colors ${
                       remoteAuthMode === "oauth2"
                         ? "border-primary/50 bg-primary/[0.03]"
@@ -658,7 +658,7 @@ export default function AddMcpSource(props: {
                     <span className="ml-auto text-[10px] text-muted-foreground">
                       sign in with the server&apos;s OAuth flow
                     </span>
-                  </label>
+                  </Label>
                 )}
               </RadioGroup>
 
