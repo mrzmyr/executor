@@ -44,7 +44,8 @@ function PlansPage() {
 
   const isLoading = customerLoading || plansLoading;
 
-  const paidPlans = (plans ?? []).filter((p) => p.id === "hobby" || p.id === "professional");
+  const allPlans = plans ?? [];
+  const paidPlans = allPlans.filter((p) => p.id === "hobby" || p.id === "professional");
 
   return (
     <div className="min-h-0 flex-1 overflow-y-auto">

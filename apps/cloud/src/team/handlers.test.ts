@@ -9,13 +9,16 @@ import { Forbidden } from "./api";
 // Stub factory — only implement what each test calls
 // ---------------------------------------------------------------------------
 
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- test stub needs wide function types
+type StubFn = (...args: never[]) => Effect.Effect<any>;
+
 type StubOverrides = {
-  listOrgMembers?: (...args: unknown[]) => Effect.Effect<unknown>;
-  getUser?: (...args: unknown[]) => Effect.Effect<unknown>;
-  sendInvitation?: (...args: unknown[]) => Effect.Effect<unknown>;
-  deleteOrgMembership?: (...args: unknown[]) => Effect.Effect<unknown>;
-  updateOrgMembershipRole?: (...args: unknown[]) => Effect.Effect<unknown>;
-  listOrgRoles?: (...args: unknown[]) => Effect.Effect<unknown>;
+  listOrgMembers?: StubFn;
+  getUser?: StubFn;
+  sendInvitation?: StubFn;
+  deleteOrgMembership?: StubFn;
+  updateOrgMembershipRole?: StubFn;
+  listOrgRoles?: StubFn;
 };
 
 const stubWorkOS = (overrides: StubOverrides = {}) =>

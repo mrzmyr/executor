@@ -29,10 +29,11 @@ function BillingPage() {
   }
 
   // Find current plan via customerEligibility from useListPlans
-  const activePlan = (plans ?? []).find(
+  const allPlans = plans ?? [];
+  const activePlan = allPlans.find(
     (p) => p.customerEligibility?.status === "active" && p.id !== "free",
   );
-  const scheduledPlan = (plans ?? []).find(
+  const scheduledPlan = allPlans.find(
     (p) => p.customerEligibility?.status === "scheduled" && p.id !== "free",
   );
   const isCanceling = activePlan?.customerEligibility?.canceling ?? false;
