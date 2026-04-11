@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState, startTransition } from "react";
+import { useCallback, useMemo, useState } from "react";
 import {
   getHighlighter,
   useResolvedShikiTheme,
@@ -103,27 +103,13 @@ const CheckIcon = () => (
 // Shiki tokenization hook — non-blocking
 // ---------------------------------------------------------------------------
 
-function useTokens(code: string, theme: SupportedTheme): ThemedToken[][] | null {
-  const [tokens, setTokens] = useState<ThemedToken[][] | null>(null);
-
-  useEffect(() => {
-    let cancelled = false;
-    getHighlighter().then((highlighter) => {
-      if (cancelled) return;
-      const result = highlighter.codeToTokens(code, {
-        lang: "typescript",
-        theme,
-      });
-      if (!cancelled) {
-        startTransition(() => setTokens(result.tokens));
-      }
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, [code, theme]);
-
-  return tokens;
+function useTokens(code: string, theme: SupportedTheme): ThemedToken[][] {
+  const highlighter = getHighlighter();
+  const result = highlighter.codeToTokens(code, {
+    lang: "typescript",
+    theme,
+  });
+  return result.tokens;
 }
 
 // ---------------------------------------------------------------------------
@@ -391,16 +377,12 @@ export function ExpandableCodeBlock(props: {
 
         <pre className="overflow-auto p-3 font-mono text-[0.75rem] leading-6 !bg-transparent">
           <code>
-            {tokens ? (
-              <HighlightedCode
-                tokens={tokens}
-                clickableNames={clickableNames}
-                onToggle={handleToggle}
-                expanded={allExpanded}
-              />
-            ) : (
-              <span className="text-foreground/60">{displayCode}</span>
-            )}
+            <HighlightedCode
+              tokens={tokens}
+              clickableNames={clickableNames}
+              onToggle={handleToggle}
+              expanded={allExpanded}
+            />
           </code>
         </pre>
       </div>

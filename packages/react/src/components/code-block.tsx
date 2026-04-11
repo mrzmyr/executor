@@ -3,6 +3,7 @@ import { jsx, jsxs, Fragment } from "react/jsx-runtime";
 import { toJsxRuntime } from "hast-util-to-jsx-runtime";
 import {
   getHighlighter,
+  ensureLang,
   resolveLang,
   useResolvedShikiTheme,
   type ShikiThemeProp,
@@ -62,26 +63,16 @@ const CheckIcon = () => (
 // ---------------------------------------------------------------------------
 
 function useHighlighted(code: string, lang: string, theme: SupportedTheme): ReactNode | null {
-  const [highlighted, setHighlighted] = useState<ReactNode | null>(null);
+  const [, setTick] = useState(0);
+  const resolvedLang = (resolveLang(lang) ?? "json") as Parameters<typeof ensureLang>[0];
 
-  useEffect(() => {
-    let cancelled = false;
+  const isReady = ensureLang(resolvedLang, () => setTick((t) => t + 1));
 
-    getHighlighter().then((highlighter) => {
-      if (cancelled) return;
+  if (!isReady) return null;
 
-      const hast = highlighter.codeToHast(code, { lang, theme });
-      const nodes = toJsxRuntime(hast, { jsx, jsxs, Fragment });
-
-      if (!cancelled) setHighlighted(nodes);
-    });
-
-    return () => {
-      cancelled = true;
-    };
-  }, [code, lang, theme]);
-
-  return highlighted;
+  const highlighter = getHighlighter();
+  const hast = highlighter.codeToHast(code, { lang: resolvedLang, theme });
+  return toJsxRuntime(hast, { jsx, jsxs, Fragment });
 }
 
 // ---------------------------------------------------------------------------
