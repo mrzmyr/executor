@@ -10,7 +10,6 @@ import { Badge } from "../components/badge";
 import { Input } from "../components/input";
 import {
   CardStack,
-  CardStackHeader,
   CardStackContent,
   CardStackEntry,
   CardStackEntryField,
@@ -39,6 +38,7 @@ export function SourcesPage(props: { sourcePlugins: readonly SourcePlugin[] }) {
   const [url, setUrl] = useState("");
   const [detecting, setDetecting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [search, setSearch] = useState("");
 
   const scopeId = useScope();
   const sources = useAtomValue(sourcesAtom(scopeId));
@@ -161,9 +161,9 @@ export function SourcesPage(props: { sourcePlugins: readonly SourcePlugin[] }) {
           </CardStack>
 
           {/* Connected / Explore */}
-          <CardStack searchable>
+          <CardStack searchable searchQuery={search} onSearchChange={setSearch}>
             <Tabs defaultValue={defaultTab} className="flex min-h-0 flex-col gap-0">
-              <CardStackHeader className="flex-wrap border-b border-border/50">
+              <div className="flex flex-col gap-2 border-b border-border/50 px-4 py-3 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
                 <TabsList>
                   <TabsTrigger value="connected">
                     Connected
@@ -175,7 +175,14 @@ export function SourcesPage(props: { sourcePlugins: readonly SourcePlugin[] }) {
                   </TabsTrigger>
                   <TabsTrigger value="explore">Explore</TabsTrigger>
                 </TabsList>
-              </CardStackHeader>
+                <Input
+                  type="text"
+                  value={search}
+                  onChange={(e) => setSearch((e.target as HTMLInputElement).value)}
+                  placeholder="Search…"
+                  className="h-8 w-full text-[0.75rem] sm:w-40"
+                />
+              </div>
 
               <TabsContent value="connected">
                 {connectedSources.length === 0 ? (
