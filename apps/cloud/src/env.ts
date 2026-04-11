@@ -6,7 +6,7 @@ const sharedShape = {
 
 const serverShape = {
   DATABASE_URL: Env.stringOr("DATABASE_URL", ""),
-  ENCRYPTION_KEY: Env.stringOr("ENCRYPTION_KEY", "local-dev-encryption-key"),
+  ENCRYPTION_KEY: Env.string("ENCRYPTION_KEY"),
   WORKOS_API_KEY: Env.string("WORKOS_API_KEY"),
   WORKOS_CLIENT_ID: Env.string("WORKOS_CLIENT_ID"),
   WORKOS_COOKIE_PASSWORD: Env.string("WORKOS_COOKIE_PASSWORD"),
