@@ -7,6 +7,25 @@ import { makeInMemoryScopedKv, scopeKv, type Kv, type ToolId, type ScopedKv } fr
 
 import { McpToolBinding } from "./types";
 import type { McpStoredSourceData } from "./types";
+import { McpOAuthSession } from "./oauth";
+
+// ---------------------------------------------------------------------------
+// OAuth session TTL — pending sessions are cleaned up after this many ms
+// ---------------------------------------------------------------------------
+
+export const MCP_OAUTH_SESSION_TTL_MS = 15 * 60 * 1000;
+
+// ---------------------------------------------------------------------------
+// Stored OAuth session — session payload + expiry, serialized via Schema
+// ---------------------------------------------------------------------------
+
+const StoredOAuthSession = Schema.Struct({
+  session: McpOAuthSession,
+  expiresAt: Schema.Number,
+});
+
+const encodeOAuthSession = Schema.encodeSync(Schema.parseJson(StoredOAuthSession));
+const decodeOAuthSession = Schema.decodeUnknownSync(Schema.parseJson(StoredOAuthSession));
 
 // ---------------------------------------------------------------------------
 // Stored source — combines meta + config into one entry
@@ -59,13 +78,24 @@ export interface McpBindingStore {
   readonly listSources: () => Effect.Effect<readonly McpStoredSource[]>;
   readonly getSource: (namespace: string) => Effect.Effect<McpStoredSource | null>;
   readonly getSourceConfig: (namespace: string) => Effect.Effect<McpStoredSourceData | null>;
+
+  readonly putOAuthSession: (
+    sessionId: string,
+    session: McpOAuthSession,
+  ) => Effect.Effect<void>;
+  readonly getOAuthSession: (sessionId: string) => Effect.Effect<McpOAuthSession | null>;
+  readonly deleteOAuthSession: (sessionId: string) => Effect.Effect<void>;
 }
 
 // ---------------------------------------------------------------------------
 // Implementation — two KV namespaces: bindings + sources
 // ---------------------------------------------------------------------------
 
-const makeStore = (bindings: ScopedKv, sources: ScopedKv): McpBindingStore => ({
+const makeStore = (
+  bindings: ScopedKv,
+  sources: ScopedKv,
+  oauthSessions: ScopedKv,
+): McpBindingStore => ({
   // ---- Bindings ----
 
   get: (toolId) =>
@@ -135,6 +165,33 @@ const makeStore = (bindings: ScopedKv, sources: ScopedKv): McpBindingStore => ({
       const source = JSON.parse(raw) as McpStoredSource;
       return source.config;
     }),
+
+  // ---- Pending OAuth sessions (short-lived, between startOAuth and completeOAuth) ----
+
+  putOAuthSession: (sessionId, session) =>
+    oauthSessions.set([
+      {
+        key: sessionId,
+        value: encodeOAuthSession({
+          session,
+          expiresAt: Date.now() + MCP_OAUTH_SESSION_TTL_MS,
+        }),
+      },
+    ]),
+
+  getOAuthSession: (sessionId) =>
+    Effect.gen(function* () {
+      const raw = yield* oauthSessions.get(sessionId);
+      if (!raw) return null;
+      const entry = decodeOAuthSession(raw);
+      if (entry.expiresAt < Date.now()) {
+        yield* oauthSessions.delete([sessionId]);
+        return null;
+      }
+      return entry.session;
+    }),
+
+  deleteOAuthSession: (sessionId) => oauthSessions.delete([sessionId]).pipe(Effect.asVoid),
 });
 
 // ---------------------------------------------------------------------------
@@ -142,11 +199,15 @@ const makeStore = (bindings: ScopedKv, sources: ScopedKv): McpBindingStore => ({
 // ---------------------------------------------------------------------------
 
 export const makeKvBindingStore = (kv: Kv, namespace: string): McpBindingStore =>
-  makeStore(scopeKv(kv, `${namespace}.bindings`), scopeKv(kv, `${namespace}.sources`));
+  makeStore(
+    scopeKv(kv, `${namespace}.bindings`),
+    scopeKv(kv, `${namespace}.sources`),
+    scopeKv(kv, `${namespace}.oauth-sessions`),
+  );
 
 // ---------------------------------------------------------------------------
 // In-memory convenience
 // ---------------------------------------------------------------------------
 
 export const makeInMemoryBindingStore = (): McpBindingStore =>
-  makeStore(makeInMemoryScopedKv(), makeInMemoryScopedKv());
+  makeStore(makeInMemoryScopedKv(), makeInMemoryScopedKv(), makeInMemoryScopedKv());
