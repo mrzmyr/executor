@@ -39,9 +39,9 @@ describe("xdgDataHome", () => {
 
   test("ignores empty / whitespace-only XDG_DATA_HOME", () => {
     vi.stubEnv("XDG_DATA_HOME", "   ");
-    vi.stubEnv("HOME", "/home/rhys");
+    vi.stubEnv("HOME", "/home/user");
     stubPlatform("linux");
-    expect(xdgDataHome()).toBe("/home/rhys/.local/share");
+    expect(xdgDataHome()).toBe("/home/user/.local/share");
   });
 
   test("trims whitespace around XDG_DATA_HOME", () => {
@@ -54,8 +54,8 @@ describe("xdgDataHome", () => {
     beforeEach(() => stubPlatform("linux"));
 
     test("falls back to $HOME/.local/share", () => {
-      vi.stubEnv("HOME", "/home/rhys");
-      expect(xdgDataHome()).toBe("/home/rhys/.local/share");
+      vi.stubEnv("HOME", "/home/user");
+      expect(xdgDataHome()).toBe("/home/user/.local/share");
     });
 
     test("defaults to ~/.local/share when HOME is unset", () => {
@@ -67,25 +67,25 @@ describe("xdgDataHome", () => {
     beforeEach(() => stubPlatform("win32"));
 
     test("prefers LOCALAPPDATA", () => {
-      vi.stubEnv("LOCALAPPDATA", "C:\\Users\\rhys\\AppData\\Local");
-      vi.stubEnv("APPDATA", "C:\\Users\\rhys\\AppData\\Roaming");
-      vi.stubEnv("USERPROFILE", "C:\\Users\\rhys");
-      expect(xdgDataHome()).toBe("C:\\Users\\rhys\\AppData\\Local");
+      vi.stubEnv("LOCALAPPDATA", "C:\\Users\\user\\AppData\\Local");
+      vi.stubEnv("APPDATA", "C:\\Users\\user\\AppData\\Roaming");
+      vi.stubEnv("USERPROFILE", "C:\\Users\\user");
+      expect(xdgDataHome()).toBe("C:\\Users\\user\\AppData\\Local");
     });
 
     test("falls back to APPDATA when LOCALAPPDATA is unset", () => {
-      vi.stubEnv("APPDATA", "C:\\Users\\rhys\\AppData\\Roaming");
-      vi.stubEnv("USERPROFILE", "C:\\Users\\rhys");
-      expect(xdgDataHome()).toBe("C:\\Users\\rhys\\AppData\\Roaming");
+      vi.stubEnv("APPDATA", "C:\\Users\\user\\AppData\\Roaming");
+      vi.stubEnv("USERPROFILE", "C:\\Users\\user");
+      expect(xdgDataHome()).toBe("C:\\Users\\user\\AppData\\Roaming");
     });
 
     test("falls back to USERPROFILE\\AppData\\Local when both are unset", () => {
-      vi.stubEnv("USERPROFILE", "C:\\Users\\rhys");
+      vi.stubEnv("USERPROFILE", "C:\\Users\\user");
       // The helper uses node:path.join which normalizes separators to the
       // runtime platform, so on a POSIX test runner we can't assert the
       // exact separator — just that all three segments are present.
       const result = xdgDataHome();
-      expect(result).toContain("C:\\Users\\rhys");
+      expect(result).toContain("C:\\Users\\user");
       expect(result).toContain("AppData");
       expect(result).toContain("Local");
     });
