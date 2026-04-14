@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "bun run dev:proxy && concurrently -n db,vite -c blue,green \"bun run dev:db\" \"bun run dev:vite\"",
-    "dev:proxy": "portless proxy start --port 1355 || true",
+    "dev:proxy": "portless proxy start --port 1355 --no-tls || true",
     "dev:db": "bun run scripts/dev-db.ts",
     "dev:vite": "CLOUDFLARE_INCLUDE_PROCESS_ENV=true op run --env-file=.env.op -- portless run --name executor-cloud vite dev",
     "db:generate": "drizzle-kit generate",

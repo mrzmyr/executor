@@ -104,6 +104,7 @@
     "tsup": "^8.5.0"
   },
   "patchedDependencies": {
-    "postgres@3.4.9": "patches/postgres@3.4.9.patch"
+    "postgres@3.4.9": "patches/postgres@3.4.9.patch",
+    "@cloudflare/vite-plugin@1.31.2": "patches/@cloudflare%2Fvite-plugin@1.31.2.patch"
   }
 }

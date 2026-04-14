@@ -7,7 +7,7 @@
     ".": "./src/index.ts"
   },
   "scripts": {
-    "dev": "portless run --name executor-local bunx --bun vite dev",
+    "dev": "portless run --no-tls --name executor-local bunx --bun vite dev",
     "build": "bunx --bun vite build",
     "start": "bun run src/serve.ts",
     "typecheck": "tsgo --noEmit",

@@ -12,6 +12,11 @@ describe("normalizeCode", () => {
     expect(normalizeCode(code)).toBe(code);
   });
 
+  it("strips export default from an async arrow", () => {
+    const code = "export default async () => 42";
+    expect(normalizeCode(code)).toBe("async () => 42");
+  });
+
   it("wraps a bare expression in an async arrow", () => {
     const result = normalizeCode("1 + 2");
     expect(result).toContain("async () =>");
@@ -28,6 +33,17 @@ describe("normalizeCode", () => {
   it("wraps an async function declaration", () => {
     const result = normalizeCode("async function run() { return 'ok'; }");
     expect(result).toContain("return run();");
+  });
+
+  it("wraps an exported default named async function declaration", () => {
+    const result = normalizeCode("export default async function run() { return 'ok'; }");
+    expect(result).toContain("async function run()");
+    expect(result).toContain("return run();");
+  });
+
+  it("wraps an exported default anonymous async function declaration", () => {
+    const result = normalizeCode("export default async function () { return 'ok'; }");
+    expect(result).toBe("async () => (async function () { return 'ok'; })()");
   });
 
   it("strips markdown code fences", () => {

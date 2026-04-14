@@ -5,12 +5,14 @@
 import { env } from "cloudflare:workers";
 import { createRemoteJWKSet, jwtVerify } from "jose";
 
+import { server } from "./env";
+
 // ---------------------------------------------------------------------------
 // Constants
 // ---------------------------------------------------------------------------
 
-const AUTHKIT_DOMAIN = "https://signin.executor.sh";
-const RESOURCE_ORIGIN = "https://executor.sh";
+const AUTHKIT_DOMAIN = server.MCP_AUTHKIT_DOMAIN;
+const RESOURCE_ORIGIN = server.MCP_RESOURCE_ORIGIN;
 const JWKS_URL = new URL(`${AUTHKIT_DOMAIN}/oauth2/jwks`);
 
 const jwks = createRemoteJWKSet(JWKS_URL);

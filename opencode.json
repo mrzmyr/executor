@@ -1,0 +1,10 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "mcp": {
+    "executor": {
+      "type": "remote",
+      "url": "http://executor-cloud.localhost:1355/mcp",
+      "enabled": true
+    }
+  }
+}

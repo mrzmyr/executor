@@ -15,6 +15,8 @@ import type { DrizzleDb } from "@executor/storage-postgres";
 import * as sharedSchema from "@executor/storage-postgres/schema";
 
 import { UserStoreService } from "./auth/context";
+import { resolveOrganization } from "./auth/resolve-organization";
+import { WorkOSAuth } from "./auth/workos";
 import { server } from "./env";
 import { createOrgExecutor } from "./services/executor";
 import { DbService } from "./services/db";
@@ -105,11 +107,10 @@ export class McpSessionDO extends DurableObject {
 
     const DbLive = Layer.succeed(DbService, this.dbHandle.db);
     const UserStoreLive = UserStoreService.Live.pipe(Layer.provide(DbLive));
-    const Services = Layer.mergeAll(DbLive, UserStoreLive);
+    const Services = Layer.mergeAll(DbLive, UserStoreLive, WorkOSAuth.Default);
 
     const program = Effect.gen(function* () {
-      const users = yield* UserStoreService;
-      const org = yield* users.use((store) => store.getOrganization(token.organizationId));
+      const org = yield* resolveOrganization(token.organizationId);
       if (!org)
         return yield* new OrganizationNotFoundError({ organizationId: token.organizationId });
 

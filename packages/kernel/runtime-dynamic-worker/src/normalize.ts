@@ -12,6 +12,9 @@ const stripCodeFences = (code: string): string => {
   return match ? match[1]! : code;
 };
 
+const stripDefaultExport = (source: string): string =>
+  source.replace(/^export\s+default\s+/, "").trim();
+
 /**
  * Detect whether `source` is already an async arrow function expression.
  *
@@ -27,7 +30,7 @@ const looksLikeArrowFunction = (source: string): boolean =>
  * Detect a single named function declaration (sync or async).
  */
 const looksLikeFunctionDeclaration = (source: string): boolean =>
-  /^(async\s+)?function\s+[a-zA-Z_$]/.test(source);
+  /^(async\s+)?function(?:\s+[a-zA-Z_$][a-zA-Z0-9_$]*)?\s*\(/.test(source);
 
 /**
  * Normalize user code into an async arrow function body.
@@ -39,15 +42,21 @@ export const normalizeCode = (code: string): string => {
   if (!trimmed) return "async () => {}";
 
   const source = trimmed.trim();
+  const withoutDefaultExport = stripDefaultExport(source);
 
   // Already an arrow function — pass through.
-  if (looksLikeArrowFunction(source)) return source;
+  if (looksLikeArrowFunction(withoutDefaultExport)) return withoutDefaultExport;
 
   // Single named function declaration — wrap and call.
-  if (looksLikeFunctionDeclaration(source)) {
-    const nameMatch = source.match(/^(?:async\s+)?function\s+([a-zA-Z_$][a-zA-Z0-9_$]*)/);
+  if (looksLikeFunctionDeclaration(withoutDefaultExport)) {
+    const nameMatch = withoutDefaultExport.match(
+      /^(?:async\s+)?function\s+([a-zA-Z_$][a-zA-Z0-9_$]*)/,
+    );
     const name = nameMatch?.[1] ?? "fn";
-    return `async () => {\n${source}\nreturn ${name}();\n}`;
+    if (!nameMatch) {
+      return `async () => (${withoutDefaultExport})()`;
+    }
+    return `async () => {\n${withoutDefaultExport}\nreturn ${name}();\n}`;
   }
 
   // Treat everything else as statement(s) — wrap in an async arrow.
