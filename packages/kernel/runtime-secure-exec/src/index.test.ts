@@ -1,5 +1,4 @@
-import { expect, it } from "@effect/vitest";
-import { describe } from "vitest";
+import { describe, expect, it } from "@effect/vitest";
 import { assertInclude } from "@effect/vitest/utils";
 import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
