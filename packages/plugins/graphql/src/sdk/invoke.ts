@@ -138,14 +138,14 @@ export const invokeWithLayer = (
   endpoint: string,
   resolvedHeaders: Record<string, string>,
   httpClientLayer: Layer.Layer<HttpClient.HttpClient>,
-): Effect.Effect<InvocationResult, Error> =>
+) =>
   invoke(operation, args, endpoint, resolvedHeaders).pipe(
     Effect.provide(httpClientLayer),
     Effect.mapError((err) =>
-      err instanceof Error
+      err instanceof GraphqlInvocationError
         ? err
         : new GraphqlInvocationError({
-            message: String(err),
+            message: err instanceof Error ? err.message : String(err),
             statusCode: Option.none(),
             cause: err,
           }),

@@ -165,7 +165,7 @@ export interface StaticToolDecl<TStore = unknown> {
   readonly annotations?: ToolAnnotations;
   readonly handler: (
     input: StaticToolHandlerInput<TStore>,
-  ) => Effect.Effect<unknown, Error>;
+  ) => Effect.Effect<unknown, unknown>;
 }
 
 export interface StaticSourceDecl<TStore = unknown> {
@@ -247,7 +247,7 @@ export interface PluginSpec<
    *  only static tools can omit it. */
   readonly invokeTool?: (
     input: InvokeToolInput<TStore>,
-  ) => Effect.Effect<unknown, Error>;
+  ) => Effect.Effect<unknown, unknown>;
 
   /** Bulk resolve annotations (requiresApproval, approvalDescription,
    *  mayElicit) for a set of tool rows under a single source. Called
@@ -270,7 +270,7 @@ export interface PluginSpec<
     readonly ctx: PluginCtx<TStore>;
     readonly sourceId: string;
     readonly toolRows: readonly ToolRow[];
-  }) => Effect.Effect<Record<string, ToolAnnotations>, Error>;
+  }) => Effect.Effect<Record<string, ToolAnnotations>, unknown>;
 
   /** Called when `executor.sources.remove(id)` targets a source owned
    *  by this plugin. Plugin-side cleanup only; the executor deletes
@@ -278,11 +278,11 @@ export interface PluginSpec<
    *  the same transaction. */
   readonly removeSource?: (
     input: SourceLifecycleInput<TStore>,
-  ) => Effect.Effect<void, Error>;
+  ) => Effect.Effect<void, unknown>;
 
   readonly refreshSource?: (
     input: SourceLifecycleInput<TStore>,
-  ) => Effect.Effect<void, Error>;
+  ) => Effect.Effect<void, unknown>;
 
   /** URL autodetection hook. When the user pastes a URL in the
    *  onboarding UI, `executor.sources.detect(url)` fans out to every
@@ -293,7 +293,7 @@ export interface PluginSpec<
   readonly detect?: (input: {
     readonly ctx: PluginCtx<TStore>;
     readonly url: string;
-  }) => Effect.Effect<SourceDetectionResult | null, Error>;
+  }) => Effect.Effect<SourceDetectionResult | null, unknown>;
 
   /** Secret providers contributed by this plugin. Either a static
    *  array or a function of ctx (for providers that need per-instance
@@ -304,7 +304,7 @@ export interface PluginSpec<
     | readonly SecretProvider[]
     | ((ctx: PluginCtx<TStore>) => readonly SecretProvider[]);
 
-  readonly close?: () => Effect.Effect<void, Error>;
+  readonly close?: () => Effect.Effect<void, unknown>;
 }
 
 export interface Plugin<

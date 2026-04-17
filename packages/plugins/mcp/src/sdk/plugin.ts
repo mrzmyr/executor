@@ -292,7 +292,7 @@ interface McpRuntime {
   readonly cacheScope: Scope.CloseableScope;
 }
 
-const makeRuntime = (): Effect.Effect<McpRuntime, Error> =>
+const makeRuntime = (): Effect.Effect<McpRuntime, never> =>
   Effect.gen(function* () {
     const cacheScope = yield* Scope.make();
     const pendingConnectors = new Map<
@@ -404,7 +404,7 @@ export const mcpPlugin = definePlugin(
     // connection cache across a single createExecutor lifecycle.
     const runtimeRef: { current: McpRuntime | null } = { current: null };
 
-    const ensureRuntime = (): Effect.Effect<McpRuntime, Error> =>
+    const ensureRuntime = (): Effect.Effect<McpRuntime, never> =>
       runtimeRef.current
         ? Effect.succeed(runtimeRef.current)
         : makeRuntime().pipe(
