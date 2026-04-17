@@ -43,6 +43,7 @@
     "typecheck:slow": "tsc --noEmit"
   },
   "dependencies": {
+    "@executor/storage-core": "workspace:*",
     "effect": "catalog:"
   },
   "devDependencies": {

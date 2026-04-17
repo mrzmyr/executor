@@ -154,6 +154,34 @@ const createEmbeddedWebUISource = async (mode: BuildMode) => {
 };
 
 // ---------------------------------------------------------------------------
+// Embedded drizzle migrations — inlined as text imports so drizzle's
+// `migrate()` (which reads a folder from disk) can be given a tmpdir
+// populated from the inlined contents at runtime.
+// ---------------------------------------------------------------------------
+
+const createEmbeddedMigrationsSource = async () => {
+  const migrationsDir = resolve(webRoot, "drizzle");
+  const files = (await Array.fromAsync(new Bun.Glob("**/*").scan({ cwd: migrationsDir })))
+    .map((f) => f.replaceAll("\\", "/"))
+    .sort();
+
+  const imports = files.map((file, i) => {
+    const spec = join(migrationsDir, file).replaceAll("\\", "/");
+    return `import file_${i} from ${JSON.stringify(spec)} with { type: "text" };`;
+  });
+
+  const entries = files.map((file, i) => `  ${JSON.stringify(file)}: file_${i},`);
+
+  return [
+    "// Auto-generated — maps migration paths to inlined file contents",
+    ...imports,
+    "export default {",
+    ...entries,
+    "} as Record<string, string>;",
+  ].join("\n");
+};
+
+// ---------------------------------------------------------------------------
 // Bun.build plugin for @secure-exec bundling issues
 // ---------------------------------------------------------------------------
 
@@ -254,17 +282,24 @@ export function getBridgeAttachCode() { return bridgeAttachCode; }
 // ---------------------------------------------------------------------------
 
 const EMBEDDED_WEB_UI_STUB = `const files: Record<string, string> | null = null;\n\nexport default files;\n`;
+const EMBEDDED_MIGRATIONS_STUB = `const migrations: Record<string, string> | null = null;\n\nexport default migrations;\n`;
 
 const buildBinaries = async (targets: Target[], mode: BuildMode) => {
   const meta = await readMetadata();
   const binaries: Record<string, string> = {};
   const embeddedWebUIPath = join(cliRoot, "src/embedded-web-ui.gen.ts");
+  const embeddedMigrationsPath = join(webRoot, "src/server/embedded-migrations.gen.ts");
 
   await rm(distDir, { recursive: true, force: true });
 
   console.log(`Generating embedded web UI bundle (${mode})...`);
   const embeddedWebUI = await createEmbeddedWebUISource(mode);
   await writeFile(embeddedWebUIPath, `${embeddedWebUI}\n`);
+
+  console.log("Generating embedded drizzle migrations...");
+  const embeddedMigrations = await createEmbeddedMigrationsSource();
+  await writeFile(embeddedMigrationsPath, `${embeddedMigrations}\n`);
+
   const quickJsWasmPath = resolveQuickJsWasmPath();
 
   try {
@@ -328,6 +363,7 @@ const buildBinaries = async (targets: Target[], mode: BuildMode) => {
     return binaries;
   } finally {
     await writeFile(embeddedWebUIPath, EMBEDDED_WEB_UI_STUB);
+    await writeFile(embeddedMigrationsPath, EMBEDDED_MIGRATIONS_STUB);
   }
 };
 
@@ -384,6 +420,110 @@ const buildWrapperPackage = async (binaries: Record<string, string>) => {
   console.log(`\nWrapper package: ${wrapperDir}`);
   console.log(`  ${meta.name}@${meta.version}`);
   console.log(`  release assets: ${Object.keys(binaries).join(", ")}`);
+};
+
+// ---------------------------------------------------------------------------
+// Preview wrapper — a slim npm package for pkg.pr.new previews that fetches
+// the platform binary from our R2 bucket at install time.
+//
+// The release wrapper points postinstall at GitHub Releases. For previews
+// there's no release, so we upload per-PR tarballs to R2 (keyed by commit
+// SHA) and have a dedicated postinstall download from there.
+//
+// CI splits this in two:
+//   1. A matrix job per platform runs `buildPreviewTarballs` to produce
+//      dist/previews/<platform>.tar.gz, which it uploads to R2.
+//   2. A single publish job runs `buildPreviewWrapperPackage` with an
+//      explicit list of platforms and hands the wrapper to pkg.pr.new.
+//
+// Both paths require EXECUTOR_PREVIEW_CDN_URL and EXECUTOR_PREVIEW_SHA so
+// the postinstall URL embeds the right commit.
+// ---------------------------------------------------------------------------
+
+const buildPreviewTarballs = async (binaries: Record<string, string>) => {
+  const previewDir = join(distDir, "previews");
+  await mkdir(previewDir, { recursive: true });
+  for (const platformPkg of Object.keys(binaries)) {
+    const srcBinDir = join(distDir, platformPkg, "bin");
+    const tarPath = join(previewDir, `${platformPkg}.tar.gz`);
+    await $`tar -czf ${tarPath} .`.cwd(srcBinDir).quiet();
+    console.log(`Preview tarball: ${tarPath}`);
+  }
+};
+
+const resolveTargetsFromEnv = (env: string | undefined): Target[] => {
+  if (!env) throw new Error("EXECUTOR_PREVIEW_TARGETS must be set (comma-separated package names)");
+  const names = env.split(",").map((s) => s.trim()).filter(Boolean);
+  const resolved = names.map((name) => {
+    const match = ALL_TARGETS.find((t) => targetPackageName(t) === name);
+    if (!match) throw new Error(`Unknown preview target: ${name}`);
+    return match;
+  });
+  if (resolved.length === 0) throw new Error("EXECUTOR_PREVIEW_TARGETS resolved to an empty list");
+  return resolved;
+};
+
+const buildPreviewWrapperPackage = async (targets: Target[]) => {
+  const meta = await readMetadata();
+  const cdnUrl = process.env.EXECUTOR_PREVIEW_CDN_URL?.replace(/\/+$/, "");
+  const sha = process.env.EXECUTOR_PREVIEW_SHA;
+  if (!cdnUrl || !sha) {
+    throw new Error(
+      "preview build requires EXECUTOR_PREVIEW_CDN_URL and EXECUTOR_PREVIEW_SHA to be set",
+    );
+  }
+
+  const wrapperDir = join(distDir, meta.name);
+  const binDir = join(wrapperDir, "bin");
+  await mkdir(binDir, { recursive: true });
+
+  await writeFile(join(binDir, "executor"), NODE_SHIM);
+  await chmod(join(binDir, "executor"), 0o755);
+
+  const postinstall = PREVIEW_POSTINSTALL_SCRIPT.replaceAll(
+    "__CDN_BASE_URL__",
+    `${cdnUrl}/${sha}`,
+  );
+  await writeFile(join(wrapperDir, "postinstall.cjs"), postinstall);
+
+  // Restrict os/cpu to platforms we actually built this run so npm refuses
+  // the install on anything else — a clear error beats a cryptic 404 from
+  // postinstall on an unbuilt platform.
+  const osList = Array.from(new Set(targets.map((t) => t.os)));
+  const cpuList = Array.from(new Set(targets.map((t) => t.arch)));
+
+  await writeFile(
+    join(wrapperDir, "package.json"),
+    JSON.stringify(
+      {
+        name: meta.name,
+        version: meta.version,
+        description: meta.description,
+        keywords: meta.keywords,
+        homepage: meta.homepage,
+        bugs: meta.bugs,
+        repository: meta.repository,
+        license: meta.license,
+        bin: { executor: "bin/executor" },
+        files: ["bin", "postinstall.cjs", "README.md"],
+        scripts: { postinstall: "node ./postinstall.cjs" },
+        os: osList,
+        cpu: cpuList,
+        engines: { node: ">=20" },
+      },
+      null,
+      2,
+    ) + "\n",
+  );
+
+  const readmePath = join(repoRoot, "README.md");
+  if (existsSync(readmePath)) {
+    await cp(readmePath, join(wrapperDir, "README.md"));
+  }
+
+  console.log(`\nPreview wrapper: ${wrapperDir}`);
+  console.log(`  ${meta.name}@${meta.version} — CDN ${cdnUrl}/${sha}`);
+  console.log(`  targets: ${targets.map(targetPackageName).join(", ")}`);
 };
 
 // ---------------------------------------------------------------------------
@@ -652,6 +792,89 @@ const extract = () => {
 `;
 
 // ---------------------------------------------------------------------------
+// Preview postinstall — download per-PR tarballs from our R2 CDN instead of
+// GitHub Releases. The __CDN_BASE_URL__ placeholder is replaced at build time
+// with `${cdnBase}/${sha}` so each preview fetches its own commit's binary.
+// ---------------------------------------------------------------------------
+
+const PREVIEW_POSTINSTALL_SCRIPT = `#!/usr/bin/env node
+const childProcess = require("child_process");
+const fs = require("fs");
+const path = require("path");
+const os = require("os");
+
+const CDN_BASE = "__CDN_BASE_URL__";
+const packageDir = path.dirname(fs.realpathSync(__filename));
+const binDir = path.join(packageDir, "bin");
+const runtimeDir = path.join(binDir, "runtime");
+
+const platformMap = { darwin: "darwin", linux: "linux", win32: "windows" };
+const platform = platformMap[os.platform()] || os.platform();
+const arch = os.arch() === "arm64" ? "arm64" : "x64";
+const binary = platform === "windows" ? "executor.exe" : "executor";
+const cachedBinary = path.join(runtimeDir, binary);
+
+const isMusl = (() => {
+  if (platform !== "linux") return false;
+  try { if (fs.existsSync("/etc/alpine-release")) return true; } catch {}
+  try {
+    const r = childProcess.spawnSync("ldd", ["--version"], { encoding: "utf8" });
+    if (((r.stdout || "") + (r.stderr || "")).toLowerCase().includes("musl")) return true;
+  } catch {}
+  return false;
+})();
+
+const assetBase = (() => {
+  const base = "executor-" + platform + "-" + arch;
+  return platform === "linux" && isMusl ? base + "-musl" : base;
+})();
+const archiveName = assetBase + ".tar.gz";
+const downloadUrl = CDN_BASE + "/" + archiveName;
+const archivePath = path.join(packageDir, archiveName);
+
+const run = (command, args) => {
+  const result = childProcess.spawnSync(command, args, { stdio: "inherit" });
+  if (result.error) throw result.error;
+  if (typeof result.status === "number" && result.status !== 0) {
+    throw new Error(command + " exited with code " + result.status);
+  }
+};
+
+const download = async () => {
+  const response = await fetch(downloadUrl, { redirect: "follow" });
+  if (!response.ok) {
+    throw new Error(
+      "Failed to download " + downloadUrl + " (status " + response.status + "). " +
+      "This preview build may not cover your platform (" + assetBase + ")."
+    );
+  }
+  const arrayBuffer = await response.arrayBuffer();
+  fs.writeFileSync(archivePath, Buffer.from(arrayBuffer));
+};
+
+(async () => {
+  try {
+    await download();
+
+    fs.mkdirSync(binDir, { recursive: true });
+    fs.rmSync(runtimeDir, { recursive: true, force: true });
+    fs.mkdirSync(runtimeDir, { recursive: true });
+    run("tar", ["-xzf", archivePath, "-C", runtimeDir]);
+
+    if (!fs.existsSync(cachedBinary)) {
+      throw new Error("Expected extracted binary at " + cachedBinary);
+    }
+    if (platform !== "windows") fs.chmodSync(cachedBinary, 0o755);
+    fs.rmSync(archivePath, { force: true });
+    console.log("executor: installed preview " + assetBase + " from " + CDN_BASE);
+  } catch (error) {
+    console.error("executor preview postinstall failed:", error && error.message ? error.message : error);
+    process.exit(1);
+  }
+})();
+`;
+
+// ---------------------------------------------------------------------------
 // CLI
 // ---------------------------------------------------------------------------
 
@@ -675,6 +898,24 @@ if (command === "binary") {
   const targets = values.single ? ALL_TARGETS.filter(isCurrentPlatform) : ALL_TARGETS;
   const binaries = await buildBinaries(targets, mode);
   await buildWrapperPackage(binaries);
+} else if (command === "preview") {
+  // End-to-end preview build for local testing: binary for the current
+  // platform + tarball + wrapper, all in one step.
+  const targets = ALL_TARGETS.filter(isCurrentPlatform);
+  const binaries = await buildBinaries(targets, mode);
+  await buildPreviewTarballs(binaries);
+  await buildPreviewWrapperPackage(targets);
+} else if (command === "preview-tarball") {
+  // CI matrix job: build the current runner's binary + tarball only.
+  // The wrapper is built separately once all matrix entries have uploaded.
+  const targets = ALL_TARGETS.filter(isCurrentPlatform);
+  const binaries = await buildBinaries(targets, mode);
+  await buildPreviewTarballs(binaries);
+} else if (command === "preview-wrapper") {
+  // CI publish job: build just the npm wrapper, with os/cpu restricted to
+  // the platforms listed in EXECUTOR_PREVIEW_TARGETS (comma-separated).
+  const targets = resolveTargetsFromEnv(process.env.EXECUTOR_PREVIEW_TARGETS);
+  await buildPreviewWrapperPackage(targets);
 } else if (command === "release-assets") {
   await createReleaseAssets();
 } else if (command === "publish") {
@@ -683,6 +924,9 @@ if (command === "binary") {
 } else {
   console.log(`Usage:
   bun run build.ts binary [--single] [--mode production|development]
+  bun run build.ts preview [--mode production|development]
+  bun run build.ts preview-tarball [--mode production|development]
+  bun run build.ts preview-wrapper
   bun run build.ts release-assets
   bun run build.ts publish [channel]`);
   process.exit(1);

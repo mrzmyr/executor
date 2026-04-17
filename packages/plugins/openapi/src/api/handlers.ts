@@ -1,17 +1,21 @@
 import { HttpApiBuilder, HttpServerResponse } from "@effect/platform";
-import { Context, Effect } from "effect";
+import { Cause, Context, Effect } from "effect";
 
 import { runOAuthCallback } from "@executor/plugin-oauth2/http";
 
 import { addGroup } from "@executor/api";
-import { OpenApiOAuthError } from "../sdk/errors";
+import {
+  OpenApiExtractionError,
+  OpenApiOAuthError,
+  OpenApiParseError,
+} from "../sdk/errors";
 import type {
   OpenApiPluginExtension,
   HeaderValue,
   OpenApiUpdateSourceInput,
 } from "../sdk/plugin";
 import { OAuth2Auth } from "../sdk/types";
-import { OpenApiGroup } from "./group";
+import { OpenApiGroup, OpenApiInternalError } from "./group";
 
 const OPENAPI_OAUTH_CHANNEL = "executor:openapi-oauth-result";
 
@@ -30,6 +34,42 @@ export class OpenApiExtensionService extends Context.Tag("OpenApiExtensionServic
 >() {}
 
 // ---------------------------------------------------------------------------
+// Failure mapping
+// ---------------------------------------------------------------------------
+
+type OpenApiSpecFailure = OpenApiParseError | OpenApiExtractionError | OpenApiInternalError;
+
+const toOpenApiSpecFailure = (error: unknown): OpenApiSpecFailure => {
+  if (
+    error instanceof OpenApiParseError ||
+    error instanceof OpenApiExtractionError ||
+    error instanceof OpenApiInternalError
+  ) {
+    return error;
+  }
+  const message = error instanceof Error ? error.message : String(error);
+  return new OpenApiInternalError({ message });
+};
+
+const sanitizeSpecFailure = <A, R>(
+  effect: Effect.Effect<A, unknown, R>,
+): Effect.Effect<A, OpenApiSpecFailure, R> =>
+  Effect.catchAllCause(effect, (cause) => Effect.fail(toOpenApiSpecFailure(Cause.squash(cause))));
+
+const toOpenApiInternalError = (error: unknown): OpenApiInternalError => {
+  if (error instanceof OpenApiInternalError) return error;
+  const message = error instanceof Error ? error.message : String(error);
+  return new OpenApiInternalError({ message });
+};
+
+const sanitizeInternalFailure = <A, R>(
+  effect: Effect.Effect<A, unknown, R>,
+): Effect.Effect<A, OpenApiInternalError, R> =>
+  Effect.catchAllCause(effect, (cause) =>
+    Effect.fail(toOpenApiInternalError(Cause.squash(cause))),
+  );
+
+// ---------------------------------------------------------------------------
 // Composed API — core + openapi group
 // ---------------------------------------------------------------------------
 
@@ -45,7 +85,7 @@ export const OpenApiHandlers = HttpApiBuilder.group(ExecutorApiWithOpenApi, "ope
       Effect.gen(function* () {
         const ext = yield* OpenApiExtensionService;
         return yield* ext.previewSpec(payload.spec);
-      }).pipe(Effect.orDie),
+      }).pipe(sanitizeSpecFailure),
     )
     .handle("addSpec", ({ payload }) =>
       Effect.gen(function* () {
@@ -60,15 +100,15 @@ export const OpenApiHandlers = HttpApiBuilder.group(ExecutorApiWithOpenApi, "ope
         });
         return {
           toolCount: result.toolCount,
-          namespace: payload.namespace ?? "api",
+          namespace: result.sourceId,
         };
-      }).pipe(Effect.orDie),
+      }).pipe(sanitizeSpecFailure),
     )
     .handle("getSource", ({ path }) =>
       Effect.gen(function* () {
         const ext = yield* OpenApiExtensionService;
         return yield* ext.getSource(path.namespace);
-      }).pipe(Effect.orDie),
+      }).pipe(sanitizeInternalFailure),
     )
     .handle("updateSource", ({ path, payload }) =>
       Effect.gen(function* () {
@@ -79,7 +119,7 @@ export const OpenApiHandlers = HttpApiBuilder.group(ExecutorApiWithOpenApi, "ope
           headers: payload.headers as Record<string, HeaderValue> | undefined,
         } as OpenApiUpdateSourceInput);
         return { updated: true };
-      }).pipe(Effect.orDie),
+      }).pipe(sanitizeInternalFailure),
     )
     .handle("startOAuth", ({ payload }) =>
       Effect.gen(function* () {
@@ -122,6 +162,6 @@ export const OpenApiHandlers = HttpApiBuilder.group(ExecutorApiWithOpenApi, "ope
           channelName: OPENAPI_OAUTH_CHANNEL,
         });
         return yield* HttpServerResponse.html(html);
-      }).pipe(Effect.orDie),
+      }).pipe(sanitizeInternalFailure),
     ),
 );

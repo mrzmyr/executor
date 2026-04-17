@@ -1,0 +1,25 @@
+{
+  "name": "@executor/storage-core",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./testing": "./src/testing/conformance.ts",
+    "./testing/memory": "./src/testing/memory.ts"
+  },
+  "scripts": {
+    "test": "vitest run",
+    "typecheck": "tsgo --noEmit",
+    "typecheck:slow": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@effect/vitest": "catalog:",
+    "@standard-schema/spec": "^1.0.0",
+    "effect": "catalog:",
+    "vitest": "catalog:"
+  },
+  "devDependencies": {
+    "typescript": "catalog:"
+  }
+}

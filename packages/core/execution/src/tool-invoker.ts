@@ -2,7 +2,7 @@ import { Effect } from "effect";
 import type {
   Executor,
   ToolId,
-  ToolMetadata,
+  Tool,
   ToolSchema,
   InvokeOptions,
   Source,
@@ -30,10 +30,20 @@ export const makeExecutorToolInvoker = (
           ),
         ),
       );
-      if (result.error !== null && result.error !== undefined) {
-        return yield* Effect.fail(result.error);
+      const r = result as { readonly error?: unknown; readonly data?: unknown } | unknown;
+      if (
+        r !== null &&
+        typeof r === "object" &&
+        "error" in r &&
+        (r as { error?: unknown }).error !== null &&
+        (r as { error?: unknown }).error !== undefined
+      ) {
+        return yield* Effect.fail((r as { error: unknown }).error);
       }
-      return result.data;
+      if (r !== null && typeof r === "object" && "data" in r) {
+        return (r as { data: unknown }).data;
+      }
+      return r;
     }),
 });
 
@@ -55,7 +65,7 @@ export type ExecutorSourceListItem = {
   readonly toolCount: number;
 };
 
-type SearchableTool = Pick<ToolMetadata, "id" | "sourceId" | "name" | "description">;
+type SearchableTool = Pick<Tool, "id" | "sourceId" | "name" | "description">;
 
 type PreparedField = {
   readonly raw: string;
@@ -247,10 +257,10 @@ export const searchTools = (
       return [];
     }
 
-    const all = yield* executor.tools.list();
+    const all = yield* executor.tools.list().pipe(Effect.orDie);
     return all
-      .filter((tool: ToolMetadata) => matchesNamespace(tool, options?.namespace))
-      .map((tool: ToolMetadata) => scoreToolMatch(tool, query))
+      .filter((tool: Tool) => matchesNamespace(tool, options?.namespace))
+      .map((tool: Tool) => scoreToolMatch(tool, query))
       .filter((tool): tool is ToolDiscoveryResult => tool !== null)
       .sort((left, right) => right.score - left.score || left.path.localeCompare(right.path))
       .slice(0, limit);
@@ -264,7 +274,7 @@ export const listExecutorSources = (
   Effect.gen(function* () {
     const normalizedQuery = normalizeSearchText(options?.query ?? "");
     const limit = options?.limit ?? 200;
-    const sources = yield* executor.sources.list();
+    const sources = yield* executor.sources.list().pipe(Effect.orDie);
 
     const filtered =
       normalizedQuery.length === 0
@@ -274,24 +284,24 @@ export const listExecutorSources = (
             return tokenizeSearchText(normalizedQuery).every((token) => haystack.includes(token));
           });
 
-    const withCounts = yield* Effect.forEach(
-      filtered,
+    // Single query for all tools, then count per source in memory.
+    const allTools = yield* executor.tools.list().pipe(Effect.orDie);
+    const toolCountBySource = new Map<string, number>();
+    for (const tool of allTools) {
+      toolCountBySource.set(tool.sourceId, (toolCountBySource.get(tool.sourceId) ?? 0) + 1);
+    }
+
+    const withCounts = filtered.map(
       (source: Source) =>
-        executor.tools.list({ sourceId: source.id }).pipe(
-          Effect.map(
-            (tools) =>
-              ({
-                id: source.id,
-                name: source.name,
-                kind: source.kind,
-                runtime: source.runtime,
-                canRemove: source.canRemove,
-                canRefresh: source.canRefresh,
-                toolCount: tools.length,
-              }) satisfies ExecutorSourceListItem,
-          ),
-        ),
-      { concurrency: "unbounded" },
+        ({
+          id: source.id,
+          name: source.name,
+          kind: source.kind,
+          runtime: source.runtime,
+          canRemove: source.canRemove,
+          canRefresh: source.canRefresh,
+          toolCount: toolCountBySource.get(source.id) ?? 0,
+        }) satisfies ExecutorSourceListItem,
     );
 
     return withCounts
@@ -315,17 +325,22 @@ export const describeTool = (
   unknown
 > =>
   Effect.gen(function* () {
-    const metadata = (yield* executor.tools.list()).find((t: ToolMetadata) => t.id === path);
+    // Single tools.schema() call — it already fetches the tool row
+    // internally. No need to also call tools.list() just for name/description.
+    const schema: ToolSchema | null = yield* executor.tools.schema(path);
 
-    const base = {
-      path,
-      name: metadata?.name ?? path,
-      description: metadata?.description,
-    };
+    // tools.schema() returns null if the tool doesn't exist. Fall back to
+    // a minimal stub so callers can still render something.
+    if (schema === null) {
+      return { path, name: path };
+    }
 
-    const schema: ToolSchema = yield* executor.tools.schema(path);
+    // The schema's id is the tool path; name/description come from the
+    // tool row which tools.schema() already loaded.
     return {
-      ...base,
+      path,
+      name: schema.name ?? path,
+      description: schema.description,
       inputTypeScript: schema.inputTypeScript,
       outputTypeScript: schema.outputTypeScript,
       typeScriptDefinitions: schema.typeScriptDefinitions,
