@@ -93,16 +93,17 @@ export interface PendingSource {
 
 /**
  * Sidebar/list helper. Reads `sourcesAtom(scopeId)` and merges any pending
- * placeholder rows on top so the UI updates instantly when an add form pushes
- * a placeholder.
+ * placeholder rows in, sorting the combined list by name so the placeholder
+ * lands in the same position the canonical row will occupy — no visual jump
+ * when the server confirms.
  */
 export const useSourcesWithPending = (scopeId: ScopeId) => {
   const result = useAtomValue(sourcesAtom(scopeId));
   const { pending } = usePendingResource<PendingSource>(PendingResource.sources);
   return React.useMemo(
     () =>
-      Result.map(result, (sources) =>
-        mergePending(
+      Result.map(result, (sources) => {
+        const merged = mergePending(
           pending,
           sources,
           (s) => s.id,
@@ -117,8 +118,9 @@ export const useSourcesWithPending = (scopeId: ScopeId) => {
             canRefresh: false,
             canEdit: false,
           }),
-        ),
-      ),
+        );
+        return [...merged].sort((a, b) => a.name.localeCompare(b.name));
+      }),
     [result, pending],
   );
 };
