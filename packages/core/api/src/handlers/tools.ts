@@ -10,7 +10,7 @@ export const ToolsHandlers = HttpApiBuilder.group(ExecutorApi, "tools", (handler
     .handle("list", () =>
       Effect.gen(function* () {
         const executor = yield* ExecutorService;
-        const tools = yield* executor.tools.list().pipe(Effect.orDie);
+        const tools = yield* executor.tools.list();
         return tools.map((t) => ({
           id: ToolId.make(t.id),
           pluginId: t.pluginId,
@@ -24,7 +24,7 @@ export const ToolsHandlers = HttpApiBuilder.group(ExecutorApi, "tools", (handler
     .handle("schema", ({ path }) =>
       Effect.gen(function* () {
         const executor = yield* ExecutorService;
-        const schema = yield* executor.tools.schema(path.toolId).pipe(Effect.orDie);
+        const schema = yield* executor.tools.schema(path.toolId);
         if (schema === null) {
           return yield* Effect.fail(new ToolNotFoundError({ toolId: path.toolId }));
         }

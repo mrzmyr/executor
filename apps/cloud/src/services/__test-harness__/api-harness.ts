@@ -219,7 +219,7 @@ const buildAppForScope = (scopeId: string, scopeName: string) =>
     const engine = createExecutionEngine({ executor });
     const wrapped = withCapture(executor);
     const services = Layer.mergeAll(
-      Layer.succeed(ExecutorService, executor),
+      Layer.succeed(ExecutorService, wrapped),
       Layer.succeed(ExecutionEngineService, engine),
       Layer.succeed(OpenApiExtensionService, wrapped.openapi),
       Layer.succeed(McpExtensionService, wrapped.mcp),

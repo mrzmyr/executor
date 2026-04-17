@@ -113,7 +113,7 @@ export const createServerHandlers = async (): Promise<ServerHandlers> => {
       Layer.provideMerge(HttpApiBuilder.middlewareOpenApi()),
       Layer.provideMerge(LocalApiBase),
       Layer.provideMerge(pluginExtensions),
-      Layer.provideMerge(Layer.succeed(ExecutorService, executor)),
+      Layer.provideMerge(Layer.succeed(ExecutorService, wrapped)),
       Layer.provideMerge(Layer.succeed(ExecutionEngineService, engine)),
       Layer.provideMerge(HttpServer.layerContext),
       Layer.provideMerge(HttpRouter.setRouterConfig({ maxParamLength: 1000 })),

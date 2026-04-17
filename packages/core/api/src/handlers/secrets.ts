@@ -18,35 +18,33 @@ export const SecretsHandlers = HttpApiBuilder.group(ExecutorApi, "secrets", (han
     .handle("list", () =>
       Effect.gen(function* () {
         const executor = yield* ExecutorService;
-        const refs = yield* executor.secrets.list().pipe(Effect.orDie);
+        const refs = yield* executor.secrets.list();
         return refs.map(refToResponse);
       }),
     )
     .handle("status", ({ path }) =>
       Effect.gen(function* () {
         const executor = yield* ExecutorService;
-        const status = yield* executor.secrets.status(path.secretId).pipe(Effect.orDie);
+        const status = yield* executor.secrets.status(path.secretId);
         return { secretId: path.secretId, status };
       }),
     )
     .handle("set", ({ payload }) =>
       Effect.gen(function* () {
         const executor = yield* ExecutorService;
-        const ref = yield* executor.secrets
-          .set({
-            id: payload.id,
-            name: payload.name,
-            value: payload.value,
-            provider: payload.provider,
-          })
-          .pipe(Effect.orDie);
+        const ref = yield* executor.secrets.set({
+          id: payload.id,
+          name: payload.name,
+          value: payload.value,
+          provider: payload.provider,
+        });
         return refToResponse(ref);
       }),
     )
     .handle("resolve", ({ path }) =>
       Effect.gen(function* () {
         const executor = yield* ExecutorService;
-        const value = yield* executor.secrets.get(path.secretId).pipe(Effect.orDie);
+        const value = yield* executor.secrets.get(path.secretId);
         if (value === null) {
           return yield* Effect.fail(new SecretNotFoundError({ secretId: path.secretId }));
         }
@@ -56,7 +54,7 @@ export const SecretsHandlers = HttpApiBuilder.group(ExecutorApi, "secrets", (han
     .handle("remove", ({ path }) =>
       Effect.gen(function* () {
         const executor = yield* ExecutorService;
-        yield* executor.secrets.remove(path.secretId).pipe(Effect.orDie);
+        yield* executor.secrets.remove(path.secretId);
         return { removed: true };
       }),
     ),

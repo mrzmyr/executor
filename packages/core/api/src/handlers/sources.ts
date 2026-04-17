@@ -10,7 +10,7 @@ export const SourcesHandlers = HttpApiBuilder.group(ExecutorApi, "sources", (han
     .handle("list", () =>
       Effect.gen(function* () {
         const executor = yield* ExecutorService;
-        const sources = yield* executor.sources.list().pipe(Effect.orDie);
+        const sources = yield* executor.sources.list();
         return sources.map((s) => ({
           id: s.id,
           name: s.name,
@@ -26,23 +26,21 @@ export const SourcesHandlers = HttpApiBuilder.group(ExecutorApi, "sources", (han
     .handle("remove", ({ path }) =>
       Effect.gen(function* () {
         const executor = yield* ExecutorService;
-        yield* executor.sources.remove(path.sourceId).pipe(Effect.orDie);
+        yield* executor.sources.remove(path.sourceId);
         return { removed: true };
       }),
     )
     .handle("refresh", ({ path }) =>
       Effect.gen(function* () {
         const executor = yield* ExecutorService;
-        yield* executor.sources.refresh(path.sourceId).pipe(Effect.orDie);
+        yield* executor.sources.refresh(path.sourceId);
         return { refreshed: true };
       }),
     )
     .handle("tools", ({ path }) =>
       Effect.gen(function* () {
         const executor = yield* ExecutorService;
-        const tools = yield* executor.tools
-          .list({ sourceId: path.sourceId })
-          .pipe(Effect.orDie);
+        const tools = yield* executor.tools.list({ sourceId: path.sourceId });
         return tools.map((t) => ({
           id: ToolId.make(t.id),
           pluginId: t.pluginId,
@@ -56,7 +54,7 @@ export const SourcesHandlers = HttpApiBuilder.group(ExecutorApi, "sources", (han
     .handle("detect", ({ payload }) =>
       Effect.gen(function* () {
         const executor = yield* ExecutorService;
-        const results = yield* executor.sources.detect(payload.url).pipe(Effect.orDie);
+        const results = yield* executor.sources.detect(payload.url);
         return results.map((r) => ({
           kind: r.kind,
           confidence: r.confidence,

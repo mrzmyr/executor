@@ -146,6 +146,33 @@ const isPlainObject = (v: unknown): v is Record<string | symbol, unknown> => {
  *     Captured<McpPluginExtension>
  *   >() {}
  */
+// Opaque leaves that we DO NOT want `Captured<T>` to descend into at the
+// type level — the runtime Proxy also leaves these alone (via
+// `isPlainObject` returning false for class instances). Includes:
+//
+//   - primitives (branded strings/numbers show up as intersections with
+//     `{ [BrandTypeId]: ... }`, which TS reads as `extends object` — we
+//     have to exclude them explicitly),
+//   - common stdlib boxed types (Date, Promise, Error, Array),
+//   - Schema-class instances and tagged errors. These all carry a
+//     non-Object prototype at runtime so the Proxy short-circuits; the
+//     type mirror stops with the same shape.
+//
+// Anything else that's a plain object (the executor surface, plugin
+// extensions, their namespaced sub-objects) walks recursively.
+type CapturedOpaque =
+  | string
+  | number
+  | boolean
+  | bigint
+  | symbol
+  | null
+  | undefined
+  | Date
+  | Promise<unknown>
+  | Error
+  | readonly unknown[];
+
 export type Captured<T> = T extends (
   ...args: infer A
 ) => Effect.Effect<infer X, infer E, infer R>
@@ -154,9 +181,11 @@ export type Captured<T> = T extends (
     ) => Effect.Effect<X, Exclude<E, StorageFailure> | InternalError, R>
   : T extends (...args: infer A) => infer U
     ? (...args: A) => U
-    : T extends object
-      ? { readonly [K in keyof T]: Captured<T[K]> }
-      : T;
+    : T extends CapturedOpaque
+      ? T
+      : T extends object
+        ? { readonly [K in keyof T]: Captured<T[K]> }
+        : T;
 
 export const withCapture = <T extends object>(value: T): Captured<T> => {
   return new Proxy(value, {

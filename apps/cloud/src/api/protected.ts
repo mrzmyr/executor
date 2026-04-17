@@ -55,7 +55,7 @@ const createProtectedApp = (organizationId: string, organizationName: string) =>
     // already-captured shape. See notes/error-handling.md.
     const wrapped = withCapture(executor);
     const requestServices = Layer.mergeAll(
-      Layer.succeed(ExecutorService, executor),
+      Layer.succeed(ExecutorService, wrapped),
       Layer.succeed(ExecutionEngineService, engine),
       Layer.succeed(OpenApiExtensionService, wrapped.openapi),
       Layer.succeed(McpExtensionService, wrapped.mcp),
