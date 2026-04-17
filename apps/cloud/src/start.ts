@@ -1,7 +1,9 @@
 import { env } from "cloudflare:workers";
 import { createMiddleware, createStart } from "@tanstack/react-start";
+import { Effect } from "effect";
 import { handleApiRequest } from "./api";
 import { handleMcpRequest } from "./mcp";
+import { TelemetryLive } from "./services/telemetry";
 
 // ---------------------------------------------------------------------------
 // Marketing routes — proxied to the marketing worker via service binding
@@ -106,6 +108,25 @@ const sentryTunnelMiddleware = createMiddleware({ type: "request" }).server(
 );
 
 // ---------------------------------------------------------------------------
+// Debug middleware — /api/debug/boom triggers an Effect span + throw so we
+// can verify traces hit Axiom and errors hit Sentry. Safe to leave in prod
+// since it's gated on an exact path match and only ever fails.
+// ---------------------------------------------------------------------------
+
+const debugBoomMiddleware = createMiddleware({ type: "request" }).server(
+  async ({ pathname, next }) => {
+    if (pathname !== "/api/debug/boom") return next();
+    const program = Effect.gen(function* () {
+      yield* Effect.logInfo("debug boom: about to throw");
+      yield* Effect.sync(() => {
+        throw new Error("debug boom: telemetry smoke test");
+      });
+    }).pipe(Effect.withSpan("debug.boom"), Effect.provide(TelemetryLive));
+    return Effect.runPromise(program) as unknown as Response;
+  },
+);
+
+// ---------------------------------------------------------------------------
 // API middleware — routes /api/* to the Effect HTTP layer
 // ---------------------------------------------------------------------------
 
@@ -125,6 +146,7 @@ export const startInstance = createStart(() => ({
     marketingMiddleware,
     mcpRequestMiddleware,
     sentryTunnelMiddleware,
+    debugBoomMiddleware,
     apiRequestMiddleware,
   ],
 }));
