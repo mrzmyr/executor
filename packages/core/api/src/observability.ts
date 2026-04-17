@@ -36,7 +36,7 @@ import {
   type HttpApi,
   type HttpApiGroup,
 } from "@effect/platform";
-import { StorageError } from "@executor/storage-core";
+import type { StorageFailure } from "@executor/storage-core";
 
 /** Public 500 surface. Opaque by schema. */
 export class InternalError extends Schema.TaggedError<InternalError>()(
@@ -82,25 +82,34 @@ const resolveCapture = Effect.serviceOption(ErrorCapture).pipe(
 );
 
 /**
- * Translate `StorageError` in an Effect's typed channel to
- * `InternalError({ traceId })`, capturing the cause via `ErrorCapture`.
- * Every other typed failure (`UniqueViolationError`, plugin-domain
- * errors, etc.) passes through unchanged.
+ * HTTP-edge translator for `StorageFailure`. Two cases:
+ *
+ *   - `StorageError` — known backend failure. Capture the cause via
+ *     `ErrorCapture`, fail with `InternalError({ traceId })`.
+ *   - `UniqueViolationError` — invariant violation at the HTTP edge:
+ *     if a plugin wanted to surface a unique-conflict as a typed
+ *     domain error (e.g. "source already exists") it should
+ *     `Effect.catchTag` inside its own method and translate. Anything
+ *     that reaches here is unexpected, so we `Effect.die` and let the
+ *     observability middleware capture it as a defect.
+ *
+ * Every other typed failure (plugin-domain errors, etc.) passes
+ * through unchanged.
  */
 export const captureStorage = <A, E, R>(
   eff: Effect.Effect<A, E, R>,
-): Effect.Effect<A, Exclude<E, StorageError> | InternalError, R> =>
-  Effect.catchTag(
-    eff as Effect.Effect<A, E | StorageError, R>,
-    "StorageError",
-    (err) =>
+): Effect.Effect<A, Exclude<E, StorageFailure> | InternalError, R> =>
+  (eff as Effect.Effect<A, E | StorageFailure, R>).pipe(
+    Effect.catchTag("UniqueViolationError", (err) => Effect.die(err)),
+    Effect.catchTag("StorageError", (err) =>
       resolveCapture.pipe(
         Effect.flatMap((capture) => capture.captureException(Cause.fail(err))),
         Effect.flatMap((traceId) =>
           Effect.fail(new InternalError({ traceId })),
         ),
       ),
-  ) as Effect.Effect<A, Exclude<E, StorageError> | InternalError, R>;
+    ),
+  ) as Effect.Effect<A, Exclude<E, StorageFailure> | InternalError, R>;
 
 // ---------------------------------------------------------------------------
 // withStorageCapture — walk an object's methods and wrap each
@@ -135,7 +144,9 @@ const isPlainObject = (v: unknown): v is Record<string | symbol, unknown> => {
 export type StorageCaptured<T> = T extends (
   ...args: infer A
 ) => Effect.Effect<infer X, infer E, infer R>
-  ? (...args: A) => Effect.Effect<X, Exclude<E, StorageError> | InternalError, R>
+  ? (
+      ...args: A
+    ) => Effect.Effect<X, Exclude<E, StorageFailure> | InternalError, R>
   : T extends (...args: infer A) => infer U
     ? (...args: A) => U
     : T extends object

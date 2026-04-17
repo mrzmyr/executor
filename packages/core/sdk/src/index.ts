@@ -10,6 +10,7 @@ export type {
   DBSchema,
   DBFieldAttribute,
   DBFieldType,
+  StorageFailure,
   TypedAdapter,
   Where,
   WhereOperator,

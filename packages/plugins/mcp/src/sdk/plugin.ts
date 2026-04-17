@@ -8,8 +8,8 @@ import {
   SecretId,
   SetSecretInput,
   SourceDetectionResult,
-  StorageError,
   type PluginCtx,
+  type StorageFailure,
 } from "@executor/sdk";
 
 import {
@@ -213,7 +213,7 @@ const resolveConnectorInput = (
   sd: McpStoredSourceData,
   ctx: PluginCtx<McpBindingStore>,
   allowStdio: boolean,
-): Effect.Effect<ConnectorInput, Error> => {
+): Effect.Effect<ConnectorInput, McpConnectionError | StorageFailure> => {
   if (sd.transport === "stdio") {
     if (!allowStdio) {
       return Effect.fail(
@@ -789,11 +789,6 @@ export const mcpPlugin = definePlugin(
         const getSource = (namespace: string) =>
           ctx.storage.getSource(namespace);
 
-        // Cast widens each method's inferred error union to the declared
-        // `McpExtensionFailure`. The internal helpers still leak generic
-        // `Error` from places like the MCP SDK's auth flow that we
-        // haven't yet narrowed — TODO: tighten those, then drop this
-        // cast in favour of `satisfies McpPluginExtension`.
         return {
           probeEndpoint,
           addSource,
@@ -803,7 +798,7 @@ export const mcpPlugin = definePlugin(
           completeOAuth,
           getSource,
           updateSource,
-        } as unknown as McpPluginExtension;
+        } satisfies McpPluginExtension;
       },
 
       invokeTool: ({ ctx, toolRow, args, elicit }) =>
@@ -948,19 +943,19 @@ export const mcpPlugin = definePlugin(
 /**
  * Errors any MCP extension method may surface. The first four are
  * plugin-domain tagged errors that flow directly to clients (4xx, each
- * carrying its own `HttpApiSchema` status). `StorageError` is the raw
- * backend-failure tag; the HTTP edge (`@executor/api`'s
- * `withStorageCapture`) translates it to the opaque
- * `InternalError({ traceId })` at Layer composition so handlers never
- * hand-wire the translation. Non-HTTP consumers see `StorageError`
- * directly.
+ * carrying its own `HttpApiSchema` status). `StorageFailure` covers
+ * raw backend failures (`StorageError`) plus `UniqueViolationError`;
+ * the HTTP edge (`@executor/api`'s `withStorageCapture`) translates
+ * `StorageError` to the opaque `InternalError({ traceId })` at Layer
+ * composition. `UniqueViolationError` passes through — plugins can
+ * `Effect.catchTag` it if they want a friendlier user-facing error.
  */
 export type McpExtensionFailure =
   | McpOAuthError
   | McpConnectionError
   | McpToolDiscoveryError
   | McpInvocationError
-  | StorageError;
+  | StorageFailure;
 
 export interface McpPluginExtension {
   readonly probeEndpoint: (

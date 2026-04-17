@@ -69,12 +69,29 @@ describe("captureStorage", () => {
     }),
   );
 
-  it.effect("non-StorageError typed failures pass through unchanged", () =>
+  it.effect("UniqueViolationError dies (becomes a defect — plugins should catchTag before returning)", () =>
     Effect.gen(function* () {
       const err = new UniqueViolationError({ model: "thing" });
-      const result = yield* Effect.flip(captureStorage(Effect.fail(err)));
-      expect(result).toBeInstanceOf(UniqueViolationError);
-      expect((result as UniqueViolationError).model).toBe("thing");
+      const exit = yield* Effect.exit(captureStorage(Effect.fail(err)));
+      expect(exit._tag).toBe("Failure");
+      if (exit._tag === "Failure") {
+        const defects = Cause.defects(exit.cause);
+        expect(Array.from(defects)[0]).toBeInstanceOf(UniqueViolationError);
+      }
+    }),
+  );
+
+  it.effect("non-storage typed failures pass through unchanged", () =>
+    Effect.gen(function* () {
+      class DomainError {
+        readonly _tag = "DomainError" as const;
+      }
+      const eff = Effect.fail(new DomainError()) as Effect.Effect<
+        never,
+        DomainError
+      >;
+      const result = yield* Effect.flip(captureStorage(eff));
+      expect(result._tag).toBe("DomainError");
     }),
   );
 });
@@ -123,15 +140,19 @@ describe("withStorageCapture", () => {
     }),
   );
 
-  it.effect("lets UniqueViolationError propagate through the wrapper", () =>
+  it.effect("UniqueViolationError becomes a defect through the wrapper", () =>
     Effect.gen(function* () {
       const ext = {
         conflict: () =>
           Effect.fail(new UniqueViolationError({ model: "thing" })),
       };
       const wrapped = withStorageCapture(ext);
-      const result = yield* Effect.flip(wrapped.conflict());
-      expect(result).toBeInstanceOf(UniqueViolationError);
+      const exit = yield* Effect.exit(wrapped.conflict());
+      expect(exit._tag).toBe("Failure");
+      if (exit._tag === "Failure") {
+        const defects = Cause.defects(exit.cause);
+        expect(Array.from(defects)[0]).toBeInstanceOf(UniqueViolationError);
+      }
     }),
   );
 });
