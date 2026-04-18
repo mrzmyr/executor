@@ -316,6 +316,83 @@ const authorizationServerMetadata = Effect.promise(async () => {
 });
 
 // ---------------------------------------------------------------------------
+// Response-body peek for JSON-RPC error attrs
+// ---------------------------------------------------------------------------
+//
+// The MCP protocol wraps protocol-level failures (malformed envelope, method
+// not found, invalid params) as `{ error: { code, message } }` in the
+// JSON-RPC response body with HTTP 200 — none of which surface at the HTTP
+// layer or as an Effect failure. Same for tool results carrying
+// `isError: true`. To make those visible in Axiom we peek the first
+// JSON-RPC message out of the DO's response and stamp it onto the
+// surrounding `mcp.request` span.
+//
+// Only applied to non-streaming response shapes (POST/DELETE). GET hops
+// onto a long-lived SSE channel we don't want to consume.
+// ---------------------------------------------------------------------------
+
+type JsonRpcErrorBody = {
+  readonly jsonrpc?: string;
+  readonly error?: { readonly code?: number; readonly message?: string };
+  readonly result?: { readonly isError?: boolean };
+};
+
+const parseFirstJsonRpc = (contentType: string, body: string): JsonRpcErrorBody | null => {
+  if (!body) return null;
+  try {
+    if (contentType.includes("text/event-stream")) {
+      // Grab the first `data:` line from the first SSE event.
+      for (const line of body.split(/\r?\n/)) {
+        if (line.startsWith("data:")) return JSON.parse(line.slice(5).trimStart());
+      }
+      return null;
+    }
+    if (contentType.includes("application/json")) {
+      return JSON.parse(body);
+    }
+    return null;
+  } catch {
+    return null;
+  }
+};
+
+const rpcResponseAttrs = (payload: JsonRpcErrorBody | null): Record<string, unknown> => {
+  // Require a JSON-RPC 2.0 envelope so we don't false-positive on other
+  // JSON shapes the edge happens to return (e.g. the auth-failure body
+  // `{ "error": "unauthorized" }` — not a JSON-RPC error).
+  if (!payload || payload.jsonrpc !== "2.0") return {};
+  const attrs: Record<string, unknown> = {};
+  const err = payload.error;
+  if (err && typeof err === "object") {
+    attrs["mcp.rpc.is_error"] = true;
+    if (typeof err.code === "number") attrs["mcp.rpc.error.code"] = err.code;
+    if (typeof err.message === "string") {
+      attrs["mcp.rpc.error.message"] = err.message.slice(0, 500);
+    }
+  }
+  if (payload.result?.isError === true) {
+    attrs["mcp.tool.result.is_error"] = true;
+  }
+  return attrs;
+};
+
+const peekAndAnnotate = (response: Response): Effect.Effect<Response> =>
+  Effect.gen(function* () {
+    if (!response.body) return response;
+    const text = yield* Effect.promise(() => response.text());
+    const payload = parseFirstJsonRpc(response.headers.get("content-type") ?? "", text);
+    const attrs = rpcResponseAttrs(payload);
+    if (Object.keys(attrs).length > 0) {
+      yield* Effect.annotateCurrentSpan(attrs);
+    }
+    return new Response(text, {
+      status: response.status,
+      statusText: response.statusText,
+      headers: response.headers,
+    });
+  });
+
+// ---------------------------------------------------------------------------
 // DO dispatch
 // ---------------------------------------------------------------------------
 
@@ -324,11 +401,13 @@ const authorizationServerMetadata = Effect.promise(async () => {
  * with `HttpServerResponse.raw` lets streaming bodies (SSE) pass through
  * `HttpApp.toWebHandler`'s conversion unchanged.
  */
-const forwardToExistingSession = (request: Request, sessionId: string) =>
-  Effect.promise(async () => {
+const forwardToExistingSession = (request: Request, sessionId: string, peek: boolean) =>
+  Effect.gen(function* () {
     const ns = env.MCP_SESSION;
     const stub = ns.get(ns.idFromString(sessionId));
-    return HttpServerResponse.raw(await stub.handleRequest(request));
+    const raw = yield* Effect.promise(() => stub.handleRequest(request) as Promise<Response>);
+    const annotated = peek ? yield* peekAndAnnotate(raw) : raw;
+    return HttpServerResponse.raw(annotated);
   });
 
 const dispatchPost = (request: Request, token: VerifiedToken) =>
@@ -339,26 +418,26 @@ const dispatchPost = (request: Request, token: VerifiedToken) =>
     }
 
     const sessionId = request.headers.get("mcp-session-id");
-    if (sessionId) return yield* forwardToExistingSession(request, sessionId);
+    if (sessionId) return yield* forwardToExistingSession(request, sessionId, true);
 
-    return yield* Effect.promise(async () => {
-      const ns = env.MCP_SESSION;
-      const stub = ns.get(ns.newUniqueId());
-      await stub.init({ organizationId });
-      return HttpServerResponse.raw(await stub.handleRequest(request));
-    });
+    const ns = env.MCP_SESSION;
+    const stub = ns.get(ns.newUniqueId());
+    yield* Effect.promise(() => stub.init({ organizationId }));
+    const raw = yield* Effect.promise(() => stub.handleRequest(request) as Promise<Response>);
+    const annotated = yield* peekAndAnnotate(raw);
+    return HttpServerResponse.raw(annotated);
   });
 
 const dispatchGet = (request: Request) => {
   const sessionId = request.headers.get("mcp-session-id");
   if (!sessionId) return Effect.succeed(jsonRpcError(400, -32000, "mcp-session-id header required for SSE"));
-  return forwardToExistingSession(request, sessionId);
+  return forwardToExistingSession(request, sessionId, false);
 };
 
 const dispatchDelete = (request: Request) => {
   const sessionId = request.headers.get("mcp-session-id");
   if (!sessionId) return Effect.succeed(HttpServerResponse.empty({ status: 204 }));
-  return forwardToExistingSession(request, sessionId);
+  return forwardToExistingSession(request, sessionId, true);
 };
 
 // ---------------------------------------------------------------------------
