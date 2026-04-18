@@ -17,7 +17,7 @@
 import { env } from "cloudflare:workers";
 import { HttpApp, HttpServerRequest, HttpServerResponse } from "@effect/platform";
 import * as Sentry from "@sentry/cloudflare";
-import { Context, Effect, Layer } from "effect";
+import { Context, Effect, Layer, Option, Schema } from "effect";
 import { createRemoteJWKSet, jwtVerify } from "jose";
 
 import { server } from "./env";
@@ -169,60 +169,93 @@ const dumpHeaders = (request: Request): Record<string, string> => {
   return out;
 };
 
-type JsonRpcRequestLike = {
-  method?: string;
-  id?: string | number;
-  params?: Record<string, unknown>;
-};
+// JSON-RPC shapes — narrow to just the fields we fingerprint. Using Schema
+// collapses the typeof-guard pile and surfaces "what does an MCP client
+// actually send us" as declarative types. Unknown/malformed input decodes
+// to None and contributes no span attrs.
 
-const safeParseJson = async (request: Request): Promise<JsonRpcRequestLike | null> => {
-  try {
-    const clone = request.clone();
-    const text = await clone.text();
-    if (!text) return null;
-    const parsed = JSON.parse(text) as JsonRpcRequestLike;
-    if (typeof parsed !== "object" || parsed === null) return null;
-    return parsed;
-  } catch {
-    return null;
-  }
-};
+const UnknownRecord = Schema.Record({ key: Schema.String, value: Schema.Unknown });
 
-const rpcPayloadAttributes = (payload: JsonRpcRequestLike | null): Record<string, unknown> => {
-  if (!payload) return {};
-  const attrs: Record<string, unknown> = {};
-  if (typeof payload.method === "string") attrs["mcp.rpc.method"] = payload.method;
-  if (payload.id !== undefined) attrs["mcp.rpc.id"] = String(payload.id);
+const JsonRpcEnvelope = Schema.Struct({
+  method: Schema.optional(Schema.String),
+  id: Schema.optional(Schema.Union(Schema.String, Schema.Number, Schema.Null)),
+  params: Schema.optional(UnknownRecord),
+});
+type JsonRpcEnvelope = typeof JsonRpcEnvelope.Type;
 
-  const params = (payload.params ?? {}) as Record<string, unknown>;
+const InitializeParams = Schema.Struct({
+  protocolVersion: Schema.optional(Schema.String),
+  clientInfo: Schema.optional(
+    Schema.Struct({
+      name: Schema.optional(Schema.String),
+      version: Schema.optional(Schema.String),
+      title: Schema.optional(Schema.String),
+    }),
+  ),
+  capabilities: Schema.optional(UnknownRecord),
+});
 
-  if (payload.method === "initialize") {
-    const clientInfo = (params.clientInfo ?? {}) as Record<string, unknown>;
-    const capabilities = (params.capabilities ?? {}) as Record<string, unknown>;
-    if (typeof clientInfo.name === "string") attrs["mcp.client.name"] = clientInfo.name;
-    if (typeof clientInfo.version === "string") attrs["mcp.client.version"] = clientInfo.version;
-    if (typeof clientInfo.title === "string") attrs["mcp.client.title"] = clientInfo.title;
-    if (typeof params.protocolVersion === "string") {
-      attrs["mcp.client.protocol_version"] = params.protocolVersion;
+const NamedParams = Schema.Struct({ name: Schema.optional(Schema.String) });
+const UriParams = Schema.Struct({ uri: Schema.optional(Schema.String) });
+
+const decode = <A, I>(schema: Schema.Schema<A, I>, input: unknown): Option.Option<A> =>
+  Schema.decodeUnknownOption(schema)(input);
+
+const readJsonRpcEnvelope = (request: Request): Effect.Effect<Option.Option<JsonRpcEnvelope>> =>
+  Effect.promise(async () => {
+    try {
+      const text = await request.clone().text();
+      if (!text) return Option.none();
+      return decode(JsonRpcEnvelope, JSON.parse(text));
+    } catch {
+      return Option.none();
     }
-    attrs["mcp.client.capability.keys"] = Object.keys(capabilities).sort().join(",");
-    // Bounded JSON dumps for ad-hoc inspection. Length caps guard against a
-    // pathological client bloating a single span.
-    attrs["mcp.client.info.json"] = JSON.stringify(clientInfo).slice(0, 2000);
-    attrs["mcp.client.capabilities.json"] = JSON.stringify(capabilities).slice(0, 2000);
-  } else if (payload.method === "tools/call") {
-    const name = params.name;
-    if (typeof name === "string") attrs["mcp.tool.name"] = name;
-  } else if (payload.method === "resources/read" || payload.method === "resources/subscribe") {
-    const uri = params.uri;
-    if (typeof uri === "string") attrs["mcp.resource.uri"] = uri;
-  } else if (payload.method === "prompts/get") {
-    const name = params.name;
-    if (typeof name === "string") attrs["mcp.prompt.name"] = name;
-  }
+  });
 
-  return attrs;
+const methodAttrs = (envelope: JsonRpcEnvelope): Record<string, unknown> => {
+  const params = envelope.params ?? {};
+  switch (envelope.method) {
+    case "initialize":
+      return Option.match(decode(InitializeParams, params), {
+        onNone: () => ({}),
+        onSome: (init) => ({
+          ...(init.protocolVersion && { "mcp.client.protocol_version": init.protocolVersion }),
+          ...(init.clientInfo?.name && { "mcp.client.name": init.clientInfo.name }),
+          ...(init.clientInfo?.version && { "mcp.client.version": init.clientInfo.version }),
+          ...(init.clientInfo?.title && { "mcp.client.title": init.clientInfo.title }),
+          "mcp.client.capability.keys": Object.keys(init.capabilities ?? {}).sort().join(","),
+        }),
+      });
+    case "tools/call":
+      return Option.match(decode(NamedParams, params), {
+        onNone: () => ({}),
+        onSome: ({ name }) => (name ? { "mcp.tool.name": name } : {}),
+      });
+    case "resources/read":
+    case "resources/subscribe":
+      return Option.match(decode(UriParams, params), {
+        onNone: () => ({}),
+        onSome: ({ uri }) => (uri ? { "mcp.resource.uri": uri } : {}),
+      });
+    case "prompts/get":
+      return Option.match(decode(NamedParams, params), {
+        onNone: () => ({}),
+        onSome: ({ name }) => (name ? { "mcp.prompt.name": name } : {}),
+      });
+    default:
+      return {};
+  }
 };
+
+const rpcAttrs = (envelope: Option.Option<JsonRpcEnvelope>): Record<string, unknown> =>
+  Option.match(envelope, {
+    onNone: () => ({}),
+    onSome: (e) => ({
+      ...(e.method && { "mcp.rpc.method": e.method }),
+      ...(e.id !== undefined && e.id !== null && { "mcp.rpc.id": String(e.id) }),
+      ...methodAttrs(e),
+    }),
+  });
 
 const annotateMcpRequest = (
   request: Request,
@@ -251,11 +284,11 @@ const annotateMcpRequest = (
       ...dumpHeaders(request),
     };
 
-    const payload = opts.parseBody ? yield* Effect.promise(() => safeParseJson(request)) : null;
+    const envelope = opts.parseBody ? yield* readJsonRpcEnvelope(request) : Option.none();
 
     yield* Effect.annotateCurrentSpan({
       ...baseAttrs,
-      ...rpcPayloadAttributes(payload),
+      ...rpcAttrs(envelope),
     });
   });
 
