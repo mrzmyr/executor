@@ -1,68 +1,109 @@
 import { describe, expect, it } from "@effect/vitest";
 import { Effect } from "effect";
 
-import type { Executor, Source } from "@executor/sdk";
+import { createExecutor, definePlugin, makeTestConfig } from "@executor/sdk";
 
 import { buildExecuteDescription } from "./description";
 
-const makeSource = (overrides: Partial<Source> & Pick<Source, "id" | "name">): Source => ({
-  kind: "in-memory",
-  pluginId: "test-plugin",
-  canRemove: false,
-  canRefresh: false,
-  canEdit: false,
-  runtime: false,
-  ...overrides,
-});
+const EmptyInputSchema = {
+  type: "object",
+  properties: {},
+  additionalProperties: false,
+} as const;
 
-const makeFakeExecutor = (sources: readonly Source[]): Executor =>
-  ({
-    sources: {
-      list: () => Effect.succeed(sources),
+// Two plugins registering static sources whose ids are distinct from their
+// pluginIds/names. If `buildExecuteDescription` ever renders the wrong field
+// (e.g. pluginId, an internal UUID, or the source name), these assertions
+// fail — which is the class of bug a hand-rolled fake `Executor` would miss.
+const githubPlugin = definePlugin(() => ({
+  id: "github-plugin" as const,
+  storage: () => ({}),
+  staticSources: () => [
+    {
+      id: "github",
+      kind: "in-memory",
+      name: "GitHub",
+      tools: [
+        {
+          name: "noop",
+          description: "noop",
+          inputSchema: EmptyInputSchema,
+          handler: () => Effect.succeed(null),
+        },
+      ],
     },
-  }) as unknown as Executor;
+  ],
+}));
+
+const slackPlugin = definePlugin(() => ({
+  id: "slack-plugin" as const,
+  storage: () => ({}),
+  staticSources: () => [
+    {
+      id: "slack",
+      kind: "in-memory",
+      name: "Slack Workspace",
+      tools: [
+        {
+          name: "noop",
+          description: "noop",
+          inputSchema: EmptyInputSchema,
+          handler: () => Effect.succeed(null),
+        },
+      ],
+    },
+  ],
+}));
 
 describe("buildExecuteDescription", () => {
-  it.effect("includes the workflow preamble and lists sources sorted by id", () =>
-    Effect.gen(function* () {
-      const sources: readonly Source[] = [
-        // Intentionally out of order — the formatter is expected to sort.
-        makeSource({ id: "slack", name: "Slack Workspace" }),
-        makeSource({ id: "github", name: "GitHub" }),
-      ];
-      const executor = makeFakeExecutor(sources);
+  it.effect(
+    "renders real source ids as namespaces (sorted) through the real executor flow",
+    () =>
+      Effect.gen(function* () {
+        // Intentionally register in non-alphabetical order — the formatter
+        // is expected to sort by source id.
+        const executor = yield* createExecutor(
+          makeTestConfig({ plugins: [slackPlugin(), githubPlugin()] as const }),
+        );
 
-      const description = yield* buildExecuteDescription(executor);
+        const description = yield* buildExecuteDescription(executor);
 
-      // Stable anchor from the workflow preamble.
-      expect(description).toContain(
-        "Execute TypeScript in a sandboxed runtime",
-      );
-      // The namespaces section header.
-      expect(description).toContain("## Available namespaces");
-      // Both sources rendered with backticks + label-suffix rule.
-      expect(description).toContain("`github` — GitHub");
-      expect(description).toContain("`slack` — Slack Workspace");
+        // Stable anchor from the workflow preamble.
+        expect(description).toContain(
+          "Execute TypeScript in a sandboxed runtime",
+        );
+        // The namespaces section header.
+        expect(description).toContain("## Available namespaces");
+        // Each source renders with its ACTUAL id (not pluginId / name / UUID).
+        expect(description).toContain("`github` — GitHub");
+        expect(description).toContain("`slack` — Slack Workspace");
+        // And the plugin ids must NOT leak into the namespace list.
+        expect(description).not.toContain("`github-plugin`");
+        expect(description).not.toContain("`slack-plugin`");
 
-      // Sort order: `github` appears before `slack`.
-      const githubIdx = description.indexOf("`github`");
-      const slackIdx = description.indexOf("`slack`");
-      expect(githubIdx).toBeGreaterThan(-1);
-      expect(slackIdx).toBeGreaterThan(-1);
-      expect(githubIdx).toBeLessThan(slackIdx);
-    }),
+        // Sort order: `github` before `slack`.
+        const githubIdx = description.indexOf("`github`");
+        const slackIdx = description.indexOf("`slack`");
+        expect(githubIdx).toBeGreaterThan(-1);
+        expect(slackIdx).toBeGreaterThan(-1);
+        expect(githubIdx).toBeLessThan(slackIdx);
+      }),
   );
 
-  it.effect("omits the Available namespaces section when there are no sources", () =>
-    Effect.gen(function* () {
-      const executor = makeFakeExecutor([]);
+  it.effect(
+    "omits the Available namespaces section when no plugins register sources",
+    () =>
+      Effect.gen(function* () {
+        const executor = yield* createExecutor(
+          makeTestConfig({ plugins: [] as const }),
+        );
 
-      const description = yield* buildExecuteDescription(executor);
+        const description = yield* buildExecuteDescription(executor);
 
-      expect(description).toContain(
-        "Execute TypeScript in a sandboxed runtime",
-      );
-      expect(description).not.toContain("## Available namespaces");
-    }),
+        expect(description).toContain(
+          "Execute TypeScript in a sandboxed runtime",
+        );
+        expect(description).not.toContain("## Available namespaces");
+      }),
   );
 });
