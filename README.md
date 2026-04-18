@@ -85,6 +85,8 @@ executor call --file script.ts
 executor call 'return await tools.discover({ query: "send email" })'
 ```
 
+`executor call` and `executor resume` auto-start a local daemon if needed.
+
 If an execution pauses for auth or approval, resume it:
 
 ```bash
@@ -95,6 +97,10 @@ executor resume --execution-id exec_123
 
 ```bash
 executor web                        # start runtime + web UI
+executor daemon run                 # run persistent local daemon
+executor daemon status              # show daemon status
+executor daemon stop                # stop daemon
+executor daemon restart             # restart daemon
 executor mcp                        # start MCP endpoint
 executor call --file script.ts      # execute a file
 executor call '<code>'              # execute inline code

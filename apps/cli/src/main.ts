@@ -1,5 +1,5 @@
 // Ensure binaries next to the executor (e.g. secure-exec-v8) are on $PATH
-import { dirname, join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 const execDir = dirname(process.execPath);
 if (process.env.PATH && !process.env.PATH.includes(execDir)) {
   process.env.PATH = `${execDir}:${process.env.PATH}`;
@@ -31,7 +31,6 @@ if (typeof Bun !== "undefined" && (await Bun.file(wasmOnDisk).exists())) {
   setQuickJSModule(mod);
 }
 
-import { resolve } from "node:path";
 import { Command, Options, Args } from "@effect/cli";
 import { BunRuntime } from "@effect/platform-bun";
 import { FetchHttpClient, HttpApiClient } from "@effect/platform";
@@ -42,6 +41,22 @@ import * as Cause from "effect/Cause";
 import { ExecutorApi } from "@executor/api";
 import { startServer, runMcpStdioServer, getExecutor } from "@executor/local";
 import { makeQuickJsExecutor } from "@executor/runtime-quickjs";
+import {
+  buildDaemonSpawnSpec,
+  canAutoStartLocalDaemonForHost,
+  parseDaemonBaseUrl,
+  spawnDetached,
+  waitForReachable,
+  waitForUnreachable,
+} from "./daemon";
+import {
+  canonicalDaemonHost,
+  isPidAlive,
+  readDaemonRecord,
+  removeDaemonRecord,
+  terminatePid,
+  writeDaemonRecord,
+} from "./daemon-state";
 
 // Embedded web UI — baked into compiled binaries via `with { type: "file" }`
 import embeddedWebUI from "./embedded-web-ui.gen";
@@ -54,6 +69,9 @@ const CLI_NAME = "executor";
 const { version: CLI_VERSION } = await import("../package.json");
 const DEFAULT_PORT = 4788;
 const DEFAULT_BASE_URL = `http://localhost:${DEFAULT_PORT}`;
+const DAEMON_BOOT_TIMEOUT_MS = 15_000;
+const DAEMON_BOOT_POLL_MS = 150;
+const DAEMON_STOP_TIMEOUT_MS = 10_000;
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -87,16 +105,143 @@ const script = process.argv[1];
 const isDevMode = script?.endsWith(".ts") || script?.endsWith(".js");
 const cliPrefix = isDevMode ? `bun run ${script}` : "executor";
 
-const ensureServer = (baseUrl: string) =>
+const ensureDaemon = (baseUrl: string) =>
   Effect.gen(function* () {
     if (yield* Effect.promise(() => isServerReachable(baseUrl))) return;
 
-    // Start server in-process instead of spawning a background child.
-    // This is more reliable across environments (containers, sandboxes, etc.)
-    const url = new URL(baseUrl);
-    const port = Number(url.port) || DEFAULT_PORT;
-    console.error(`Starting server on port ${port}...`);
-    yield* Effect.promise(() => startServer({ port, embeddedWebUI }));
+    const parsed = yield* Effect.try({
+      try: () => parseDaemonBaseUrl(baseUrl, DEFAULT_PORT),
+      catch: (cause) =>
+        cause instanceof Error ? cause : new Error(`Invalid base URL: ${String(cause)}`),
+    });
+
+    if (!canAutoStartLocalDaemonForHost(parsed.hostname)) {
+      return yield* Effect.fail(
+        new Error(
+          [
+            `Executor daemon is not reachable at ${baseUrl}.`,
+            "Auto-start is only supported for local hosts.",
+            `Start it manually: ${cliPrefix} daemon run --port ${parsed.port} --hostname ${parsed.hostname}`,
+          ].join("\n"),
+        ),
+      );
+    }
+
+    const spec = yield* Effect.try({
+      try: () =>
+        buildDaemonSpawnSpec({
+          port: parsed.port,
+          hostname: parsed.hostname,
+          isDevMode,
+          scriptPath: script,
+          executablePath: process.execPath,
+        }),
+      catch: (cause) =>
+        cause instanceof Error ? cause : new Error(`Failed to build daemon command: ${String(cause)}`),
+    });
+
+    console.error(`Starting daemon on ${parsed.hostname}:${parsed.port}...`);
+    spawnDetached({
+      command: spec.command,
+      args: spec.args,
+      env: process.env,
+    });
+
+    const ready = yield* Effect.promise(() =>
+      waitForReachable({
+        check: () => isServerReachable(baseUrl),
+        timeoutMs: DAEMON_BOOT_TIMEOUT_MS,
+        intervalMs: DAEMON_BOOT_POLL_MS,
+      }),
+    );
+
+    if (!ready) {
+      return yield* Effect.fail(
+        new Error(
+          [
+            `Daemon did not become reachable at ${baseUrl} within ${DAEMON_BOOT_TIMEOUT_MS}ms.`,
+            `Run in foreground to inspect logs: ${cliPrefix} daemon run --port ${parsed.port} --hostname ${parsed.hostname}`,
+          ].join("\n"),
+        ),
+      );
+    }
+  });
+
+const stopDaemon = (baseUrl: string) =>
+  Effect.gen(function* () {
+    const parsed = yield* Effect.try({
+      try: () => parseDaemonBaseUrl(baseUrl, DEFAULT_PORT),
+      catch: (cause) =>
+        cause instanceof Error ? cause : new Error(`Invalid base URL: ${String(cause)}`),
+    });
+
+    const host = canonicalDaemonHost(parsed.hostname);
+    const record = yield* Effect.promise(() => readDaemonRecord({ hostname: host, port: parsed.port }));
+    const reachable = yield* Effect.promise(() => isServerReachable(baseUrl));
+
+    if (!record) {
+      if (reachable) {
+        return yield* Effect.fail(
+          new Error(
+            [
+              `Executor is reachable at ${baseUrl} but no daemon record exists.`,
+              "It may not be managed by this CLI process.",
+              "Stop it from the terminal/session where it was started.",
+            ].join("\n"),
+          ),
+        );
+      }
+      console.log(`No daemon running at ${baseUrl}.`);
+      return;
+    }
+
+    if (!isPidAlive(record.pid)) {
+      yield* Effect.promise(() => removeDaemonRecord({ hostname: host, port: parsed.port }));
+      if (reachable) {
+        return yield* Effect.fail(
+          new Error(
+            [
+              `Daemon record for ${baseUrl} points to dead pid ${record.pid}, but endpoint is still reachable.`,
+              "Refusing to stop an unknown process without ownership metadata.",
+            ].join("\n"),
+          ),
+        );
+      }
+      console.log(`No daemon running at ${baseUrl} (removed stale record for pid ${record.pid}).`);
+      return;
+    }
+
+    console.log(`Stopping daemon at ${baseUrl} (pid ${record.pid})...`);
+
+    yield* Effect.try({
+      try: () => terminatePid(record.pid),
+      catch: (cause) =>
+        cause instanceof Error
+          ? cause
+          : new Error(`Failed sending SIGTERM to pid ${record.pid}: ${String(cause)}`),
+    });
+
+    const stopped = yield* Effect.promise(() =>
+      waitForUnreachable({
+        check: () => isServerReachable(baseUrl),
+        timeoutMs: DAEMON_STOP_TIMEOUT_MS,
+        intervalMs: DAEMON_BOOT_POLL_MS,
+      }),
+    );
+
+    if (!stopped) {
+      return yield* Effect.fail(
+        new Error(
+          [
+            `Daemon at ${baseUrl} did not stop within ${DAEMON_STOP_TIMEOUT_MS}ms.`,
+            "Try terminating the process manually.",
+          ].join("\n"),
+        ),
+      );
+    }
+
+    yield* Effect.promise(() => removeDaemonRecord({ hostname: host, port: parsed.port }));
+    console.log(`Daemon stopped at ${baseUrl}.`);
   });
 
 // ---------------------------------------------------------------------------
@@ -146,6 +291,43 @@ const runForegroundSession = (input: {
 
     yield* waitForShutdownSignal();
     yield* Effect.promise(() => server.stop());
+  });
+
+const runDaemonSession = (input: {
+  port: number;
+  hostname: string;
+  allowedHosts: ReadonlyArray<string>;
+}) =>
+  Effect.gen(function* () {
+    const server = yield* Effect.promise(() =>
+      startServer({
+        port: input.port,
+        hostname: input.hostname,
+        allowedHosts: input.allowedHosts,
+        embeddedWebUI,
+      }),
+    );
+
+    const daemonHost = canonicalDaemonHost(input.hostname);
+    const daemonPort = server.port;
+
+    yield* Effect.promise(() =>
+      writeDaemonRecord({
+        hostname: daemonHost,
+        port: daemonPort,
+        pid: process.pid,
+        scopeDir: process.env.EXECUTOR_SCOPE_DIR ?? null,
+      }),
+    );
+
+    console.log(`Daemon ready on http://${daemonHost}:${daemonPort}`);
+
+    try {
+      yield* waitForShutdownSignal();
+    } finally {
+      yield* Effect.promise(() => server.stop());
+      yield* Effect.promise(() => removeDaemonRecord({ hostname: daemonHost, port: daemonPort }));
+    }
   });
 
 // ---------------------------------------------------------------------------
@@ -200,6 +382,16 @@ const readCode = (input: {
     );
   });
 
+const scope = Options.text("scope").pipe(
+  Options.optional,
+  Options.withDescription("Path to workspace directory containing executor.jsonc"),
+);
+
+const applyScope = (s: Option.Option<string>) => {
+  const dir = Option.getOrUndefined(s);
+  if (dir) process.env.EXECUTOR_SCOPE_DIR = resolve(dir);
+};
+
 // ---------------------------------------------------------------------------
 // Commands
 // ---------------------------------------------------------------------------
@@ -211,11 +403,13 @@ const callCommand = Command.make(
     file: Options.text("file").pipe(Options.optional),
     stdin: Options.boolean("stdin").pipe(Options.withDefault(false)),
     baseUrl: Options.text("base-url").pipe(Options.withDefault(DEFAULT_BASE_URL)),
+    scope,
   },
-  ({ code, file, stdin, baseUrl }) =>
+  ({ code, file, stdin, baseUrl, scope }) =>
     Effect.gen(function* () {
+      applyScope(scope);
       const resolvedCode = yield* readCode({ code, file, stdin });
-      yield* ensureServer(baseUrl);
+      yield* ensureDaemon(baseUrl);
 
       const client = yield* makeApiClient(baseUrl);
       const result = yield* client.executions.execute({ payload: { code: resolvedCode } });
@@ -248,10 +442,12 @@ const resumeCommand = Command.make(
     action: Options.text("action").pipe(Options.withDefault("accept")),
     content: Options.text("content").pipe(Options.optional),
     baseUrl: Options.text("base-url").pipe(Options.withDefault(DEFAULT_BASE_URL)),
+    scope,
   },
-  ({ executionId, action, content, baseUrl }) =>
+  ({ executionId, action, content, baseUrl, scope }) =>
     Effect.gen(function* () {
-      yield* ensureServer(baseUrl);
+      applyScope(scope);
+      yield* ensureDaemon(baseUrl);
 
       const parsedContent = Option.getOrUndefined(content);
       const contentObj = parsedContent ? JSON.parse(parsedContent) : undefined;
@@ -271,16 +467,6 @@ const resumeCommand = Command.make(
       }
     }),
 ).pipe(Command.withDescription("Resume a paused execution"));
-
-const scope = Options.text("scope").pipe(
-  Options.optional,
-  Options.withDescription("Path to workspace directory containing executor.jsonc"),
-);
-
-const applyScope = (s: Option.Option<string>) => {
-  const dir = Option.getOrUndefined(s);
-  if (dir) process.env.EXECUTOR_SCOPE_DIR = resolve(dir);
-};
 
 const webCommand = Command.make(
   "web",
@@ -305,6 +491,107 @@ const webCommand = Command.make(
     }),
 ).pipe(Command.withDescription("Start a foreground web session"));
 
+const daemonRunCommand = Command.make(
+  "run",
+  {
+    port: Options.integer("port").pipe(Options.withDefault(DEFAULT_PORT)),
+    hostname: Options.text("hostname")
+      .pipe(Options.withDefault("127.0.0.1"))
+      .pipe(Options.withDescription("Bind address. Keep this local unless you trust the network.")),
+    allowedHost: Options.text("allowed-host")
+      .pipe(Options.repeated)
+      .pipe(
+        Options.withDescription(
+          "Additional hostname permitted in the Host header (repeatable). localhost/127.0.0.1 are always allowed.",
+        ),
+      ),
+    scope,
+  },
+  ({ port, scope, hostname, allowedHost }) =>
+    Effect.gen(function* () {
+      applyScope(scope);
+      yield* runDaemonSession({ port, hostname, allowedHosts: allowedHost });
+    }),
+).pipe(Command.withDescription("Run the local executor daemon"));
+
+const daemonStatusCommand = Command.make(
+  "status",
+  {
+    baseUrl: Options.text("base-url").pipe(Options.withDefault(DEFAULT_BASE_URL)),
+  },
+  ({ baseUrl }) =>
+    Effect.gen(function* () {
+      const parsed = yield* Effect.try({
+        try: () => parseDaemonBaseUrl(baseUrl, DEFAULT_PORT),
+        catch: (cause) =>
+          cause instanceof Error ? cause : new Error(`Invalid base URL: ${String(cause)}`),
+      });
+      const host = canonicalDaemonHost(parsed.hostname);
+
+      const [record, reachable] = yield* Effect.all([
+        Effect.promise(() => readDaemonRecord({ hostname: host, port: parsed.port })),
+        Effect.promise(() => isServerReachable(baseUrl)),
+      ]);
+
+      if (!record) {
+        if (reachable) {
+          console.log(`Daemon reachable at ${baseUrl} (no local ownership record).`);
+        } else {
+          console.log(`Daemon not running at ${baseUrl}.`);
+        }
+        return;
+      }
+
+      if (!isPidAlive(record.pid)) {
+        if (!reachable) {
+          yield* Effect.promise(() => removeDaemonRecord({ hostname: host, port: parsed.port }));
+          console.log(`Daemon not running at ${baseUrl} (removed stale record for pid ${record.pid}).`);
+          return;
+        }
+        console.log(
+          `Daemon reachable at ${baseUrl}, but recorded pid ${record.pid} is not alive (ownership mismatch).`,
+        );
+        return;
+      }
+
+      const state = reachable ? "running" : "unreachable";
+      console.log(`Daemon ${state} at ${baseUrl} (pid ${record.pid}).`);
+      if (record.scopeDir) {
+        console.log(`Scope: ${record.scopeDir}`);
+      }
+    }),
+).pipe(Command.withDescription("Show daemon status"));
+
+const daemonStopCommand = Command.make(
+  "stop",
+  {
+    baseUrl: Options.text("base-url").pipe(Options.withDefault(DEFAULT_BASE_URL)),
+  },
+  ({ baseUrl }) => stopDaemon(baseUrl),
+).pipe(Command.withDescription("Stop the local daemon"));
+
+const daemonRestartCommand = Command.make(
+  "restart",
+  {
+    baseUrl: Options.text("base-url").pipe(Options.withDefault(DEFAULT_BASE_URL)),
+    scope,
+  },
+  ({ baseUrl, scope }) =>
+    Effect.gen(function* () {
+      applyScope(scope);
+      yield* stopDaemon(baseUrl);
+      yield* ensureDaemon(baseUrl);
+      console.log(`Daemon restarted at ${baseUrl}.`);
+    }),
+).pipe(Command.withDescription("Restart the local daemon"));
+
+const daemonCommand = Command.make("daemon").pipe(
+  Command.withSubcommands(
+    [daemonRunCommand, daemonStatusCommand, daemonStopCommand, daemonRestartCommand] as const,
+  ),
+  Command.withDescription("Manage the local daemon"),
+);
+
 const mcpCommand = Command.make("mcp", { scope }, ({ scope }) =>
   Effect.gen(function* () {
     applyScope(scope);
@@ -317,7 +604,7 @@ const mcpCommand = Command.make("mcp", { scope }, ({ scope }) =>
 // ---------------------------------------------------------------------------
 
 const root = Command.make("executor").pipe(
-  Command.withSubcommands([callCommand, resumeCommand, webCommand, mcpCommand] as const),
+  Command.withSubcommands([callCommand, resumeCommand, webCommand, daemonCommand, mcpCommand] as const),
   Command.withDescription("Executor local CLI"),
 );
 
