@@ -36,6 +36,7 @@ type ServerEnv = SharedEnv &
     AXIOM_TOKEN: string;
     AXIOM_DATASET: string;
     AXIOM_TRACES_URL: string;
+    AXIOM_TRACES_SAMPLE_RATIO: string;
   }>;
 
 type WebEnv = Readonly<Record<string, never>>;
@@ -55,6 +56,7 @@ const SERVER_DEFAULTS: Record<keyof ServerEnv, string> = {
   AXIOM_TOKEN: "",
   AXIOM_DATASET: "executor-cloud",
   AXIOM_TRACES_URL: "https://api.axiom.co/v1/traces",
+  AXIOM_TRACES_SAMPLE_RATIO: "1",
 };
 
 const SHARED_DEFAULTS: Record<keyof SharedEnv, string> = {

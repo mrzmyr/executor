@@ -15,6 +15,12 @@ import { server } from "./env";
 // DOMException "Illegal invocation".
 // ---------------------------------------------------------------------------
 
+const parseSampleRatio = (value: string): number => {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return 1;
+  return Math.min(1, Math.max(0, n));
+};
+
 const otelConfig: TraceConfig = {
   service: { name: "executor-cloud", version: "1.0.0" },
   exporter: {
@@ -22,6 +28,13 @@ const otelConfig: TraceConfig = {
     headers: {
       Authorization: `Bearer ${server.AXIOM_TOKEN}`,
       "X-Axiom-Dataset": server.AXIOM_DATASET,
+    },
+  },
+  sampling: {
+    headSampler: {
+      // Keep remote parent decisions and make local sampling policy explicit.
+      acceptRemote: true,
+      ratio: parseSampleRatio(server.AXIOM_TRACES_SAMPLE_RATIO),
     },
   },
 };

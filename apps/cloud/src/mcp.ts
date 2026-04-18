@@ -440,23 +440,47 @@ const peekAndAnnotate = (response: Response): Effect.Effect<Response> =>
 
 // Worker and DO run in separate isolates with independent WebSdk tracer
 // providers. Neither one can see the other's OTEL context, so the DO used
-// to emit a brand-new root trace on every stub call. Ferry the current
-// `mcp.request` span's SpanContext across as a W3C `traceparent` string —
-// the DO parses it and anchors its own spans under the same trace via
-// `OtelTracer.withSpanContext`.
+// to emit a brand-new root trace on every stub call. Ferry the worker span
+// context across with W3C headers: `traceparent` generated from the active
+// Effect span plus passthrough `tracestate` / `baggage` from the inbound
+// request.
+type IncomingPropagationHeaders = {
+  readonly traceparent?: string;
+  readonly tracestate?: string;
+  readonly baggage?: string;
+};
+
 const currentTraceparent = Effect.map(Effect.currentSpan, (span) => {
   if (!span || !span.traceId || !span.spanId) return undefined;
   const flags = span.sampled ? "01" : "00";
   return `00-${span.traceId}-${span.spanId}-${flags}`;
 }).pipe(Effect.orElseSucceed(() => undefined));
 
-const withTraceparentHeader = (request: Request) =>
-  Effect.map(currentTraceparent, (traceparent) => {
-    if (!traceparent) return request;
-    const headers = new Headers(request.headers);
-    headers.set("traceparent", traceparent);
-    return new Request(request, { headers });
-  });
+const currentPropagationHeaders = (
+  request: Request,
+): Effect.Effect<IncomingPropagationHeaders> =>
+  Effect.map(currentTraceparent, (traceparent) => ({
+    traceparent,
+    tracestate: request.headers.get("tracestate") ?? undefined,
+    baggage: request.headers.get("baggage") ?? undefined,
+  }));
+
+const withPropagationHeaders = (
+  request: Request,
+  propagation: IncomingPropagationHeaders,
+): Request => {
+  const headers = new Headers(request.headers);
+  if (propagation.traceparent) {
+    headers.set("traceparent", propagation.traceparent);
+  }
+  if (propagation.tracestate) {
+    headers.set("tracestate", propagation.tracestate);
+  }
+  if (propagation.baggage) {
+    headers.set("baggage", propagation.baggage);
+  }
+  return new Request(request, { headers });
+};
 
 /**
  * Forward a request to an existing session DO. Wrapping the DO's `Response`
@@ -467,7 +491,8 @@ const forwardToExistingSession = (request: Request, sessionId: string, peek: boo
   Effect.gen(function* () {
     const ns = env.MCP_SESSION;
     const stub = ns.get(ns.idFromString(sessionId));
-    const propagated = yield* withTraceparentHeader(request);
+    const propagation = yield* currentPropagationHeaders(request);
+    const propagated = withPropagationHeaders(request, propagation);
     const raw = yield* Effect.promise(
       () => stub.handleRequest(propagated) as Promise<Response>,
     );
@@ -487,9 +512,9 @@ const dispatchPost = (request: Request, token: VerifiedToken) =>
 
     const ns = env.MCP_SESSION;
     const stub = ns.get(ns.newUniqueId());
-    const traceparent = yield* currentTraceparent;
-    yield* Effect.promise(() => stub.init({ organizationId }, traceparent));
-    const propagated = yield* withTraceparentHeader(request);
+    const propagation = yield* currentPropagationHeaders(request);
+    yield* Effect.promise(() => stub.init({ organizationId }, propagation));
+    const propagated = withPropagationHeaders(request, propagation);
     const raw = yield* Effect.promise(
       () => stub.handleRequest(propagated) as Promise<Response>,
     );
