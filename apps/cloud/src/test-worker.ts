@@ -18,30 +18,11 @@ import { Effect, Layer } from "effect";
 import { drizzle } from "drizzle-orm/postgres-js";
 import postgres, { type Sql } from "postgres";
 
-import { McpAuth, classifyMcpPath, mcpApp, type VerifiedToken } from "./mcp";
+import { McpAuth, classifyMcpPath, mcpApp } from "./mcp";
 import { organizations } from "./services/schema";
+import { parseTestBearer } from "./test-bearer";
 
 export { McpSessionDO } from "./mcp-session";
-
-// ---------------------------------------------------------------------------
-// Test bearer — format: `test-accept::<accountId>::<organizationId|none>`
-// ---------------------------------------------------------------------------
-
-export const TEST_BEARER_PREFIX = "test-accept::";
-export const NO_ORG_SENTINEL = "none";
-
-export const makeTestBearer = (accountId: string, organizationId: string | null): string =>
-  `${TEST_BEARER_PREFIX}${accountId}::${organizationId ?? NO_ORG_SENTINEL}`;
-
-const parseTestBearer = (token: string): VerifiedToken | null => {
-  if (!token.startsWith(TEST_BEARER_PREFIX)) return null;
-  const [accountId, organizationId] = token.slice(TEST_BEARER_PREFIX.length).split("::", 2);
-  if (!accountId || !organizationId) return null;
-  return {
-    accountId,
-    organizationId: organizationId === NO_ORG_SENTINEL ? null : organizationId,
-  };
-};
 
 const TestMcpAuthLive = Layer.succeed(McpAuth, {
   verifyBearer: (request) =>
@@ -57,7 +38,7 @@ const TestMcpAuthLive = Layer.succeed(McpAuth, {
 // ---------------------------------------------------------------------------
 //
 // Exposed at POST /__test__/seed-org. Tests call it via SELF.fetch to insert
-// organization rows into the same PGlite socket the DO reads from. Doing
+// organization rows into the same PGlite-backed database the DO reads from. Doing
 // the insert from inside the test worker avoids pulling postgres.js into the
 // test file's top-level imports (which segfaulted workerd during test
 // module instantiation).
@@ -70,7 +51,8 @@ const seedConnectionString = (envArg: Record<string, unknown>) =>
 // Per-request postgres connection. Sharing a `Sql` across requests breaks
 // mid-suite — vitest-pool-workers' isolate resets tear down the socket and
 // the next insert errors with "read end of pipe was aborted". Open + close
-// per request; the DO already holds its own long-lived socket for real work.
+// per request; the test DO runtime does the same to avoid workerd's
+// cross-request I/O guard.
 const handleSeedOrg = async (
   request: Request,
   envArg: Record<string, unknown>,
