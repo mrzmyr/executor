@@ -12,6 +12,7 @@ import { RpcTarget } from "cloudflare:workers";
 import * as Cause from "effect/Cause";
 import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
+import * as Runtime from "effect/Runtime";
 
 import {
   recoverExecutionBody,
@@ -227,18 +228,22 @@ export const decodeWorkerRpcResponse = (raw: string): WorkerRpcResponse =>
  * `mcp.tool.dispatch` span that `tool-invoker.ts` wraps around
  * `executor.tools.invoke`.
  */
+export type RunPromise = <A, E>(effect: Effect.Effect<A, E>) => Promise<A>;
+
 export class ToolDispatcher extends RpcTarget {
   readonly #invoker: SandboxToolInvoker;
+  readonly #runPromise: RunPromise;
 
-  constructor(invoker: SandboxToolInvoker) {
+  constructor(invoker: SandboxToolInvoker, runPromise: RunPromise) {
     super();
     this.#invoker = invoker;
+    this.#runPromise = runPromise;
   }
 
   async call(path: string, argsJson: string): Promise<string> {
     const args = argsJson ? JSON.parse(argsJson) : undefined;
 
-    return Effect.runPromise(
+    return this.#runPromise(
       this.#invoker.invoke({ path, args }).pipe(
         Effect.map(
           (value): WorkerRpcResponse => ({
@@ -322,9 +327,10 @@ const evaluate = (
   toolInvoker: SandboxToolInvoker,
 ): Effect.Effect<ExecuteResult, DynamicWorkerExecutionError> => {
   const timeoutMs = Math.max(100, options.timeoutMs ?? DEFAULT_TIMEOUT_MS);
-  const dispatcher = new ToolDispatcher(toolInvoker);
 
   return Effect.gen(function* () {
+    const runtime = yield* Effect.runtime<never>();
+    const dispatcher = new ToolDispatcher(toolInvoker, Runtime.runPromise(runtime));
     const entrypoint = yield* startDynamicWorker(options, code, timeoutMs);
     const response = yield* Effect.tryPromise({
       try: () => entrypoint.evaluate(dispatcher),
