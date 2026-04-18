@@ -14,6 +14,7 @@ import type {
   ElicitationContext,
   ElicitationRequest,
 } from "@executor/sdk";
+import type * as Cause from "effect/Cause";
 import {
   createExecutionEngine,
   formatExecuteResult,
@@ -44,11 +45,23 @@ class CfWorkerJsonSchemaValidator implements jsonSchemaValidator {
 // Config
 // ---------------------------------------------------------------------------
 
-export type ExecutorMcpServerConfig =
-  | ExecutionEngineConfig
-  | { readonly engine: ExecutionEngine }
-  | (ExecutionEngineConfig & { readonly stateless: true })
-  | { readonly engine: ExecutionEngine; readonly stateless: true };
+type SharedMcpServerConfig = {
+  /**
+   * Pre-built `execute` tool description. When provided, the factory skips
+   * its internal `engine.getDescription()` call. Useful when the caller
+   * wants to compute the description inside its own Effect tracer context
+   * so sub-spans (`executor.sources.list`, `executor.tools.list`) nest as
+   * children of the caller's root span instead of being orphaned by the
+   * `Effect.runPromise` that `engine.getDescription()` runs internally.
+   */
+  readonly description?: string;
+};
+
+export type ExecutorMcpServerConfig<E extends Cause.YieldableError = Cause.YieldableError> =
+  | (ExecutionEngineConfig<E> & SharedMcpServerConfig)
+  | ({ readonly engine: ExecutionEngine<E> } & SharedMcpServerConfig)
+  | (ExecutionEngineConfig<E> & SharedMcpServerConfig & { readonly stateless: true })
+  | ({ readonly engine: ExecutionEngine<E>; readonly stateless: true } & SharedMcpServerConfig);
 
 // ---------------------------------------------------------------------------
 // Elicitation bridge
@@ -153,11 +166,11 @@ const toMcpPausedResult = (formatted: ReturnType<typeof formatPausedExecution>):
 // Server factory
 // ---------------------------------------------------------------------------
 
-export const createExecutorMcpServer = async (
-  config: ExecutorMcpServerConfig,
+export const createExecutorMcpServer = async <E extends Cause.YieldableError>(
+  config: ExecutorMcpServerConfig<E>,
 ): Promise<McpServer> => {
   const engine = "engine" in config ? config.engine : createExecutionEngine(config);
-  const description = await engine.getDescription();
+  const description = config.description ?? (await Effect.runPromise(engine.getDescription));
 
   const server = new McpServer(
     { name: "executor", version: "1.0.0" },
@@ -166,13 +179,15 @@ export const createExecutorMcpServer = async (
 
   const executeCode = async (code: string): Promise<McpToolResult> => {
     if (supportsManagedElicitation(server)) {
-      const result = await engine.execute(code, {
-        onElicitation: makeMcpElicitationHandler(server),
-      });
+      const result = await Effect.runPromise(
+        engine.execute(code, {
+          onElicitation: makeMcpElicitationHandler(server),
+        }),
+      );
       return toMcpResult(formatExecuteResult(result));
     }
 
-    const outcome = await engine.executeWithPause(code);
+    const outcome = await Effect.runPromise(engine.executeWithPause(code));
     return outcome.status === "completed"
       ? toMcpResult(formatExecuteResult(outcome.result))
       : toMcpPausedResult(formatPausedExecution(outcome.execution));
@@ -222,7 +237,7 @@ export const createExecutorMcpServer = async (
     },
     async ({ executionId, action, content: rawContent }) => {
       const content = parseJsonContent(rawContent);
-      const outcome = await engine.resume(executionId, { action, content });
+      const outcome = await Effect.runPromise(engine.resume(executionId, { action, content }));
 
       if (!outcome) {
         return {

@@ -396,7 +396,9 @@ const runInQuickJs = (
     }),
   );
 
-export const makeQuickJsExecutor = (options: QuickJsExecutorOptions = {}): CodeExecutor => ({
+export const makeQuickJsExecutor = (
+  options: QuickJsExecutorOptions = {},
+): CodeExecutor<QuickJsExecutionError> => ({
   execute: (code: string, toolInvoker: SandboxToolInvoker) =>
     runInQuickJs(options, code, toolInvoker),
 });

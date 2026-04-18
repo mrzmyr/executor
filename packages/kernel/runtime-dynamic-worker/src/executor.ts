@@ -323,7 +323,9 @@ const runInDynamicWorker = (
 // Public API
 // ---------------------------------------------------------------------------
 
-export const makeDynamicWorkerExecutor = (options: DynamicWorkerExecutorOptions): CodeExecutor => ({
+export const makeDynamicWorkerExecutor = (
+  options: DynamicWorkerExecutorOptions,
+): CodeExecutor<DynamicWorkerExecutionError> => ({
   execute: (code: string, toolInvoker: SandboxToolInvoker) =>
     runInDynamicWorker(options, code, toolInvoker),
 });

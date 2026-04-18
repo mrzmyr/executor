@@ -10,14 +10,18 @@ import type { Executor, Tool, Source } from "@executor/sdk";
  */
 export const buildExecuteDescription = (executor: Executor): Effect.Effect<string> =>
   Effect.gen(function* () {
-    const sources: readonly Source[] = yield* executor.sources.list().pipe(Effect.orDie);
-    const tools: readonly Tool[] = yield* executor.tools.list().pipe(Effect.orDie);
+    const sources: readonly Source[] = yield* executor.sources
+      .list()
+      .pipe(Effect.orDie, Effect.withSpan("executor.sources.list"));
+    const tools: readonly Tool[] = yield* executor.tools
+      .list()
+      .pipe(Effect.orDie, Effect.withSpan("executor.tools.list"));
 
     const namespaces = new Set<string>();
     for (const tool of tools) namespaces.add(tool.sourceId);
 
     return formatDescription([...namespaces], sources);
-  });
+  }).pipe(Effect.withSpan("buildExecuteDescription"));
 
 const formatDescription = (namespaces: readonly string[], sources: readonly Source[]): string => {
   const lines: string[] = [
