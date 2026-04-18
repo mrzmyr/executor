@@ -1,4 +1,5 @@
 import type { ScopeId } from "@executor/sdk";
+import { ReactivityKey } from "@executor/react/api/reactivity-keys";
 import { OpenApiClient } from "./client";
 
 // ---------------------------------------------------------------------------
@@ -9,6 +10,7 @@ export const openApiSourceAtom = (scopeId: ScopeId, namespace: string) =>
   OpenApiClient.query("openapi", "getSource", {
     path: { scopeId, namespace },
     timeToLive: "15 seconds",
+    reactivityKeys: [ReactivityKey.sources, ReactivityKey.tools],
   });
 
 // ---------------------------------------------------------------------------

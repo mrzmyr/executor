@@ -1,7 +1,8 @@
 import { useState, useCallback, useMemo } from "react";
 import { Link, useNavigate } from "@tanstack/react-router";
-import { Result, useAtomValue, useAtomSet } from "@effect-atom/atom-react";
-import { sourcesAtom, detectSource } from "../api/atoms";
+import { Result, useAtomSet } from "@effect-atom/atom-react";
+import { detectSource } from "../api/atoms";
+import { useSourcesWithPending } from "../api/optimistic";
 import { useScope } from "../hooks/use-scope";
 import type { SourcePlugin, SourcePreset } from "../plugins/source-plugin";
 import { McpInstallCard } from "../components/mcp-install-card";
@@ -41,7 +42,7 @@ export function SourcesPage(props: { sourcePlugins: readonly SourcePlugin[] }) {
   const [error, setError] = useState<string | null>(null);
 
   const scopeId = useScope();
-  const sources = useAtomValue(sourcesAtom(scopeId));
+  const sources = useSourcesWithPending(scopeId);
   const doDetect = useAtomSet(detectSource, { mode: "promise" });
   const navigate = useNavigate();
 

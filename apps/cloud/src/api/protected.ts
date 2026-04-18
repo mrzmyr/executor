@@ -1,21 +1,15 @@
-import { env } from "cloudflare:workers";
 import { HttpApiBuilder, HttpApiSwagger, HttpServerRequest } from "@effect/platform";
 import { Effect, Layer } from "effect";
 
 import { ExecutorService, ExecutionEngineService } from "@executor/api/server";
-import { createExecutionEngine } from "@executor/execution";
-import { makeDynamicWorkerExecutor } from "@executor/runtime-dynamic-worker";
 import { OpenApiExtensionService } from "@executor/plugin-openapi/api";
 import { McpExtensionService } from "@executor/plugin-mcp/api";
 import { GraphqlExtensionService } from "@executor/plugin-graphql/api";
 
 import { authorizeOrganization } from "../auth/authorize-organization";
 import { WorkOSAuth } from "../auth/workos";
-import { AutumnService } from "../services/autumn";
-import { createOrgExecutor } from "../services/executor";
-import { makeTrackExecutionUsage } from "./autumn";
+import { makeExecutionStack } from "../services/execution-stack";
 import { HttpResponseError, isServerError, toErrorServerResponse } from "./error-response";
-import { withExecutionUsageTracking } from "./execution-usage";
 import { ProtectedCloudApiLive, RouterConfig, SharedServices } from "./layers";
 
 const lookupOrgForRequest = (request: HttpServerRequest.HttpServerRequest) =>
@@ -38,15 +32,11 @@ const lookupOrgForRequest = (request: HttpServerRequest.HttpServerRequest) =>
 
 const createProtectedApp = (organizationId: string, organizationName: string) =>
   Effect.gen(function* () {
-    const executor = yield* createOrgExecutor(organizationId, organizationName);
-    const codeExecutor = makeDynamicWorkerExecutor({ loader: env.LOADER });
-    const autumn = yield* AutumnService;
-    const engine = withExecutionUsageTracking(
-      organizationId,
-      createExecutionEngine({ executor, codeExecutor }),
-      makeTrackExecutionUsage(autumn),
-    );
+    const { executor, engine } = yield* makeExecutionStack(organizationId, organizationName);
 
+    // Handlers wrap their own bodies with `capture(...)` — the edge
+    // translation lives per-handler, not at service construction. See
+    // notes/error-handling.md.
     const requestServices = Layer.mergeAll(
       Layer.succeed(ExecutorService, executor),
       Layer.succeed(ExecutionEngineService, engine),

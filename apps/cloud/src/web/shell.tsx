@@ -1,7 +1,7 @@
 import { Link, Outlet, useLocation } from "@tanstack/react-router";
 import { useEffect, useRef, useState } from "react";
 import { useAtomValue, useAtomSet, Result } from "@effect-atom/atom-react";
-import { sourcesAtom } from "@executor/react/api/atoms";
+import { useSourcesWithPending } from "@executor/react/api/optimistic";
 import { useScope } from "@executor/react/api/scope-context";
 import { Button } from "@executor/react/components/button";
 import { Skeleton } from "@executor/react/components/skeleton";
@@ -66,7 +66,7 @@ function NavItem(props: { to: string; label: string; active: boolean; onNavigate
 
 function SourceList(props: { pathname: string; onNavigate?: () => void }) {
   const scopeId = useScope();
-  const sources = useAtomValue(sourcesAtom(scopeId));
+  const sources = useSourcesWithPending(scopeId);
 
   return Result.match(sources, {
     onInitial: () => (

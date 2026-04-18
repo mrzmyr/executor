@@ -10,21 +10,20 @@ import { drizzle } from "drizzle-orm/postgres-js";
 import postgres from "postgres";
 
 import { createExecutorMcpServer } from "@executor/host-mcp";
-import { createExecutionEngine } from "@executor/execution";
-import { makeDynamicWorkerExecutor } from "@executor/runtime-dynamic-worker";
-import type { DrizzleDb } from "@executor/storage-postgres";
-import * as sharedSchema from "@executor/storage-postgres/schema";
+import type { DrizzleDb, DbServiceShape } from "./services/db";
 
-import { makeTrackExecutionUsage } from "./api/autumn";
-import { withExecutionUsageTracking } from "./api/execution-usage";
+// Import directly from core-shared-services, NOT from ./api/layers.ts.
+// The full layers module pulls in `auth/handlers.ts` → `@tanstack/react-start/server`,
+// which uses a `#tanstack-start-entry` subpath specifier that breaks module
+// load under vitest-pool-workers. The DO only needs the core two services
+// (WorkOSAuth + AutumnService), so we import them from the tight module.
+import { CoreSharedServices } from "./api/core-shared-services";
 import { UserStoreService } from "./auth/context";
 import { resolveOrganization } from "./auth/resolve-organization";
-import { WorkOSAuth } from "./auth/workos";
 import { server } from "./env";
-import { AutumnService } from "./services/autumn";
-import { createOrgExecutor } from "./services/executor";
-import { DbService } from "./services/db";
-import * as cloudSchema from "./services/schema";
+import { DbService, combinedSchema } from "./services/db";
+import { makeExecutionStack } from "./services/execution-stack";
+import { DoTelemetryLive } from "./services/telemetry";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -36,6 +35,8 @@ export type McpSessionInit = {
 
 const HEARTBEAT_MS = 30 * 1000;
 const SESSION_TIMEOUT_MS = 5 * 60 * 1000;
+const TRANSPORT_STATE_KEY = "transport";
+const SESSION_META_KEY = "session-meta";
 
 // ---------------------------------------------------------------------------
 // Errors
@@ -55,31 +56,67 @@ const jsonRpcError = (status: number, code: number, message: string) =>
     headers: { "content-type": "application/json" },
   });
 
-const combinedSchema = { ...sharedSchema, ...cloudSchema };
+type DbHandle = DbServiceShape & { end: () => Promise<void> };
+type SessionMeta = {
+  readonly organizationId: string;
+  readonly organizationName: string;
+};
 
 /**
- * Create a long-lived DB connection for the DO lifetime.
+ * Base DB handle factory for MCP session runtimes.
  *
- * Unlike the per-request `DbService.Live` used in `api.ts`, this connection
- * stays open across requests within the DO. DOs have a single-threaded
- * execution model — there's no cross-request socket reuse issue because
- * only one request runs at a time. The connection is closed when the DO
- * cleans up (timeout or eviction).
+ * The production DO keeps one postgres.js socket for the session lifetime.
+ * The workerd test pool rejects that socket on the next request because the
+ * underlying I/O object is request-bound. Tests therefore opt into a
+ * request-scoped runtime and rebuild the server + DB handle per POST/DELETE
+ * while keeping only the MCP transport state in DO storage.
  */
-const makeLongLivedDb = (): { db: DrizzleDb; end: () => Promise<void> } => {
+const makeDbHandle = (options: {
+  readonly idleTimeout: number;
+  readonly maxLifetime: number;
+}): DbHandle => {
   const connectionString = env.HYPERDRIVE?.connectionString ?? server.DATABASE_URL;
   const sql = postgres(connectionString, {
     max: 1,
-    idle_timeout: 20,
-    max_lifetime: 300,
+    idle_timeout: options.idleTimeout,
+    max_lifetime: options.maxLifetime,
     connect_timeout: 10,
     onnotice: () => undefined,
   });
   return {
+    sql,
     db: drizzle(sql, { schema: combinedSchema }) as DrizzleDb,
     end: () => sql.end({ timeout: 0 }).catch(() => undefined),
   };
 };
+
+const makeLongLivedDb = (): DbHandle => makeDbHandle({ idleTimeout: 20, maxLifetime: 300 });
+
+const makeRequestScopedDb = (): DbHandle => makeDbHandle({ idleTimeout: 0, maxLifetime: 60 });
+
+const makeResolveOrganizationServices = (dbHandle: DbHandle) => {
+  const DbLive = Layer.succeed(DbService, { sql: dbHandle.sql, db: dbHandle.db });
+  const UserStoreLive = UserStoreService.Live.pipe(Layer.provide(DbLive));
+  return Layer.mergeAll(DbLive, UserStoreLive, CoreSharedServices);
+};
+
+const makeSessionServices = (dbHandle: DbHandle) =>
+  Layer.mergeAll(makeResolveOrganizationServices(dbHandle), DoTelemetryLive);
+
+const resolveSessionMeta = Effect.fn("McpSessionDO.resolveSessionMeta")(function* (
+  organizationId: string,
+) {
+    const org = yield* resolveOrganization(organizationId);
+    if (!org) {
+      return yield* new OrganizationNotFoundError({ organizationId });
+    }
+    return {
+      organizationId: org.id,
+      organizationName: org.name,
+    } satisfies SessionMeta;
+  });
+
+const requestScopedRuntimeEnabled = server.MCP_SESSION_REQUEST_SCOPED_RUNTIME === "true";
 
 // ---------------------------------------------------------------------------
 // Durable Object
@@ -90,65 +127,196 @@ export class McpSessionDO extends DurableObject {
   private transport: WorkerTransport | null = null;
   private initialized = false;
   private lastActivityMs = 0;
-  private dbHandle: { db: DrizzleDb; end: () => Promise<void> } | null = null;
+  private dbHandle: DbHandle | null = null;
+  private sessionMeta: SessionMeta | null = null;
 
   private makeStorage() {
     return {
       get: async (): Promise<TransportState | undefined> => {
-        return await this.ctx.storage.get<TransportState>("transport");
+        return await this.ctx.storage.get<TransportState>(TRANSPORT_STATE_KEY);
       },
       set: async (state: TransportState): Promise<void> => {
-        await this.ctx.storage.put("transport", state);
+        await this.ctx.storage.put(TRANSPORT_STATE_KEY, state);
       },
     };
   }
 
-  async init(token: McpSessionInit): Promise<void> {
-    if (this.initialized) return;
+  private async loadSessionMeta(): Promise<SessionMeta | null> {
+    if (this.sessionMeta) return this.sessionMeta;
+    const stored = await this.ctx.storage.get<SessionMeta>(SESSION_META_KEY);
+    this.sessionMeta = stored ?? null;
+    return this.sessionMeta;
+  }
 
-    // Create a long-lived DB connection for the DO's lifetime
-    this.dbHandle = makeLongLivedDb();
+  private async saveSessionMeta(sessionMeta: SessionMeta): Promise<void> {
+    this.sessionMeta = sessionMeta;
+    await this.ctx.storage.put(SESSION_META_KEY, sessionMeta);
+  }
 
-    const DbLive = Layer.succeed(DbService, this.dbHandle.db);
-    const UserStoreLive = UserStoreService.Live.pipe(Layer.provide(DbLive));
-    const Services = Layer.mergeAll(
-      DbLive,
-      UserStoreLive,
-      WorkOSAuth.Default,
-      AutumnService.Default,
-    );
+  private async clearSessionState(): Promise<void> {
+    this.sessionMeta = null;
+    this.initialized = false;
+    this.lastActivityMs = 0;
 
+    await Promise.all([
+      this.ctx.storage.delete(TRANSPORT_STATE_KEY).catch(() => false),
+      this.ctx.storage.delete(SESSION_META_KEY).catch(() => false),
+    ]);
+  }
+
+  private async createConnectedRuntime(
+    sessionMeta: SessionMeta,
+    options: {
+      readonly dbHandle: DbHandle;
+      readonly enableJsonResponse?: boolean;
+    },
+  ): Promise<{ mcpServer: McpServer; transport: WorkerTransport }> {
     const program = Effect.gen(function* () {
-      const org = yield* resolveOrganization(token.organizationId);
-      if (!org)
-        return yield* new OrganizationNotFoundError({ organizationId: token.organizationId });
-
-      const executor = yield* createOrgExecutor(org.id, org.name);
-      const codeExecutor = makeDynamicWorkerExecutor({ loader: env.LOADER });
-      const autumn = yield* AutumnService;
-      const engine = withExecutionUsageTracking(
-        org.id,
-        createExecutionEngine({ executor, codeExecutor }),
-        makeTrackExecutionUsage(autumn),
+      const { engine } = yield* makeExecutionStack(
+        sessionMeta.organizationId,
+        sessionMeta.organizationName,
       );
       return yield* Effect.promise(() => createExecutorMcpServer({ engine }));
-    }).pipe(Effect.provide(Services));
+    }).pipe(Effect.withSpan("McpSessionDO.createRuntime"), Effect.provide(makeSessionServices(options.dbHandle)));
 
-    this.mcpServer = await Effect.runPromise(program);
-
-    this.transport = new WorkerTransport({
+    const mcpServer = await Effect.runPromise(program);
+    const transport = new WorkerTransport({
       sessionIdGenerator: () => this.ctx.id.toString(),
       storage: this.makeStorage(),
+      enableJsonResponse: options.enableJsonResponse,
     });
 
-    await this.mcpServer.connect(this.transport);
+    await mcpServer.connect(transport);
+    return { mcpServer, transport };
+  }
+
+  private async resolveAndStoreSessionMeta(token: McpSessionInit): Promise<SessionMeta> {
+    const dbHandle = makeRequestScopedDb();
+    try {
+      const sessionMeta = await Effect.runPromise(
+        resolveSessionMeta(token.organizationId).pipe(
+          Effect.provide(makeResolveOrganizationServices(dbHandle)),
+        ),
+      );
+      await this.saveSessionMeta(sessionMeta);
+      return sessionMeta;
+    } finally {
+      await dbHandle.end();
+    }
+  }
+
+  async init(token: McpSessionInit): Promise<void> {
+    if (this.initialized) return;
+    // Outer `McpSessionDO.init` span wraps the full session-bootstrap cost
+    // (resolveSessionMeta + createRuntime + alarm setup) so the MCP DO
+    // dashboard's "new sessions" / "init p95" panels have one uniform span
+    // to filter on, regardless of whether the DO is running the long-lived
+    // or request-scoped variant.
+    const program = Effect.promise(() => this.doInit(token)).pipe(
+      Effect.withSpan("McpSessionDO.init", {
+        attributes: {
+          "mcp.auth.organization_id": token.organizationId,
+        },
+      }),
+      Effect.provide(DoTelemetryLive),
+    );
+    return Effect.runPromise(program);
+  }
+
+  private async doInit(token: McpSessionInit): Promise<void> {
+    try {
+      const sessionMeta = await this.resolveAndStoreSessionMeta(token);
+
+      if (!requestScopedRuntimeEnabled) {
+        this.dbHandle = makeLongLivedDb();
+        const runtime = await this.createConnectedRuntime(sessionMeta, {
+          dbHandle: this.dbHandle,
+        });
+        this.mcpServer = runtime.mcpServer;
+        this.transport = runtime.transport;
+      }
+
+      this.initialized = true;
+      this.lastActivityMs = Date.now();
+
+      await this.ctx.storage.setAlarm(Date.now() + HEARTBEAT_MS);
+    } catch (err) {
+      // Partial init leaves dangling resources (DB socket, maybe mcpServer).
+      // Clean up before rethrowing so the DO isn't stuck in a half-built state.
+      console.error("[mcp-session] init failed:", err instanceof Error ? err.stack : err);
+      await this.cleanup();
+      throw err;
+    }
+  }
+
+  private async handleRequestWithRequestScopedRuntime(request: Request): Promise<Response> {
+    const sessionMeta = await this.loadSessionMeta();
+    if (!sessionMeta) {
+      return jsonRpcError(404, -32001, "Session timed out due to inactivity — please reconnect");
+    }
+
     this.initialized = true;
     this.lastActivityMs = Date.now();
 
-    await this.ctx.storage.setAlarm(Date.now() + HEARTBEAT_MS);
+    let dbHandle: DbHandle | null = null;
+    let mcpServer: McpServer | null = null;
+    let transport: WorkerTransport | null = null;
+
+    try {
+      dbHandle = makeRequestScopedDb();
+      const runtime = await this.createConnectedRuntime(sessionMeta, {
+        dbHandle,
+        enableJsonResponse: request.method !== "GET",
+      });
+      mcpServer = runtime.mcpServer;
+      transport = runtime.transport;
+
+      const response = await transport.handleRequest(request);
+      if (request.method === "DELETE") {
+        await this.clearSessionState();
+      }
+      return response;
+    } catch (err) {
+      console.error(
+        "[mcp-session] request-scoped handleRequest error:",
+        err instanceof Error ? err.stack : err,
+      );
+      return jsonRpcError(500, -32603, "Internal error");
+    } finally {
+      await transport?.close().catch(() => undefined);
+      await mcpServer?.close().catch(() => undefined);
+      await dbHandle?.end();
+    }
   }
 
   async handleRequest(request: Request): Promise<Response> {
+    // Wrap the dispatch in an Effect span so every DO request — not just
+    // the rare new-session `init()` — shows up in Axiom. Basic attributes
+    // only (method, session-id presence, response status); rich client
+    // fingerprint stays on the edge `mcp.request` span, which shares a
+    // trace_id with this one.
+    const program = Effect.promise(() => this.dispatchRequest(request)).pipe(
+      Effect.tap((response) =>
+        Effect.annotateCurrentSpan({
+          "mcp.response.status_code": response.status,
+        }),
+      ),
+      Effect.withSpan("McpSessionDO.handleRequest", {
+        attributes: {
+          "mcp.request.method": request.method,
+          "mcp.request.session_id_present": !!request.headers.get("mcp-session-id"),
+        },
+      }),
+      Effect.provide(DoTelemetryLive),
+    );
+    return Effect.runPromise(program);
+  }
+
+  private async dispatchRequest(request: Request): Promise<Response> {
+    if (requestScopedRuntimeEnabled) {
+      return this.handleRequestWithRequestScopedRuntime(request);
+    }
+
     if (!this.initialized || !this.transport) {
       return jsonRpcError(404, -32001, "Session timed out due to inactivity — please reconnect");
     }
@@ -156,7 +324,11 @@ export class McpSessionDO extends DurableObject {
     this.lastActivityMs = Date.now();
 
     try {
-      return await this.transport.handleRequest(request);
+      const response = await this.transport.handleRequest(request);
+      if (request.method === "DELETE") {
+        await this.cleanup();
+      }
+      return response;
     } catch (err) {
       console.error("[mcp-session] handleRequest error:", err instanceof Error ? err.stack : err);
       return jsonRpcError(500, -32603, "Internal error");
@@ -164,6 +336,14 @@ export class McpSessionDO extends DurableObject {
   }
 
   async alarm(): Promise<void> {
+    const program = Effect.promise(() => this.runAlarm()).pipe(
+      Effect.withSpan("McpSessionDO.alarm"),
+      Effect.provide(DoTelemetryLive),
+    );
+    return Effect.runPromise(program);
+  }
+
+  private async runAlarm(): Promise<void> {
     const idleMs = Date.now() - this.lastActivityMs;
     if (idleMs >= SESSION_TIMEOUT_MS) {
       await this.cleanup();
@@ -185,6 +365,6 @@ export class McpSessionDO extends DurableObject {
       await this.dbHandle.end();
       this.dbHandle = null;
     }
-    this.initialized = false;
+    await this.clearSessionState();
   }
 }

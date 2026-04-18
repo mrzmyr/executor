@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useAtomSet, useAtomValue, useAtomRefresh, Result } from "@effect-atom/atom-react";
+import { useAtomSet, useAtomValue, Result } from "@effect-atom/atom-react";
 
 import {
   openOAuthPopup,
@@ -7,6 +7,8 @@ import {
 } from "@executor/plugin-oauth2/react";
 
 import { secretsAtom, setSecret } from "@executor/react/api/atoms";
+import { usePendingSources } from "@executor/react/api/optimistic";
+import { secretWriteKeys, sourceWriteKeys } from "@executor/react/api/reactivity-keys";
 import { useScope } from "@executor/react/api/scope-context";
 import { SecretPicker, type SecretPickerSecret } from "@executor/react/plugins/secret-picker";
 import { SecretId } from "@executor/sdk";
@@ -64,7 +66,6 @@ function InlineCreateSecret(props: {
   const [error, setError] = useState<string | null>(null);
   const scopeId = useScope();
   const doSet = useAtomSet(setSecret, { mode: "promise" });
-  const refreshSecrets = useAtomRefresh(secretsAtom(scopeId));
 
   const handleSave = async () => {
     if (!secretId.trim() || !secretValue.trim()) return;
@@ -77,10 +78,9 @@ function InlineCreateSecret(props: {
           id: SecretId.make(secretId.trim()),
           name: secretName.trim() || secretId.trim(),
           value: secretValue.trim(),
-          purpose: `Google OAuth: ${props.headerName}`,
         },
+        reactivityKeys: [...secretWriteKeys],
       });
-      refreshSecrets();
       props.onCreated(secretId.trim());
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to save secret");
@@ -418,6 +418,7 @@ export default function AddGoogleDiscoverySource(props: {
   const doAdd = useAtomSet(addGoogleDiscoverySource, { mode: "promise" });
   const doStartOAuth = useAtomSet(startGoogleDiscoveryOAuth, { mode: "promise" });
   const secrets = useAtomValue(secretsAtom(scopeId));
+  const { beginAdd } = usePendingSources();
 
   const canUseOAuth = useMemo(() => (probe?.scopes.length ?? 0) > 0, [probe]);
   const secretList: readonly SecretPickerSecret[] = Result.match(secrets, {
@@ -557,11 +558,18 @@ export default function AddGoogleDiscoverySource(props: {
     if (!probe) return;
     setAdding(true);
     setError(null);
+    const displayName = identity.name.trim() || probe.name;
+    const namespace = slugifyNamespace(identity.namespace) || probe.name;
+    const placeholder = beginAdd({
+      id: namespace,
+      name: displayName,
+      kind: "google-discovery",
+    });
     try {
       await doAdd({
         path: { scopeId },
         payload: {
-          name: identity.name.trim() || probe.name,
+          name: displayName,
           discoveryUrl: discoveryUrl.trim(),
           namespace: slugifyNamespace(identity.namespace) || undefined,
           auth:
@@ -569,13 +577,16 @@ export default function AddGoogleDiscoverySource(props: {
               ? (oauthAuth ?? { kind: "none" as const })
               : { kind: "none" as const },
         },
+        reactivityKeys: [...sourceWriteKeys],
       });
       props.onComplete();
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to add source");
       setAdding(false);
+    } finally {
+      placeholder.done();
     }
-  }, [probe, doAdd, identity, discoveryUrl, authKind, oauthAuth, props, scopeId]);
+  }, [probe, doAdd, identity, discoveryUrl, authKind, oauthAuth, props, scopeId, beginAdd]);
 
   const addDisabled =
     !probe || adding || (authKind === "oauth2" && (!canUseOAuth || oauthAuth === null));

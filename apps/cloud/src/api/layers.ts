@@ -15,11 +15,14 @@ import {
   CloudSessionAuthHandlers,
   NonProtectedApi,
 } from "../auth/handlers";
-import { WorkOSAuth } from "../auth/workos";
-import { AutumnService } from "../services/autumn";
 import { DbService } from "../services/db";
+import { TelemetryLive } from "../services/telemetry";
 import { OrgHttpApi } from "../org/compose";
 import { OrgHandlers } from "../org/handlers";
+
+import { CoreSharedServices } from "./core-shared-services";
+
+export { CoreSharedServices };
 
 const ProtectedCloudApi = CoreExecutorApi.add(OpenApiGroup)
   .add(McpGroup)
@@ -32,9 +35,9 @@ const UserStoreLive = UserStoreService.Live.pipe(Layer.provide(DbLive));
 export const SharedServices = Layer.mergeAll(
   DbLive,
   UserStoreLive,
-  WorkOSAuth.Default,
-  AutumnService.Default,
+  CoreSharedServices,
   HttpServer.layerContext,
+  TelemetryLive,
 );
 
 export const RouterConfig = HttpRouter.setRouterConfig({ maxParamLength: 1000 });

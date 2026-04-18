@@ -35,6 +35,8 @@ import {
 import { useSecretPickerSecrets } from "@executor/react/plugins/use-secret-picker-secrets";
 
 type RemoteAuthMode = "none" | "header" | "oauth2";
+import { sourceWriteKeys } from "@executor/react/api/reactivity-keys";
+import { usePendingSources } from "@executor/react/api/optimistic";
 import { probeMcpEndpoint, addMcpSource, startMcpOAuth } from "./atoms";
 import { mcpPresets, type McpPreset } from "../sdk/presets";
 
@@ -330,6 +332,7 @@ export default function AddMcpSource(props: {
   const doProbe = useAtomSet(probeMcpEndpoint, { mode: "promise" });
   const doAdd = useAtomSet(addMcpSource, { mode: "promise" });
   const doStartOAuth = useAtomSet(startMcpOAuth, { mode: "promise" });
+  const { beginAdd } = usePendingSources();
   const secretList = useSecretPickerSecrets();
 
   const [remoteAuthMode, setRemoteAuthMode] = useState<RemoteAuthMode>("none");
@@ -462,42 +465,51 @@ export default function AddMcpSource(props: {
   const handleAddRemote = useCallback(async () => {
     if (!probe) return;
     dispatch({ type: "add-start" });
-    try {
-      const headerAuth = remoteAuthHeaders[0];
-      const auth =
-        remoteAuthMode === "header" && headerAuth?.secretId
+    const headerAuth = remoteAuthHeaders[0];
+    const auth =
+      remoteAuthMode === "header" && headerAuth?.secretId
+        ? {
+            kind: "header" as const,
+            headerName: headerAuth.name.trim(),
+            secretId: headerAuth.secretId,
+            ...(headerAuth.prefix ? { prefix: headerAuth.prefix } : {}),
+          }
+        : remoteAuthMode === "oauth2" && tokens
           ? {
-              kind: "header" as const,
-              headerName: headerAuth.name.trim(),
-              secretId: headerAuth.secretId,
-              ...(headerAuth.prefix ? { prefix: headerAuth.prefix } : {}),
+              kind: "oauth2" as const,
+              accessTokenSecretId: tokens.accessTokenSecretId,
+              refreshTokenSecretId: tokens.refreshTokenSecretId,
+              tokenType: tokens.tokenType,
+              expiresAt: tokens.expiresAt,
+              scope: tokens.scope,
             }
-          : remoteAuthMode === "oauth2" && tokens
-            ? {
-                kind: "oauth2" as const,
-                accessTokenSecretId: tokens.accessTokenSecretId,
-                refreshTokenSecretId: tokens.refreshTokenSecretId,
-                tokenType: tokens.tokenType,
-                expiresAt: tokens.expiresAt,
-                scope: tokens.scope,
-              }
-            : { kind: "none" as const };
-      const headers = Object.fromEntries(
-        remoteHeaders
-          .map((header) => [header.name.trim(), header.value.trim()] as const)
-          .filter(([name, value]) => name && value),
-      );
-
+          : { kind: "none" as const };
+    const headers = Object.fromEntries(
+      remoteHeaders
+        .map((header) => [header.name.trim(), header.value.trim()] as const)
+        .filter(([name, value]) => name && value),
+    );
+    const displayName = remoteIdentity.name.trim() || probe.serverName || probe.name;
+    const slugNamespace = slugifyNamespace(remoteIdentity.namespace);
+    const placeholderId = slugNamespace || `pending:${crypto.randomUUID()}`;
+    const placeholder = beginAdd({
+      id: placeholderId,
+      name: displayName,
+      kind: "mcp",
+      url: state.url.trim(),
+    });
+    try {
       await doAdd({
         path: { scopeId },
         payload: {
           transport: "remote" as const,
-          name: remoteIdentity.name.trim() || probe.serverName || probe.name,
-          namespace: slugifyNamespace(remoteIdentity.namespace) || undefined,
+          name: displayName,
+          namespace: slugNamespace || undefined,
           endpoint: state.url.trim(),
           auth,
           ...(Object.keys(headers).length > 0 ? { headers } : {}),
         },
+        reactivityKeys: sourceWriteKeys,
       });
       props.onComplete();
     } catch (e) {
@@ -505,6 +517,8 @@ export default function AddMcpSource(props: {
         type: "add-fail",
         error: e instanceof Error ? e.message : "Failed to add source",
       });
+    } finally {
+      placeholder.done();
     }
   }, [
     probe,
@@ -517,6 +531,7 @@ export default function AddMcpSource(props: {
     doAdd,
     props,
     scopeId,
+    beginAdd,
   ]);
 
   // ---- Stdio actions ----
@@ -549,24 +564,35 @@ export default function AddMcpSource(props: {
     if (!cmd) return;
     setStdioAdding(true);
     setStdioError(null);
+    const displayName = stdioIdentity.name.trim() || cmd;
+    const slugNamespace = slugifyNamespace(stdioIdentity.namespace);
+    const placeholderId = slugNamespace || `pending:${crypto.randomUUID()}`;
+    const placeholder = beginAdd({
+      id: placeholderId,
+      name: displayName,
+      kind: "mcp",
+    });
     try {
       await doAdd({
         path: { scopeId },
         payload: {
           transport: "stdio" as const,
-          name: stdioIdentity.name.trim() || cmd,
-          namespace: slugifyNamespace(stdioIdentity.namespace) || undefined,
+          name: displayName,
+          namespace: slugNamespace || undefined,
           command: cmd,
           args: parseStdioArgs(stdioArgs),
           env: parseStdioEnv(stdioEnv),
         },
+        reactivityKeys: sourceWriteKeys,
       });
       props.onComplete();
     } catch (e) {
       setStdioError(e instanceof Error ? e.message : "Failed to add source");
       setStdioAdding(false);
+    } finally {
+      placeholder.done();
     }
-  }, [stdioCommand, stdioArgs, stdioEnv, stdioIdentity, doAdd, scopeId, props]);
+  }, [stdioCommand, stdioArgs, stdioEnv, stdioIdentity, doAdd, scopeId, props, beginAdd]);
 
   // ---- Render ----
 
@@ -732,6 +758,7 @@ export default function AddMcpSource(props: {
                   onHeadersChange={setRemoteAuthHeaders}
                   existingSecrets={secretList}
                   singleHeader
+                  sourceName={remoteIdentity.name}
                 />
               )}
 

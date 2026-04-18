@@ -47,7 +47,6 @@
     "typecheck:slow": "bunx tsc --noEmit -p tsconfig.json"
   },
   "dependencies": {
-    "@apidevtools/swagger-parser": "^12.1.0",
     "@effect/platform": "catalog:",
     "@effect/platform-node": "catalog:",
     "@executor/config": "workspace:*",

@@ -4,8 +4,11 @@ import { Effect } from "effect";
 import { createExecutor, makeTestConfig } from "@executor/sdk";
 
 import { mcpPlugin } from "./plugin";
-import { makeInMemoryBindingStore } from "./binding-store";
-import { extractManifestFromListToolsResult, deriveMcpNamespace, joinToolPath } from "./manifest";
+import {
+  extractManifestFromListToolsResult,
+  deriveMcpNamespace,
+  joinToolPath,
+} from "./manifest";
 
 // ---------------------------------------------------------------------------
 // Manifest extraction
@@ -90,7 +93,9 @@ describe("deriveMcpNamespace", () => {
 
   it.effect("derives from command", () =>
     Effect.sync(() => {
-      expect(deriveMcpNamespace({ command: "/usr/local/bin/my-mcp-server" })).toBe("my_mcp_server");
+      expect(deriveMcpNamespace({ command: "/usr/local/bin/my-mcp-server" })).toBe(
+        "my_mcp_server",
+      );
     }),
   );
 
@@ -128,7 +133,7 @@ describe("mcpPlugin", () => {
     Effect.gen(function* () {
       const executor = yield* createExecutor(
         makeTestConfig({
-          plugins: [mcpPlugin({ bindingStore: makeInMemoryBindingStore() })] as const,
+          plugins: [mcpPlugin()] as const,
         }),
       );
 
@@ -144,7 +149,9 @@ describe("mcpPlugin", () => {
 
   it.effect("sources list is initially empty", () =>
     Effect.gen(function* () {
-      const executor = yield* createExecutor(makeTestConfig({ plugins: [mcpPlugin()] as const }));
+      const executor = yield* createExecutor(
+        makeTestConfig({ plugins: [mcpPlugin()] as const }),
+      );
       const sources = yield* executor.sources.list();
       expect(sources).toHaveLength(0);
     }),
@@ -152,9 +159,47 @@ describe("mcpPlugin", () => {
 
   it.effect("tools list is initially empty", () =>
     Effect.gen(function* () {
-      const executor = yield* createExecutor(makeTestConfig({ plugins: [mcpPlugin()] as const }));
+      const executor = yield* createExecutor(
+        makeTestConfig({ plugins: [mcpPlugin()] as const }),
+      );
       const tools = yield* executor.tools.list();
       expect(tools).toHaveLength(0);
+    }),
+  );
+
+  // When discovery fails (auth, network, etc.) we still want the source
+  // row to land in the DB so users see it in the catalog — they can
+  // retry via refresh once they fix the underlying problem. The error
+  // still propagates to the caller so boot-time sync logs the reason.
+  it.effect("registers source with 0 tools when discovery fails", () =>
+    Effect.gen(function* () {
+      const executor = yield* createExecutor(
+        makeTestConfig({ plugins: [mcpPlugin()] as const }),
+      );
+
+      const result = yield* executor.mcp
+        .addSource({
+          transport: "remote",
+          name: "broken",
+          // Port 1 is reserved — will connection-refused immediately,
+          // giving us a deterministic discovery failure without any
+          // server mocks.
+          endpoint: "http://127.0.0.1:1/mcp",
+          remoteTransport: "auto",
+          namespace: "broken_source",
+        })
+        .pipe(Effect.either);
+
+      expect(result._tag).toBe("Left");
+
+      const sources = yield* executor.sources.list();
+      const broken = sources.find((s) => s.id === "broken_source");
+      expect(broken).toBeDefined();
+      expect(broken?.kind).toBe("mcp");
+      expect(broken?.pluginId).toBe("mcp");
+
+      const tools = yield* executor.tools.list();
+      expect(tools.filter((t) => t.sourceId === "broken_source")).toHaveLength(0);
     }),
   );
 });

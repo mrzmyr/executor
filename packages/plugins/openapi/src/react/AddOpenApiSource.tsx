@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useAtomSet } from "@effect-atom/atom-react";
 import { Option } from "effect";
 
@@ -6,6 +6,8 @@ import { openOAuthPopup, type OAuthPopupResult } from "@executor/plugin-oauth2/r
 
 import { SecretPicker } from "@executor/react/plugins/secret-picker";
 import { useScope } from "@executor/react/api/scope-context";
+import { sourceWriteKeys } from "@executor/react/api/reactivity-keys";
+import { usePendingSources } from "@executor/react/api/optimistic";
 import { HeadersList } from "@executor/react/plugins/headers-list";
 import {
   matchPresetKey,
@@ -37,6 +39,7 @@ import {
 } from "@executor/react/components/native-select";
 import { Textarea } from "@executor/react/components/textarea";
 import { Checkbox } from "@executor/react/components/checkbox";
+import { SourceFavicon } from "@executor/react/components/source-favicon";
 import { RadioGroup, RadioGroupItem } from "@executor/react/components/radio-group";
 import { Skeleton } from "@executor/react/components/skeleton";
 import { IOSSpinner, Spinner } from "@executor/react/components/spinner";
@@ -171,6 +174,7 @@ export default function AddOpenApiSource(props: {
   const doPreview = useAtomSet(previewOpenApiSpec, { mode: "promise" });
   const doAdd = useAtomSet(addOpenApiSpec, { mode: "promise" });
   const doStartOAuth = useAtomSet(startOpenApiOAuth, { mode: "promise" });
+  const { beginAdd } = usePendingSources();
   const secretList = useSecretPickerSecrets();
 
   // Keep the latest handleAnalyze in a ref so the debounced effect doesn't
@@ -220,26 +224,6 @@ export default function AddOpenApiSource(props: {
     for (const [name, v] of Object.entries(vars)) out[name] = v.default;
     return out;
   };
-
-  // Derive a favicon URL from the spec URL (if the user entered one — raw
-  // JSON/YAML content will fail URL parsing and yield null). Uses Google's
-  // favicon service so we don't depend on the domain serving /favicon.ico.
-  const faviconUrl = useMemo(() => {
-    try {
-      const trimmed = specUrl.trim();
-      if (!trimmed) return null;
-      const u = new URL(trimmed);
-      if (u.protocol !== "http:" && u.protocol !== "https:") return null;
-      return `https://www.google.com/s2/favicons?domain=${u.hostname}&sz=64`;
-    } catch {
-      return null;
-    }
-  }, [specUrl]);
-
-  const [faviconFailed, setFaviconFailed] = useState(false);
-  useEffect(() => {
-    setFaviconFailed(false);
-  }, [faviconUrl]);
 
   const allHeaders: Record<string, HeaderValue> = {};
   for (const ch of customHeaders) {
@@ -456,6 +440,18 @@ export default function AddOpenApiSource(props: {
   const handleAdd = async () => {
     setAdding(true);
     setAddError(null);
+    const namespace =
+      slugifyNamespace(identity.namespace) ||
+      (preview ? Option.getOrElse(preview.title, () => "openapi") : "openapi");
+    const displayName =
+      identity.name.trim() ||
+      (preview ? Option.getOrElse(preview.title, () => namespace) : namespace);
+    const placeholder = beginAdd({
+      id: namespace,
+      name: displayName,
+      kind: "openapi",
+      url: resolvedBaseUrl || undefined,
+    });
     try {
       await doAdd({
         path: { scopeId },
@@ -467,11 +463,14 @@ export default function AddOpenApiSource(props: {
           ...(hasHeaders ? { headers: allHeaders } : {}),
           ...(oauth2Auth ? { oauth2: oauth2Auth } : {}),
         },
+        reactivityKeys: sourceWriteKeys,
       });
       props.onComplete();
     } catch (e) {
       setAddError(e instanceof Error ? e.message : "Failed to add source");
       setAdding(false);
+    } finally {
+      placeholder.done();
     }
   };
 
@@ -524,14 +523,7 @@ export default function AddOpenApiSource(props: {
         <CardStack>
           <CardStackContent className="border-t-0">
             <CardStackEntry>
-              {faviconUrl && !faviconFailed && (
-                <img
-                  src={faviconUrl}
-                  alt=""
-                  className="size-4 shrink-0 object-contain"
-                  onError={() => setFaviconFailed(true)}
-                />
-              )}
+              {resolvedBaseUrl && <SourceFavicon url={resolvedBaseUrl} size={16} />}
               <CardStackEntryContent>
                 <CardStackEntryTitle>
                   {Option.getOrElse(preview.title, () => "API")}
@@ -788,6 +780,7 @@ export default function AddOpenApiSource(props: {
                 headers={customHeaders}
                 onHeadersChange={handleHeadersChange}
                 existingSecrets={secretList}
+                sourceName={identity.name}
               />
             )}
 

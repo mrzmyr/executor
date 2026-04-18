@@ -6,6 +6,12 @@ const sharedShape = {
 
 const serverShape = {
   DATABASE_URL: Env.stringOr("DATABASE_URL", ""),
+  MCP_SESSION_REQUEST_SCOPED_RUNTIME: Env.literalOr(
+    "MCP_SESSION_REQUEST_SCOPED_RUNTIME",
+    "false",
+    "false",
+    "true",
+  ),
   WORKOS_API_KEY: Env.string("WORKOS_API_KEY"),
   WORKOS_CLIENT_ID: Env.string("WORKOS_CLIENT_ID"),
   WORKOS_COOKIE_PASSWORD: Env.string("WORKOS_COOKIE_PASSWORD"),
@@ -16,6 +22,7 @@ const serverShape = {
   SENTRY_DSN: Env.stringOr("SENTRY_DSN", ""),
   AXIOM_TOKEN: Env.stringOr("AXIOM_TOKEN", ""),
   AXIOM_DATASET: Env.stringOr("AXIOM_DATASET", "executor-cloud"),
+  AXIOM_TRACES_URL: Env.stringOr("AXIOM_TRACES_URL", "https://api.axiom.co/v1/traces"),
 };
 
 type SharedEnv = Readonly<{
@@ -25,6 +32,7 @@ type SharedEnv = Readonly<{
 type ServerEnv = SharedEnv &
   Readonly<{
     DATABASE_URL: string;
+    MCP_SESSION_REQUEST_SCOPED_RUNTIME: "false" | "true";
     WORKOS_API_KEY: string;
     WORKOS_CLIENT_ID: string;
     WORKOS_COOKIE_PASSWORD: string;
@@ -35,6 +43,7 @@ type ServerEnv = SharedEnv &
     SENTRY_DSN: string;
     AXIOM_TOKEN: string;
     AXIOM_DATASET: string;
+    AXIOM_TRACES_URL: string;
   }>;
 
 type WebEnv = Readonly<Record<string, never>>;
