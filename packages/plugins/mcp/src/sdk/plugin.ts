@@ -102,6 +102,12 @@ export interface McpOAuthCompleteResponse {
   readonly scope: string | null;
 }
 
+export interface McpProbeToolInfo {
+  readonly name: string;
+  readonly description?: string;
+  readonly inputSchema?: unknown;
+}
+
 export interface McpProbeResult {
   readonly connected: boolean;
   readonly requiresOAuth: boolean;
@@ -109,6 +115,7 @@ export interface McpProbeResult {
   readonly namespace: string;
   readonly toolCount: number | null;
   readonly serverName: string | null;
+  readonly tools: readonly McpProbeToolInfo[];
 }
 
 export interface McpUpdateSourceInput {
@@ -234,6 +241,7 @@ const resolveConnectorInput = (
 
   return Effect.gen(function* () {
     const headers: Record<string, string> = { ...sd.headers };
+    const queryParams: Record<string, string> = { ...sd.queryParams };
     let authProvider: OAuthClientProvider | undefined;
 
     const auth = sd.auth;
@@ -245,6 +253,14 @@ const resolveConnectorInput = (
         );
       }
       headers[auth.headerName] = auth.prefix ? `${auth.prefix}${val}` : val;
+    } else if (auth.kind === "query") {
+      const val = yield* ctx.secrets.get(auth.secretId);
+      if (val === null) {
+        return yield* Effect.fail(
+          remoteConnectionError(`Failed to resolve secret "${auth.secretId}"`),
+        );
+      }
+      queryParams[auth.paramName] = val;
     } else if (auth.kind === "oauth2") {
       const accessToken = yield* ctx.secrets.get(auth.accessTokenSecretId);
       if (accessToken === null) {
@@ -266,7 +282,7 @@ const resolveConnectorInput = (
       transport: "remote" as const,
       endpoint: sd.endpoint,
       remoteTransport: sd.remoteTransport,
-      queryParams: sd.queryParams,
+      queryParams: Object.keys(queryParams).length > 0 ? queryParams : undefined,
       headers: Object.keys(headers).length > 0 ? headers : undefined,
       authProvider,
     };
@@ -352,6 +368,13 @@ const authToConfig = (auth: McpConnectionAuth | undefined): McpAuthConfig | unde
       headerName: auth.headerName,
       secret: secretRef(auth.secretId),
       prefix: auth.prefix,
+    };
+  }
+  if (auth.kind === "query") {
+    return {
+      kind: "query",
+      paramName: auth.paramName,
+      secret: secretRef(auth.secretId),
     };
   }
   return {
@@ -455,6 +478,11 @@ export const mcpPlugin = definePlugin(
                 namespace,
                 toolCount: result.manifest.tools.length,
                 serverName: result.manifest.server?.name ?? null,
+                tools: result.manifest.tools.map((t) => ({
+                  name: t.toolId,
+                  description: t.description ?? undefined,
+                  inputSchema: t.inputSchema,
+                })),
               } satisfies McpProbeResult;
             }
 
@@ -475,6 +503,7 @@ export const mcpPlugin = definePlugin(
                 namespace,
                 toolCount: null,
                 serverName: null,
+                tools: [],
               } satisfies McpProbeResult;
             }
 

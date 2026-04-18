@@ -58,6 +58,11 @@ export const McpAuthConfig = Schema.Union(
     prefix: Schema.optional(Schema.String),
   }),
   Schema.Struct({
+    kind: Schema.Literal("query"),
+    paramName: Schema.String,
+    secret: Schema.String,
+  }),
+  Schema.Struct({
     kind: Schema.Literal("oauth2"),
     accessTokenSecret: Schema.String,
     refreshTokenSecret: Schema.optional(Schema.NullOr(Schema.String)),
