@@ -9,5 +9,6 @@ export {
   ErrorCapture,
   observabilityMiddleware,
   capture,
+  captureEngineError,
   type ErrorCaptureShape,
 } from "./observability";

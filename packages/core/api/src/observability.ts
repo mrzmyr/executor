@@ -115,6 +115,35 @@ export const capture = <A, E, R>(
   ) as Effect.Effect<A, Exclude<E, StorageFailure> | InternalError, R>;
 
 /**
+ * Translate an engine/runtime-level `YieldableError` (CodeExecutionError,
+ * QuickJsExecutionError, DynamicWorkerExecutionError, ...) into the
+ * public `InternalError({ traceId })` — same pattern as `capture` does
+ * for `StorageError`. The cause is captured via `ErrorCapture` so Sentry
+ * / the trace-id lookup retains the full typed cause; the wire contract
+ * stays opaque.
+ *
+ * Use at a single call site per engine invocation: the handler wraps
+ * `engine.executeWithPause(...)` with `captureEngineError(...)` so the
+ * widened `YieldableError` channel on `ExecutionEngineService` is
+ * narrowed to `InternalError` before leaving the handler body.
+ */
+export const captureEngineError = <A, R>(
+  eff: Effect.Effect<A, Cause.YieldableError, R>,
+): Effect.Effect<A, InternalError, R> =>
+  eff.pipe(
+    Effect.catchAll((err) =>
+      err instanceof InternalError
+        ? Effect.fail(err)
+        : resolveCapture.pipe(
+            Effect.flatMap((c) => c.captureException(Cause.fail(err))),
+            Effect.flatMap((traceId) =>
+              Effect.fail(new InternalError({ traceId })),
+            ),
+          ),
+    ),
+  );
+
+/**
  * Edge defect catchall. Builds an `HttpApiBuilder.middleware` layer
  * that wraps the HttpApp once. Captures any cause (defects, interrupts,
  * unmapped failures the framework couldn't encode) via `ErrorCapture`

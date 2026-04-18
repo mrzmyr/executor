@@ -4,14 +4,14 @@ import { Effect } from "effect";
 import { ExecutorApi } from "../api";
 import { formatExecuteResult, formatPausedExecution } from "@executor/execution";
 import { ExecutionEngineService } from "../services";
-import { capture } from "@executor/api";
+import { capture, captureEngineError } from "@executor/api";
 
 export const ExecutionsHandlers = HttpApiBuilder.group(ExecutorApi, "executions", (handlers) =>
   handlers
     .handle("execute", ({ payload }) =>
       capture(Effect.gen(function* () {
         const engine = yield* ExecutionEngineService;
-        const outcome = yield* engine.executeWithPause(payload.code);
+        const outcome = yield* captureEngineError(engine.executeWithPause(payload.code));
 
         if (outcome.status === "completed") {
           const formatted = formatExecuteResult(outcome.result);
@@ -34,10 +34,12 @@ export const ExecutionsHandlers = HttpApiBuilder.group(ExecutorApi, "executions"
     .handle("resume", ({ path, payload }) =>
       capture(Effect.gen(function* () {
         const engine = yield* ExecutionEngineService;
-        const result = yield* engine.resume(path.executionId, {
-          action: payload.action,
-          content: payload.content as Record<string, unknown> | undefined,
-        });
+        const result = yield* captureEngineError(
+          engine.resume(path.executionId, {
+            action: payload.action,
+            content: payload.content as Record<string, unknown> | undefined,
+          }),
+        );
 
         if (!result) {
           return yield* Effect.fail({
