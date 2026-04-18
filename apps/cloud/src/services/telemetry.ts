@@ -14,7 +14,11 @@
 //   that breaks `this` binding on `WorkerTransport`'s stream primitives —
 //   every MCP request 500s with "Illegal invocation"). The DO uses a
 //   `SimpleSpanProcessor` so spans export immediately; there's no
-//   `ctx.waitUntil` to rely on for batching.
+//   `ctx.waitUntil` to rely on for batching. Gated inside a
+//   `Layer.unwrapEffect` so the `AXIOM_TOKEN` check happens at
+//   layer-provide time — `server` is now a lazy Proxy, so this is just
+//   defensive against the token genuinely being unset (dev / missing
+//   secret).
 // ---------------------------------------------------------------------------
 
 // Subpath imports — the barrel `@effect/opentelemetry` re-exports `NodeSdk`,
@@ -25,9 +29,15 @@
 import * as Resource from "@effect/opentelemetry/Resource";
 import * as OtelTracer from "@effect/opentelemetry/Tracer";
 import * as WebSdk from "@effect/opentelemetry/WebSdk";
-import { OTLPTraceExporter } from "@opentelemetry/exporter-trace-otlp-http";
+// Force the browser platform entry — the package's conditional export would
+// otherwise resolve to the Node build, which uses `https.request` / `node:http`.
+// Under workerd + unenv's nodejs_compat, `https.request` isn't implemented
+// (surfaces as `[unenv] https.request is not implemented yet!` at export
+// time) and every DO span fails to ship. The browser build uses `fetch()`,
+// which workerd does support.
+import { OTLPTraceExporter } from "@opentelemetry/exporter-trace-otlp-http/build/esm/platform/browser/index.js";
 import { SimpleSpanProcessor } from "@opentelemetry/sdk-trace-base";
-import { Layer } from "effect";
+import { Effect, Layer } from "effect";
 
 import { server } from "../env";
 
@@ -35,18 +45,19 @@ export const TelemetryLive: Layer.Layer<never> = OtelTracer.layerGlobal.pipe(
   Layer.provide(Resource.layer({ serviceName: "executor-cloud", serviceVersion: "1.0.0" })),
 );
 
-const makeDoOtelExporter = () =>
-  new OTLPTraceExporter({
-    url: server.AXIOM_TRACES_URL,
-    headers: {
-      Authorization: `Bearer ${server.AXIOM_TOKEN}`,
-      "X-Axiom-Dataset": server.AXIOM_DATASET,
-    },
-  });
-
-export const DoTelemetryLive: Layer.Layer<never> = server.AXIOM_TOKEN
-  ? WebSdk.layer(() => ({
+export const DoTelemetryLive: Layer.Layer<never> = Layer.unwrapEffect(
+  Effect.sync(() => {
+    if (!server.AXIOM_TOKEN) return Layer.empty;
+    const exporter = new OTLPTraceExporter({
+      url: server.AXIOM_TRACES_URL,
+      headers: {
+        Authorization: `Bearer ${server.AXIOM_TOKEN}`,
+        "X-Axiom-Dataset": server.AXIOM_DATASET,
+      },
+    });
+    return WebSdk.layer(() => ({
       resource: { serviceName: "executor-cloud", serviceVersion: "1.0.0" },
-      spanProcessor: new SimpleSpanProcessor(makeDoOtelExporter()),
-    }))
-  : Layer.empty;
+      spanProcessor: new SimpleSpanProcessor(exporter),
+    }));
+  }),
+);
