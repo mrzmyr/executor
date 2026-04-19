@@ -361,6 +361,12 @@ export const drizzleAdapter = (options: DrizzleAdapterOptions): DBAdapter => {
     return t;
   };
 
+  const backendAttrs = (model: string) => ({
+    "executor.storage.backend": "drizzle" as const,
+    "executor.storage.drizzle.provider": provider,
+    "executor.storage.table": model,
+  });
+
   const custom: CustomAdapter = {
     create: ({ model, data }) =>
       Effect.gen(function* () {
@@ -375,7 +381,11 @@ export const drizzleAdapter = (options: DrizzleAdapterOptions): DBAdapter => {
           model,
         );
         return row as never;
-      }),
+      }).pipe(
+        Effect.withSpan("executor.storage.backend.create", {
+          attributes: backendAttrs(model),
+        }),
+      ),
 
     // Real multi-row INSERT in fixed-size chunks. One statement per
     // chunk, not one per row — per-row loops blow the Hyperdrive
@@ -401,7 +411,14 @@ export const drizzleAdapter = (options: DrizzleAdapterOptions): DBAdapter => {
           for (const row of rows) all.push(row);
         }
         return all as never;
-      }),
+      }).pipe(
+        Effect.withSpan("executor.storage.backend.create_many", {
+          attributes: {
+            ...backendAttrs(model),
+            "executor.storage.row_count": data.length,
+          },
+        }),
+      ),
 
     findOne: ({ model, where, join }) =>
       Effect.gen(function* () {
@@ -430,7 +447,11 @@ export const drizzleAdapter = (options: DrizzleAdapterOptions): DBAdapter => {
           model,
         )) as Record<string, unknown>[];
         return (rows[0] ?? null) as never;
-      }),
+      }).pipe(
+        Effect.withSpan("executor.storage.backend.find_one", {
+          attributes: backendAttrs(model),
+        }),
+      ),
 
     findMany: ({ model, where, limit, sortBy, offset, join }) =>
       Effect.gen(function* () {
@@ -477,7 +498,11 @@ export const drizzleAdapter = (options: DrizzleAdapterOptions): DBAdapter => {
           model,
         )) as Record<string, unknown>[];
         return rows as never[];
-      }),
+      }).pipe(
+        Effect.withSpan("executor.storage.backend.find_many", {
+          attributes: backendAttrs(model),
+        }),
+      ),
 
     count: ({ model, where }) =>
       Effect.gen(function* () {
@@ -492,7 +517,11 @@ export const drizzleAdapter = (options: DrizzleAdapterOptions): DBAdapter => {
         )) as { c: number | string | bigint }[];
         const raw = rows[0]?.c ?? 0;
         return typeof raw === "number" ? raw : Number(raw);
-      }),
+      }).pipe(
+        Effect.withSpan("executor.storage.backend.count", {
+          attributes: backendAttrs(model),
+        }),
+      ),
 
     update: ({ model, where, update }) =>
       Effect.gen(function* () {
@@ -529,7 +558,11 @@ export const drizzleAdapter = (options: DrizzleAdapterOptions): DBAdapter => {
           model,
         )) as Record<string, unknown>[];
         return (reread[0] ?? null) as never;
-      }),
+      }).pipe(
+        Effect.withSpan("executor.storage.backend.update", {
+          attributes: backendAttrs(model),
+        }),
+      ),
 
     updateMany: ({ model, where, update }) =>
       Effect.gen(function* () {
@@ -554,7 +587,11 @@ export const drizzleAdapter = (options: DrizzleAdapterOptions): DBAdapter => {
           model,
         );
         return n;
-      }),
+      }).pipe(
+        Effect.withSpan("executor.storage.backend.update_many", {
+          attributes: backendAttrs(model),
+        }),
+      ),
 
     delete: ({ model, where }) =>
       Effect.gen(function* () {
@@ -575,7 +612,11 @@ export const drizzleAdapter = (options: DrizzleAdapterOptions): DBAdapter => {
           () => Promise.resolve(db.delete(table).where(eq(table.id, first.id))),
           model,
         );
-      }),
+      }).pipe(
+        Effect.withSpan("executor.storage.backend.delete", {
+          attributes: backendAttrs(model),
+        }),
+      ),
 
     deleteMany: ({ model, where }) =>
       Effect.gen(function* () {
@@ -598,7 +639,11 @@ export const drizzleAdapter = (options: DrizzleAdapterOptions): DBAdapter => {
           model,
         );
         return n;
-      }),
+      }).pipe(
+        Effect.withSpan("executor.storage.backend.delete_many", {
+          attributes: backendAttrs(model),
+        }),
+      ),
   };
 
   // Transaction strategy differs by dialect:
@@ -659,6 +704,13 @@ export const drizzleAdapter = (options: DrizzleAdapterOptions): DBAdapter => {
               if (e instanceof TxFailure) return e.inner;
               return classifyError("pg transaction", undefined, e);
             }),
+            Effect.withSpan("executor.storage.backend.transaction", {
+              attributes: {
+                "executor.storage.backend": "drizzle",
+                "executor.storage.drizzle.provider": provider,
+                "executor.storage.transaction.strategy": "drizzle_native",
+              },
+            }),
           ) as Effect.Effect<R, E | StorageFailure>;
         }
 
@@ -711,7 +763,15 @@ export const drizzleAdapter = (options: DrizzleAdapterOptions): DBAdapter => {
             });
           }
           return result;
-        });
+        }).pipe(
+          Effect.withSpan("executor.storage.backend.transaction", {
+            attributes: {
+              "executor.storage.backend": "drizzle",
+              "executor.storage.drizzle.provider": provider,
+              "executor.storage.transaction.strategy": "raw_begin_commit",
+            },
+          }),
+        );
       }
     : undefined;
 

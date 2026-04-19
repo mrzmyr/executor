@@ -56,7 +56,7 @@ const createProtectedApp = (organizationId: string, organizationName: string) =>
     );
   });
 
-const handleProtectedRequestEffect = Effect.gen(function* () {
+export const ProtectedApiApp = Effect.gen(function* () {
   const request = yield* HttpServerRequest.HttpServerRequest;
   const org = yield* lookupOrgForRequest(request);
   if (!org) {
@@ -80,5 +80,3 @@ const handleProtectedRequestEffect = Effect.gen(function* () {
     return Effect.succeed(toErrorServerResponse(err));
   }),
 );
-
-export const ProtectedApiApp = handleProtectedRequestEffect;

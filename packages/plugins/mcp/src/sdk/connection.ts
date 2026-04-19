@@ -79,7 +79,11 @@ const connectClient = (input: {
             cause instanceof Error ? cause.message : String(cause)
           }`,
         }),
-    });
+    }).pipe(
+      Effect.withSpan("plugin.mcp.connection.handshake", {
+        attributes: { "plugin.mcp.transport": input.transport },
+      }),
+    );
 
     return connectionFromClient(client);
   });

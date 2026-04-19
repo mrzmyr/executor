@@ -288,12 +288,18 @@ export const searchTools = Effect.fn("executor.tools.search")(function* (
   }
 
   const all = yield* executor.tools.list().pipe(Effect.orDie);
-  return all
+  const results = all
     .filter((tool: Tool) => matchesNamespace(tool, options?.namespace))
     .map((tool: Tool) => scoreToolMatch(tool, query))
     .filter((tool): tool is ToolDiscoveryResult => tool !== null)
     .sort((left, right) => right.score - left.score || left.path.localeCompare(right.path))
     .slice(0, limit);
+
+  yield* Effect.annotateCurrentSpan({
+    "executor.search.candidate_count": all.length,
+    "executor.search.result_count": results.length,
+  });
+  return results;
 });
 
 /** What `tools.executor.sources.list()` calls inside the sandbox. */
@@ -333,9 +339,15 @@ export const listExecutorSources = Effect.fn("executor.sources.list")(function* 
       }) satisfies ExecutorSourceListItem,
   );
 
-  return withCounts
+  const results = withCounts
     .sort((left, right) => left.name.localeCompare(right.name) || left.id.localeCompare(right.id))
     .slice(0, limit);
+
+  yield* Effect.annotateCurrentSpan({
+    "executor.sources.candidate_count": sources.length,
+    "executor.sources.result_count": results.length,
+  });
+  return results;
 });
 
 /** What `tools.describe.tool()` calls inside the sandbox. */

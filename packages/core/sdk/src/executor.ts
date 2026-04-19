@@ -892,8 +892,13 @@ export const createExecutor = <
         for (const { source, pluginId } of staticSources.values()) {
           staticList.push(staticDeclToSource(source, pluginId));
         }
-        return [...staticList, ...dynamic.map(rowToSource)];
-      });
+        const merged = [...staticList, ...dynamic.map(rowToSource)];
+        yield* Effect.annotateCurrentSpan({
+          "executor.sources.static_count": staticList.length,
+          "executor.sources.dynamic_count": dynamic.length,
+        });
+        return merged;
+      }).pipe(Effect.withSpan("executor.sources.list"));
 
     // Bulk-resolve annotations across a set of dynamic tool rows by
     // grouping them under their owning plugin's resolveAnnotations
@@ -936,7 +941,9 @@ export const createExecutor = <
     const listTools = (filter?: ToolListFilter) =>
       Effect.gen(function* () {
         const dynamic = yield* core.findMany({ model: "tool" });
-        const annotations = yield* resolveAnnotationsFor(dynamic);
+        const annotations = yield* resolveAnnotationsFor(dynamic).pipe(
+          Effect.withSpan("executor.tools.list.annotations"),
+        );
 
         const out: Tool[] = [];
         // Static tools — annotations from the declaration, not a resolver.
@@ -946,9 +953,14 @@ export const createExecutor = <
         for (const row of dynamic) {
           out.push(rowToTool(row, annotations.get(row.id)));
         }
-        if (!filter) return out;
-        return out.filter((t) => toolMatchesFilter(t, filter));
-      });
+        const result = filter ? out.filter((t) => toolMatchesFilter(t, filter)) : out;
+        yield* Effect.annotateCurrentSpan({
+          "executor.tools.static_count": staticTools.size,
+          "executor.tools.dynamic_count": dynamic.length,
+          "executor.tools.result_count": result.length,
+        });
+        return result;
+      }).pipe(Effect.withSpan("executor.tools.list"));
 
     // Load all definitions for a single source as a plain map.
     const loadDefinitionsForSource = (sourceId: string) =>
@@ -975,7 +987,9 @@ export const createExecutor = <
     }) =>
       Effect.gen(function* () {
         const defs: Record<string, unknown> = opts.sourceId
-          ? yield* loadDefinitionsForSource(opts.sourceId)
+          ? yield* loadDefinitionsForSource(opts.sourceId).pipe(
+              Effect.withSpan("executor.tool.schema.load_defs"),
+            )
           : {};
 
         const attachDefs = (schema: unknown): unknown => {
@@ -988,11 +1002,18 @@ export const createExecutor = <
         const outputSchema = attachDefs(opts.rawOutput);
 
         const defsMap = new Map<string, unknown>(Object.entries(defs));
-        const preview = buildToolTypeScriptPreview({
-          inputSchema,
-          outputSchema,
-          defs: defsMap,
-        });
+        const preview = yield* Effect.sync(() =>
+          buildToolTypeScriptPreview({ inputSchema, outputSchema, defs: defsMap }),
+        ).pipe(
+          Effect.withSpan("schema.compile.preview", {
+            attributes: {
+              "schema.kind": "tool.preview",
+              "schema.has_input": inputSchema !== undefined,
+              "schema.has_output": outputSchema !== undefined,
+              "schema.def_count": defsMap.size,
+            },
+          }),
+        );
 
         return new ToolSchema({
           id: ToolId.make(opts.toolId),
@@ -1012,6 +1033,11 @@ export const createExecutor = <
         // no `$defs` attach; just wrap the declared schemas.
         const staticEntry = staticTools.get(toolId);
         if (staticEntry) {
+          yield* Effect.annotateCurrentSpan({
+            "executor.tool.dispatch_path": "static",
+            "executor.source_id": staticEntry.source.id,
+            "executor.source_kind": staticEntry.source.kind,
+          });
           return yield* buildToolSchemaView({
             toolId,
             name: staticEntry.tool.name,
@@ -1021,11 +1047,18 @@ export const createExecutor = <
             rawOutput: staticEntry.tool.outputSchema,
           });
         }
-        const row = yield* core.findOne({
-          model: "tool",
-          where: [{ field: "id", value: toolId }],
-        });
+        const row = yield* core
+          .findOne({
+            model: "tool",
+            where: [{ field: "id", value: toolId }],
+          })
+          .pipe(Effect.withSpan("executor.tool.resolve"));
         if (!row) return null;
+        yield* Effect.annotateCurrentSpan({
+          "executor.tool.dispatch_path": "dynamic",
+          "executor.source_id": row.source_id,
+          "executor.plugin_id": row.plugin_id,
+        });
         return yield* buildToolSchemaView({
           toolId,
           name: row.name,
@@ -1034,7 +1067,11 @@ export const createExecutor = <
           rawInput: decodeJsonColumn(row.input_schema),
           rawOutput: decodeJsonColumn(row.output_schema),
         });
-      });
+      }).pipe(
+        Effect.withSpan("executor.tool.schema", {
+          attributes: { "mcp.tool.name": toolId },
+        }),
+      );
 
     // Bulk definitions accessor — every source's $defs, grouped by
     // source id. One query against the definition table, plus an
@@ -1121,31 +1158,44 @@ export const createExecutor = <
         // Static path — O(1) map lookup, no DB hit.
         const staticEntry = staticTools.get(toolId);
         if (staticEntry) {
+          yield* Effect.annotateCurrentSpan({
+            "executor.tool.dispatch_path": "static",
+            "executor.source_id": staticEntry.source.id,
+            "executor.source_kind": staticEntry.source.kind,
+            "executor.plugin_id": staticEntry.pluginId,
+          });
           yield* enforceApproval(
             staticEntry.tool.annotations,
             toolId,
             args,
             options,
-          );
+          ).pipe(Effect.withSpan("executor.tool.enforce_approval"));
           return yield* wrapInvocationError(
             staticEntry.tool.handler({
               ctx: staticEntry.ctx,
               args,
               elicit: buildElicit(toolId, args, options),
             }),
-          );
+          ).pipe(Effect.withSpan("executor.tool.handler"));
         }
 
         // Dynamic path — DB lookup + delegate to owning plugin.
-        const row = yield* core.findOne({
-          model: "tool",
-          where: [{ field: "id", value: toolId }],
-        });
+        const row = yield* core
+          .findOne({
+            model: "tool",
+            where: [{ field: "id", value: toolId }],
+          })
+          .pipe(Effect.withSpan("executor.tool.resolve"));
         if (!row) {
           return yield* new ToolNotFoundError({
             toolId: ToolId.make(toolId),
           });
         }
+        yield* Effect.annotateCurrentSpan({
+          "executor.tool.dispatch_path": "dynamic",
+          "executor.source_id": row.source_id,
+          "executor.plugin_id": row.plugin_id,
+        });
         const runtime = runtimes.get(row.plugin_id);
         if (!runtime) {
           return yield* new PluginNotLoadedError({
@@ -1167,14 +1217,18 @@ export const createExecutor = <
         // around a single storage read.
         let annotations: ToolAnnotations | undefined;
         if (runtime.plugin.resolveAnnotations) {
-          const map = yield* runtime.plugin.resolveAnnotations({
-            ctx: runtime.ctx,
-            sourceId: row.source_id,
-            toolRows: [row],
-          });
+          const map = yield* runtime.plugin
+            .resolveAnnotations({
+              ctx: runtime.ctx,
+              sourceId: row.source_id,
+              toolRows: [row],
+            })
+            .pipe(Effect.withSpan("executor.tool.resolve_annotations"));
           annotations = map[toolId];
         }
-        yield* enforceApproval(annotations, toolId, args, options);
+        yield* enforceApproval(annotations, toolId, args, options).pipe(
+          Effect.withSpan("executor.tool.enforce_approval"),
+        );
 
         return yield* wrapInvocationError(
           runtime.plugin.invokeTool({
@@ -1183,8 +1237,14 @@ export const createExecutor = <
             args,
             elicit: buildElicit(toolId, args, options),
           }),
-        );
-      });
+        ).pipe(Effect.withSpan("executor.tool.handler"));
+      }).pipe(
+        Effect.withSpan("executor.tool.invoke", {
+          attributes: {
+            "mcp.tool.name": toolId,
+          },
+        }),
+      );
 
     const removeSource = (sourceId: string) =>
       Effect.gen(function* () {

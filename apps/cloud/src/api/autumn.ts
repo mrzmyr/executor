@@ -7,7 +7,7 @@ import { server } from "../env";
 import { HttpResponseError, isServerError, toErrorServerResponse } from "./error-response";
 import { SharedServices } from "./layers";
 
-const handleAutumnRequestEffect = Effect.gen(function* () {
+export const AutumnApiApp = Effect.gen(function* () {
   const request = yield* HttpServerRequest.HttpServerRequest;
   const webRequest = yield* Effect.mapError(
     HttpServerRequest.toWeb(request),
@@ -86,5 +86,3 @@ const handleAutumnRequestEffect = Effect.gen(function* () {
     return Effect.succeed(toErrorServerResponse(err));
   }),
 );
-
-export const AutumnApiApp = handleAutumnRequestEffect;

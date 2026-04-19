@@ -445,6 +445,7 @@ export const mcpPlugin = definePlugin(
               Effect.catchAll(() =>
                 Effect.succeed({ ok: false as const, manifest: null }),
               ),
+              Effect.withSpan("mcp.plugin.discover_tools"),
             );
 
             if (result.ok && result.manifest) {
@@ -465,6 +466,7 @@ export const mcpPlugin = definePlugin(
             }).pipe(
               Effect.map(() => true),
               Effect.catchAll(() => Effect.succeed(false)),
+              Effect.withSpan("mcp.plugin.probe_oauth"),
             );
 
             if (hasOAuth) {
@@ -483,7 +485,11 @@ export const mcpPlugin = definePlugin(
                 "Could not connect to MCP endpoint and no OAuth was detected",
               ),
             );
-          });
+          }).pipe(
+            Effect.withSpan("mcp.plugin.probe_endpoint", {
+              attributes: { "mcp.endpoint": endpoint },
+            }),
+          );
 
         const configFile = options?.configFile;
 
@@ -493,7 +499,14 @@ export const mcpPlugin = definePlugin(
             const sd = toStoredSourceData(config);
 
             // Resolve auth (may fail if stdio gate is off)
-            const ci = yield* resolveConnectorInput(sd, ctx, allowStdio);
+            const ci = yield* resolveConnectorInput(sd, ctx, allowStdio).pipe(
+              Effect.withSpan("mcp.plugin.resolve_connector", {
+                attributes: {
+                  "mcp.source.namespace": namespace,
+                  "mcp.source.transport": sd.transport,
+                },
+              }),
+            );
 
             const connector = createMcpConnector(ci);
             // Try discovery. If it fails (auth, network, bad spec), we still
@@ -505,6 +518,9 @@ export const mcpPlugin = definePlugin(
                 mcpDiscoveryError(`MCP discovery failed: ${err.message}`),
               ),
               Effect.either,
+              Effect.withSpan("mcp.plugin.discover_tools", {
+                attributes: { "mcp.source.namespace": namespace },
+              }),
             );
             const manifest =
               discovery._tag === "Right"
@@ -513,73 +529,101 @@ export const mcpPlugin = definePlugin(
 
             const sourceName = manifest.server?.name ?? config.name ?? namespace;
 
-            yield* ctx.transaction(
-              Effect.gen(function* () {
-                // Remove stale rows for this namespace (plugin-owned)
-                yield* ctx.storage.removeBindingsByNamespace(namespace);
-                yield* ctx.storage.removeSource(namespace);
+            yield* ctx
+              .transaction(
+                Effect.gen(function* () {
+                  // Remove stale rows for this namespace (plugin-owned)
+                  yield* ctx.storage.removeBindingsByNamespace(namespace);
+                  yield* ctx.storage.removeSource(namespace);
 
-                yield* ctx.storage.putSource({
-                  namespace,
-                  name: sourceName,
-                  config: sd,
-                });
+                  yield* ctx.storage.putSource({
+                    namespace,
+                    name: sourceName,
+                    config: sd,
+                  });
 
-                yield* ctx.storage.putBindings(
-                  namespace,
-                  manifest.tools.map((e) => ({
-                    toolId: `${namespace}.${e.toolId}`,
-                    binding: toBinding(e),
-                  })),
-                );
+                  yield* ctx.storage.putBindings(
+                    namespace,
+                    manifest.tools.map((e) => ({
+                      toolId: `${namespace}.${e.toolId}`,
+                      binding: toBinding(e),
+                    })),
+                  );
 
-                yield* ctx.core.sources.register({
-                  id: namespace,
-                  kind: "mcp",
-                  name: sourceName,
-                  url: sd.transport === "remote" ? sd.endpoint : undefined,
-                  canRemove: true,
-                  canRefresh: true,
-                  canEdit: sd.transport === "remote",
-                  tools: manifest.tools.map((e) => ({
-                    name: e.toolId,
-                    description: e.description ?? `MCP tool: ${e.toolName}`,
-                    inputSchema: e.inputSchema,
-                    outputSchema: e.outputSchema,
-                  })),
-                });
-              }),
-            );
+                  yield* ctx.core.sources.register({
+                    id: namespace,
+                    kind: "mcp",
+                    name: sourceName,
+                    url: sd.transport === "remote" ? sd.endpoint : undefined,
+                    canRemove: true,
+                    canRefresh: true,
+                    canEdit: sd.transport === "remote",
+                    tools: manifest.tools.map((e) => ({
+                      name: e.toolId,
+                      description: e.description ?? `MCP tool: ${e.toolName}`,
+                      inputSchema: e.inputSchema,
+                      outputSchema: e.outputSchema,
+                    })),
+                  });
+                }),
+              )
+              .pipe(
+                Effect.withSpan("mcp.plugin.persist_source", {
+                  attributes: {
+                    "mcp.source.namespace": namespace,
+                    "mcp.source.tool_count": manifest.tools.length,
+                  },
+                }),
+              );
 
             if (configFile) {
-              yield* configFile.upsertSource(
-                toMcpConfigEntry(namespace, sourceName, config),
-              );
+              yield* configFile
+                .upsertSource(toMcpConfigEntry(namespace, sourceName, config))
+                .pipe(Effect.withSpan("mcp.plugin.config_file.upsert"));
             }
 
             if (discovery._tag === "Left") {
               return yield* Effect.fail(discovery.left);
             }
             return { toolCount: manifest.tools.length, namespace };
-          });
+          }).pipe(
+            Effect.withSpan("mcp.plugin.add_source", {
+              attributes: {
+                "mcp.source.transport": config.transport,
+                "mcp.source.name": config.name,
+              },
+            }),
+          );
 
         const removeSource = (namespace: string) =>
           Effect.gen(function* () {
-            yield* ctx.transaction(
-              Effect.gen(function* () {
-                yield* ctx.storage.removeBindingsByNamespace(namespace);
-                yield* ctx.storage.removeSource(namespace);
-                yield* ctx.core.sources.unregister(namespace);
-              }),
-            );
+            yield* ctx
+              .transaction(
+                Effect.gen(function* () {
+                  yield* ctx.storage.removeBindingsByNamespace(namespace);
+                  yield* ctx.storage.removeSource(namespace);
+                  yield* ctx.core.sources.unregister(namespace);
+                }),
+              )
+              .pipe(Effect.withSpan("mcp.plugin.persist_remove"));
             if (configFile) {
-              yield* configFile.removeSource(namespace);
+              yield* configFile
+                .removeSource(namespace)
+                .pipe(Effect.withSpan("mcp.plugin.config_file.remove"));
             }
-          });
+          }).pipe(
+            Effect.withSpan("mcp.plugin.remove_source", {
+              attributes: { "mcp.source.namespace": namespace },
+            }),
+          );
 
         const refreshSource = (namespace: string) =>
           Effect.gen(function* () {
-            const sd = yield* ctx.storage.getSourceConfig(namespace);
+            const sd = yield* ctx.storage.getSourceConfig(namespace).pipe(
+              Effect.withSpan("mcp.plugin.load_source_config", {
+                attributes: { "mcp.source.namespace": namespace },
+              }),
+            );
             if (!sd) {
               return yield* Effect.fail(
                 remoteConnectionError(
@@ -588,49 +632,72 @@ export const mcpPlugin = definePlugin(
               );
             }
 
-            const ci = yield* resolveConnectorInput(sd, ctx, allowStdio);
+            const ci = yield* resolveConnectorInput(sd, ctx, allowStdio).pipe(
+              Effect.withSpan("mcp.plugin.resolve_connector", {
+                attributes: {
+                  "mcp.source.namespace": namespace,
+                  "mcp.source.transport": sd.transport,
+                },
+              }),
+            );
             const manifest = yield* discoverTools(createMcpConnector(ci)).pipe(
               Effect.mapError((err) =>
                 mcpDiscoveryError(`MCP refresh failed: ${err.message}`),
               ),
+              Effect.withSpan("mcp.plugin.discover_tools", {
+                attributes: { "mcp.source.namespace": namespace },
+              }),
             );
 
             const existing = yield* ctx.storage.getSource(namespace);
             const sourceName =
               manifest.server?.name ?? existing?.name ?? namespace;
 
-            yield* ctx.transaction(
-              Effect.gen(function* () {
-                yield* ctx.storage.removeBindingsByNamespace(namespace);
-                yield* ctx.core.sources.unregister(namespace);
+            yield* ctx
+              .transaction(
+                Effect.gen(function* () {
+                  yield* ctx.storage.removeBindingsByNamespace(namespace);
+                  yield* ctx.core.sources.unregister(namespace);
 
-                yield* ctx.storage.putBindings(
-                  namespace,
-                  manifest.tools.map((e) => ({
-                    toolId: `${namespace}.${e.toolId}`,
-                    binding: toBinding(e),
-                  })),
-                );
-                yield* ctx.core.sources.register({
-                  id: namespace,
-                  kind: "mcp",
-                  name: sourceName,
-                  url: sd.transport === "remote" ? sd.endpoint : undefined,
-                  canRemove: true,
-                  canRefresh: true,
-                  canEdit: sd.transport === "remote",
-                  tools: manifest.tools.map((e) => ({
-                    name: e.toolId,
-                    description: e.description ?? `MCP tool: ${e.toolName}`,
-                    inputSchema: e.inputSchema,
-                    outputSchema: e.outputSchema,
-                  })),
-                });
-              }),
-            );
+                  yield* ctx.storage.putBindings(
+                    namespace,
+                    manifest.tools.map((e) => ({
+                      toolId: `${namespace}.${e.toolId}`,
+                      binding: toBinding(e),
+                    })),
+                  );
+                  yield* ctx.core.sources.register({
+                    id: namespace,
+                    kind: "mcp",
+                    name: sourceName,
+                    url: sd.transport === "remote" ? sd.endpoint : undefined,
+                    canRemove: true,
+                    canRefresh: true,
+                    canEdit: sd.transport === "remote",
+                    tools: manifest.tools.map((e) => ({
+                      name: e.toolId,
+                      description: e.description ?? `MCP tool: ${e.toolName}`,
+                      inputSchema: e.inputSchema,
+                      outputSchema: e.outputSchema,
+                    })),
+                  });
+                }),
+              )
+              .pipe(
+                Effect.withSpan("mcp.plugin.persist_source", {
+                  attributes: {
+                    "mcp.source.namespace": namespace,
+                    "mcp.source.tool_count": manifest.tools.length,
+                  },
+                }),
+              );
 
             return { toolCount: manifest.tools.length };
-          });
+          }).pipe(
+            Effect.withSpan("mcp.plugin.refresh_source", {
+              attributes: { "mcp.source.namespace": namespace },
+            }),
+          );
 
         const startOAuth = (input: McpOAuthStartInput) =>
           Effect.gen(function* () {
@@ -659,24 +726,27 @@ export const mcpPlugin = definePlugin(
               Effect.mapError((e) =>
                 mcpOAuthError(`OAuth start failed: ${e.message}`),
               ),
+              Effect.withSpan("mcp.plugin.oauth.start_authorization"),
             );
 
-            yield* ctx.storage.putOAuthSession(sessionId, {
-              endpoint: fullEndpoint,
-              redirectUrl: input.redirectUrl,
-              codeVerifier: started.codeVerifier,
-              resourceMetadataUrl: started.resourceMetadataUrl,
-              authorizationServerUrl: started.authorizationServerUrl,
-              resourceMetadata: started.resourceMetadata,
-              authorizationServerMetadata: started.authorizationServerMetadata,
-              clientInformation: started.clientInformation,
-            });
+            yield* ctx.storage
+              .putOAuthSession(sessionId, {
+                endpoint: fullEndpoint,
+                redirectUrl: input.redirectUrl,
+                codeVerifier: started.codeVerifier,
+                resourceMetadataUrl: started.resourceMetadataUrl,
+                authorizationServerUrl: started.authorizationServerUrl,
+                resourceMetadata: started.resourceMetadata,
+                authorizationServerMetadata: started.authorizationServerMetadata,
+                clientInformation: started.clientInformation,
+              })
+              .pipe(Effect.withSpan("mcp.plugin.oauth.persist_session"));
 
             return {
               sessionId,
               authorizationUrl: started.authorizationUrl,
             };
-          });
+          }).pipe(Effect.withSpan("mcp.plugin.start_oauth"));
 
         const completeOAuth = (input: McpOAuthCompleteInput) =>
           Effect.gen(function* () {
@@ -705,6 +775,7 @@ export const mcpPlugin = definePlugin(
               Effect.mapError((e) =>
                 mcpOAuthError(`OAuth exchange failed: ${e.message}`),
               ),
+              Effect.withSpan("mcp.plugin.oauth.exchange_code"),
             );
 
             const accessSecretId = `mcp-oauth-access-${input.state}`;
@@ -757,7 +828,7 @@ export const mcpPlugin = definePlugin(
               expiresAt,
               scope: exchanged.tokens.scope ?? null,
             };
-          });
+          }).pipe(Effect.withSpan("mcp.plugin.complete_oauth"));
 
         const updateSource = (
           namespace: string,
@@ -783,10 +854,18 @@ export const mcpPlugin = definePlugin(
               name: input.name?.trim() || existing.name,
               config: updatedConfig,
             });
-          });
+          }).pipe(
+            Effect.withSpan("mcp.plugin.update_source", {
+              attributes: { "mcp.source.namespace": namespace },
+            }),
+          );
 
         const getSource = (namespace: string) =>
-          ctx.storage.getSource(namespace);
+          ctx.storage.getSource(namespace).pipe(
+            Effect.withSpan("mcp.plugin.get_source", {
+              attributes: { "mcp.source.namespace": namespace },
+            }),
+          );
 
         return {
           probeEndpoint,
@@ -804,14 +883,22 @@ export const mcpPlugin = definePlugin(
         Effect.gen(function* () {
           const runtime = yield* ensureRuntime();
 
-          const entry = yield* ctx.storage.getBinding(toolRow.id);
+          const entry = yield* ctx.storage.getBinding(toolRow.id).pipe(
+            Effect.withSpan("mcp.plugin.load_binding", {
+              attributes: { "mcp.tool.name": toolRow.id },
+            }),
+          );
           if (!entry) {
             return yield* Effect.fail(
               new Error(`No MCP binding found for tool "${toolRow.id}"`),
             );
           }
 
-          const sd = yield* ctx.storage.getSourceConfig(entry.namespace);
+          const sd = yield* ctx.storage.getSourceConfig(entry.namespace).pipe(
+            Effect.withSpan("mcp.plugin.load_source_config", {
+              attributes: { "mcp.source.namespace": entry.namespace },
+            }),
+          );
           if (!sd) {
             return yield* Effect.fail(
               new Error(
@@ -837,12 +924,25 @@ export const mcpPlugin = definePlugin(
                           err instanceof Error ? err.message : String(err),
                       }),
                 ),
+                Effect.withSpan("mcp.plugin.resolve_connector", {
+                  attributes: {
+                    "mcp.source.namespace": entry.namespace,
+                    "mcp.source.transport": sd.transport,
+                  },
+                }),
               ),
             connectionCache: runtime.connectionCache,
             pendingConnectors: runtime.pendingConnectors,
             elicit,
           });
-        }),
+        }).pipe(
+          Effect.withSpan("mcp.plugin.invoke_tool", {
+            attributes: {
+              "mcp.tool.name": toolRow.id,
+              "mcp.tool.source_id": toolRow.source_id,
+            },
+          }),
+        ),
 
       detect: ({ url }) =>
         Effect.gen(function* () {
@@ -865,6 +965,7 @@ export const mcpPlugin = definePlugin(
           const connected = yield* discoverTools(connector).pipe(
             Effect.map(() => true),
             Effect.catchAll(() => Effect.succeed(false)),
+            Effect.withSpan("mcp.plugin.discover_tools"),
           );
 
           if (connected) {
@@ -885,6 +986,7 @@ export const mcpPlugin = definePlugin(
           }).pipe(
             Effect.map(() => true),
             Effect.catchAll(() => Effect.succeed(false)),
+            Effect.withSpan("mcp.plugin.probe_oauth"),
           );
 
           if (hasOAuth) {
@@ -898,7 +1000,12 @@ export const mcpPlugin = definePlugin(
           }
 
           return null;
-        }).pipe(Effect.catchAll(() => Effect.succeed(null))),
+        }).pipe(
+          Effect.catchAll(() => Effect.succeed(null)),
+          Effect.withSpan("mcp.plugin.detect", {
+            attributes: { "mcp.endpoint": url },
+          }),
+        ),
 
       // MCP tools never require approval at the tool level — elicitation is
       // handled mid-invocation by the server via the elicit capability.
@@ -928,7 +1035,7 @@ export const mcpPlugin = definePlugin(
             yield* Scope.close(runtime.cacheScope, Exit.void);
             runtimeRef.current = null;
           }
-        }),
+        }).pipe(Effect.withSpan("mcp.plugin.close")),
     };
   },
 );
