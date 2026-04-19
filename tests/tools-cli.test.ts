@@ -2,12 +2,13 @@ import { describe, expect, it } from "@effect/vitest";
 import { Effect } from "effect";
 
 import {
+  buildToolPath,
   buildInvokeToolCode,
   buildListSourcesCode,
-  buildRunToolQueryCode,
   buildSearchToolsCode,
   extractExecutionId,
   extractExecutionResult,
+  isLikelyToolPathToken,
   parseJsonObjectInput,
 } from "../apps/cli/src/tooling";
 
@@ -39,6 +40,16 @@ describe("CLI tooling helpers", () => {
     expect(code).toContain('const __args = {');
   });
 
+  it("builds tool paths from dot or segmented forms", () => {
+    expect(buildToolPath(["github", "issues", "create"])).toBe("github.issues.create");
+    expect(buildToolPath(["github.issues", "create"])).toBe("github.issues.create");
+  });
+
+  it("detects likely tool path tokens", () => {
+    expect(isLikelyToolPathToken("github.issues.create")).toBe(true);
+    expect(isLikelyToolPathToken("return await tools.search({})")).toBe(false);
+  });
+
   it("builds search and sources code snippets", () => {
     const searchCode = buildSearchToolsCode({
       query: "google calendar events",
@@ -51,19 +62,6 @@ describe("CLI tooling helpers", () => {
       'return await tools.search({"query":"google calendar events","limit":5,"namespace":"google"});',
     );
     expect(sourcesCode).toBe('return await tools.executor.sources.list({"limit":20,"query":"google"});');
-  });
-
-  it("builds query-run code that selects and invokes the top search result", () => {
-    const code = buildRunToolQueryCode({
-      query: "google calendar list events",
-      namespace: "google",
-      args: { calendarId: "primary" },
-      limit: 3,
-    });
-
-    expect(code).toContain('const __matches = await tools.search({"query":"google calendar list events","limit":3,"namespace":"google"});');
-    expect(code).toContain("const __result = await __target(__args);");
-    expect(code).toContain("return { path: __path, result: __result };");
   });
 
   it("extracts completed result payload and pause execution id", () => {

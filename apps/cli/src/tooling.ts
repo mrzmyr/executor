@@ -3,14 +3,29 @@ import * as Effect from "effect/Effect";
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
 
-const toToolPathSegments = (toolPath: string): ReadonlyArray<string> =>
-  toolPath
-    .split(".")
+const TOOL_PATH_TOKEN = /^[A-Za-z0-9._-]+$/;
+
+const toToolPathSegments = (parts: ReadonlyArray<string>): ReadonlyArray<string> =>
+  parts
+    .flatMap((part) => part.split("."))
     .map((segment) => segment.trim())
     .filter((segment) => segment.length > 0);
 
+export const buildToolPath = (parts: ReadonlyArray<string>): string => {
+  const segments = toToolPathSegments(parts);
+  if (segments.length === 0) {
+    throw new Error("Tool path must include at least one segment");
+  }
+  return segments.join(".");
+};
+
+export const isLikelyToolPathToken = (raw: string): boolean => {
+  const value = raw.trim();
+  return value.length > 0 && TOOL_PATH_TOKEN.test(value);
+};
+
 const buildToolAccessExpression = (toolPath: string): string => {
-  const segments = toToolPathSegments(toolPath);
+  const segments = toToolPathSegments([toolPath]);
   if (segments.length === 0) {
     throw new Error("Tool path must include at least one segment");
   }
@@ -92,42 +107,5 @@ export const buildInvokeToolCode = (toolPath: string, args: Record<string, unkno
     "  throw new Error(`Tool not found: ${__toolPath}`);",
     "}",
     "return await __target(__args);",
-  ].join("\n");
-};
-
-export const buildRunToolQueryCode = (input: {
-  query: string;
-  namespace?: string;
-  args: Record<string, unknown>;
-  limit: number;
-}): string => {
-  const payload: Record<string, unknown> = {
-    query: input.query,
-    limit: input.limit,
-  };
-  if (input.namespace && input.namespace.trim().length > 0) {
-    payload.namespace = input.namespace;
-  }
-
-  return [
-    `const __matches = await tools.search(${JSON.stringify(payload)});`,
-    "if (!Array.isArray(__matches) || __matches.length === 0) {",
-    `  throw new Error(${JSON.stringify(`No tool matches query: ${input.query}`)});`,
-    "}",
-    "const __path = __matches[0]?.path;",
-    'if (typeof __path !== "string" || __path.trim().length === 0) {',
-    '  throw new Error("Top search result did not include a tool path");',
-    "}",
-    "let __target = tools;",
-    "for (const __segment of __path.split('.')) {",
-    "  if (!__segment) continue;",
-    "  __target = __target?.[__segment];",
-    "}",
-    'if (typeof __target !== "function") {',
-    "  throw new Error(`Tool not found: ${__path}`);",
-    "}",
-    `const __args = ${JSON.stringify(input.args, null, 2)};`,
-    "const __result = await __target(__args);",
-    "return { path: __path, result: __result };",
   ].join("\n");
 };

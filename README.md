@@ -84,8 +84,9 @@ Run code via the CLI:
 executor call --file script.ts
 executor call 'return await tools.discover({ query: "send email" })'
 executor tools search "send email"
-executor tools run "send email" --input '{"to":"alice@example.com","subject":"Hi"}'
 executor tools invoke gmail.send --input '{"to":"alice@example.com","subject":"Hi"}'
+executor tools run gmail send '{"to":"alice@example.com","subject":"Hi"}'
+executor call github issues create '{"owner":"octocat","repo":"Hello-World","title":"Hi"}'
 ```
 
 `executor call`, `executor resume`, and `executor tools ...` commands auto-start a local daemon if needed.
@@ -114,7 +115,8 @@ executor tools search "<query>"     # search tools by intent
 executor tools sources              # list configured sources + tool counts
 executor tools describe <path>      # show tool TypeScript/JSON schema
 executor tools invoke <path> --input '{"k":"v"}' # invoke a tool directly
-executor tools run "<query>" --input '{"k":"v"}' # search + invoke top match
+executor tools run <path...> '{"k":"v"}' # run a tool via path segments
+executor call <path...> '{"k":"v"}' # shorthand tool invocation
 ```
 
 ## Developing locally
