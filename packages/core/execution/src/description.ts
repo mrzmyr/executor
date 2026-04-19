@@ -14,8 +14,19 @@ export const buildExecuteDescription = (executor: Executor): Effect.Effect<strin
       .list()
       .pipe(Effect.orDie, Effect.withSpan("executor.sources.list"));
 
-    return formatDescription(sources);
-  }).pipe(Effect.withSpan("buildExecuteDescription"));
+    const description = yield* Effect.sync(() => formatDescription(sources)).pipe(
+      Effect.withSpan("schema.compile.description", {
+        attributes: { "executor.source_count": sources.length },
+      }),
+    );
+
+    yield* Effect.annotateCurrentSpan({
+      "executor.source_count": sources.length,
+      "schema.kind": "execute",
+    });
+
+    return description;
+  }).pipe(Effect.withSpan("schema.describe.execute"));
 
 const formatDescription = (sources: readonly Source[]): string => {
   const lines: string[] = [

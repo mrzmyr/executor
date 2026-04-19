@@ -638,7 +638,14 @@ export const createAdapter = (
           data.select,
         );
         return out as unknown as R;
-      }),
+      }).pipe(
+        Effect.withSpan("executor.storage.create", {
+          attributes: {
+            "executor.storage.adapter_id": config.adapterId,
+            "executor.storage.table": data.model,
+          },
+        }),
+      ),
 
     createMany: <T extends Record<string, unknown>, R = T>(data: {
       model: string;
@@ -678,7 +685,15 @@ export const createAdapter = (
           );
         }
         return out as unknown as readonly R[];
-      }),
+      }).pipe(
+        Effect.withSpan("executor.storage.create_many", {
+          attributes: {
+            "executor.storage.adapter_id": config.adapterId,
+            "executor.storage.table": data.model,
+            "executor.storage.row_count": data.data.length,
+          },
+        }),
+      ),
 
     findOne: <T>(data: {
       model: string;
@@ -698,7 +713,14 @@ export const createAdapter = (
         const out = yield* maybeTransformOutput(data.model, res, data.select);
         const merged = yield* attachJoinedRows(out, res, data.join);
         return merged as unknown as T | null;
-      }),
+      }).pipe(
+        Effect.withSpan("executor.storage.find_one", {
+          attributes: {
+            "executor.storage.adapter_id": config.adapterId,
+            "executor.storage.table": data.model,
+          },
+        }),
+      ),
 
     findMany: <T>(data: {
       model: string;
@@ -734,7 +756,14 @@ export const createAdapter = (
           out.push(merged);
         }
         return out as readonly T[];
-      }),
+      }).pipe(
+        Effect.withSpan("executor.storage.find_many", {
+          attributes: {
+            "executor.storage.adapter_id": config.adapterId,
+            "executor.storage.table": data.model,
+          },
+        }),
+      ),
 
     count: (data: { model: string; where?: Where[] | undefined }) =>
       Effect.gen(function* () {
@@ -743,7 +772,14 @@ export const createAdapter = (
           model: getModelName(data.model),
           where,
         });
-      }),
+      }).pipe(
+        Effect.withSpan("executor.storage.count", {
+          attributes: {
+            "executor.storage.adapter_id": config.adapterId,
+            "executor.storage.table": data.model,
+          },
+        }),
+      ),
 
     update: <T>(data: {
       model: string;
@@ -765,7 +801,14 @@ export const createAdapter = (
         });
         const out = yield* maybeTransformOutput(data.model, res);
         return out as unknown as T | null;
-      }),
+      }).pipe(
+        Effect.withSpan("executor.storage.update", {
+          attributes: {
+            "executor.storage.adapter_id": config.adapterId,
+            "executor.storage.table": data.model,
+          },
+        }),
+      ),
 
     updateMany: (data: {
       model: string;
@@ -785,7 +828,14 @@ export const createAdapter = (
           where,
           update,
         });
-      }),
+      }).pipe(
+        Effect.withSpan("executor.storage.update_many", {
+          attributes: {
+            "executor.storage.adapter_id": config.adapterId,
+            "executor.storage.table": data.model,
+          },
+        }),
+      ),
 
     delete: (data: { model: string; where: Where[] }) =>
       Effect.gen(function* () {
@@ -794,7 +844,14 @@ export const createAdapter = (
           model: getModelName(data.model),
           where,
         });
-      }),
+      }).pipe(
+        Effect.withSpan("executor.storage.delete", {
+          attributes: {
+            "executor.storage.adapter_id": config.adapterId,
+            "executor.storage.table": data.model,
+          },
+        }),
+      ),
 
     deleteMany: (data: { model: string; where: Where[] }) =>
       Effect.gen(function* () {
@@ -803,17 +860,28 @@ export const createAdapter = (
           model: getModelName(data.model),
           where,
         });
-      }),
+      }).pipe(
+        Effect.withSpan("executor.storage.delete_many", {
+          attributes: {
+            "executor.storage.adapter_id": config.adapterId,
+            "executor.storage.table": data.model,
+          },
+        }),
+      ),
 
     transaction: <R, E>(
       callback: (trx: DBTransactionAdapter) => Effect.Effect<R, E>,
     ) => {
       const txFn = config.transaction;
-      if (!txFn) {
-        // No real transaction support — just run the callback against self.
-        return callback(self);
-      }
-      return txFn(callback);
+      const ran = !txFn ? callback(self) : txFn(callback);
+      return ran.pipe(
+        Effect.withSpan("executor.storage.transaction", {
+          attributes: {
+            "executor.storage.adapter_id": config.adapterId,
+            "executor.storage.transaction.native": txFn !== undefined,
+          },
+        }),
+      );
     },
 
     // Forward the backend's createSchema verbatim. Upstream better-auth

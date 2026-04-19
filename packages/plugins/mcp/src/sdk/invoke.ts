@@ -136,7 +136,11 @@ const useConnection = (
             cause instanceof Error ? cause.message : String(cause)
           }`,
         }),
-    });
+    }).pipe(
+      Effect.withSpan("plugin.mcp.client.call_tool", {
+        attributes: { "mcp.tool.name": toolName },
+      }),
+    );
   });
 
 // ---------------------------------------------------------------------------
@@ -163,8 +167,12 @@ export interface InvokeMcpToolInput {
 
 export const invokeMcpTool = (
   input: InvokeMcpToolInput,
-): Effect.Effect<unknown, McpConnectionError | McpInvocationError> =>
-  Effect.gen(function* () {
+): Effect.Effect<unknown, McpConnectionError | McpInvocationError> => {
+  const transport: string =
+    input.sourceData.transport === "stdio"
+      ? "stdio"
+      : (input.sourceData.remoteTransport ?? "auto");
+  return Effect.gen(function* () {
     const cacheKey = connectionCacheKey(input.sourceData);
     const args = asRecord(input.args);
 
@@ -173,7 +181,15 @@ export const invokeMcpTool = (
     const connector = input.resolveConnector();
     input.pendingConnectors.set(cacheKey, connector);
 
-    const firstConnection = yield* input.connectionCache.get(cacheKey);
+    const firstConnection = yield* input.connectionCache.get(cacheKey).pipe(
+      Effect.withSpan("plugin.mcp.connection.acquire", {
+        attributes: {
+          "plugin.mcp.transport": transport,
+          "plugin.mcp.cache_key": cacheKey,
+          "plugin.mcp.attempt": 1,
+        },
+      }),
+    );
 
     return yield* useConnection(
       firstConnection,
@@ -194,7 +210,25 @@ export const invokeMcpTool = (
             args,
             input.elicit,
           );
-        }),
+        }).pipe(
+          Effect.withSpan("plugin.mcp.invoke.retry", {
+            attributes: {
+              "plugin.mcp.transport": transport,
+              "plugin.mcp.cache_key": cacheKey,
+              "mcp.tool.name": input.toolName,
+            },
+          }),
+        ),
       ),
     );
-  }).pipe(Effect.scoped);
+  }).pipe(
+    Effect.scoped,
+    Effect.withSpan("plugin.mcp.invoke", {
+      attributes: {
+        "mcp.tool.name": input.toolName,
+        "plugin.mcp.tool_id": input.toolId,
+        "plugin.mcp.transport": transport,
+      },
+    }),
+  );
+};

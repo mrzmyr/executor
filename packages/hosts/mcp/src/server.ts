@@ -195,7 +195,11 @@ export const createExecutorMcpServer = <E extends Cause.YieldableError>(
 ): Effect.Effect<McpServer> =>
   Effect.gen(function* () {
     const engine = "engine" in config ? config.engine : createExecutionEngine(config);
-    const description = config.description ?? (yield* engine.getDescription);
+    const description =
+      config.description ??
+      (yield* engine.getDescription.pipe(
+        Effect.withSpan("mcp.host.get_description"),
+      ));
 
     // Captured at construction time. SDK callbacks fire later (often
     // deferred past the outer Effect's await), so we use the runtime to
@@ -211,10 +215,16 @@ export const createExecutorMcpServer = <E extends Cause.YieldableError>(
       return parent ? Effect.withParentSpan(effect, parent) : effect;
     };
 
-    const server = new McpServer(
-      { name: "executor", version: "1.0.0" },
-      { capabilities: { tools: {} }, jsonSchemaValidator: new CfWorkerJsonSchemaValidator() },
-    );
+    const server = yield* Effect.sync(
+      () =>
+        new McpServer(
+          { name: "executor", version: "1.0.0" },
+          {
+            capabilities: { tools: {} },
+            jsonSchemaValidator: new CfWorkerJsonSchemaValidator(),
+          },
+        ),
+    ).pipe(Effect.withSpan("mcp.host.create_server"));
 
     const executeCode = (code: string): Effect.Effect<McpToolResult, E> =>
       Effect.gen(function* () {
@@ -228,7 +238,14 @@ export const createExecutorMcpServer = <E extends Cause.YieldableError>(
         return outcome.status === "completed"
           ? toMcpResult(formatExecuteResult(outcome.result))
           : toMcpPausedResult(formatPausedExecution(outcome.execution));
-      });
+      }).pipe(
+        Effect.withSpan("mcp.host.tool.execute", {
+          attributes: {
+            "mcp.tool.name": "execute",
+            "mcp.execute.code_length": code.length,
+          },
+        }),
+      );
 
     const resumeExecution = (
       executionId: string,
@@ -239,48 +256,70 @@ export const createExecutorMcpServer = <E extends Cause.YieldableError>(
         const outcome = yield* engine.resume(executionId, { action, content });
         if (!outcome) {
           return {
-            content: [{ type: "text", text: `No paused execution: ${executionId}` }],
+            content: [
+              { type: "text" as const, text: `No paused execution: ${executionId}` },
+            ],
             isError: true,
-          };
+          } satisfies McpToolResult;
         }
         return outcome.status === "completed"
           ? toMcpResult(formatExecuteResult(outcome.result))
           : toMcpPausedResult(formatPausedExecution(outcome.execution));
-      });
+      }).pipe(
+        Effect.withSpan("mcp.host.tool.resume", {
+          attributes: {
+            "mcp.tool.name": "resume",
+            "mcp.execute.resume.action": action,
+            "mcp.execute.execution_id": executionId,
+          },
+        }),
+      );
 
     // --- tools ---
 
-    const executeTool = server.registerTool(
-      "execute",
-      {
-        description,
-        inputSchema: { code: z.string().trim().min(1) },
-      },
-      ({ code }) => Runtime.runPromise(runtime)(anchor(executeCode(code))),
+    const executeTool = yield* Effect.sync(() =>
+      server.registerTool(
+        "execute",
+        {
+          description,
+          inputSchema: { code: z.string().trim().min(1) },
+        },
+        ({ code }) => Runtime.runPromise(runtime)(anchor(executeCode(code))),
+      ),
+    ).pipe(
+      Effect.withSpan("mcp.host.register_tool", {
+        attributes: { "mcp.tool.name": "execute" },
+      }),
     );
 
-    const resumeTool = server.registerTool(
-      "resume",
-      {
-        description: [
-          "Resume a paused execution using the executionId returned by execute.",
-          "Never call this without user approval unless they explicitly state otherwise.",
-        ].join("\n"),
-        inputSchema: {
-          executionId: z.string().describe("The execution ID from the paused result"),
-          action: z
-            .enum(["accept", "decline", "cancel"])
-            .describe("How to respond to the interaction"),
-          content: z
-            .string()
-            .describe("Optional JSON-encoded response content for form elicitations")
-            .default("{}"),
+    const resumeTool = yield* Effect.sync(() =>
+      server.registerTool(
+        "resume",
+        {
+          description: [
+            "Resume a paused execution using the executionId returned by execute.",
+            "Never call this without user approval unless they explicitly state otherwise.",
+          ].join("\n"),
+          inputSchema: {
+            executionId: z.string().describe("The execution ID from the paused result"),
+            action: z
+              .enum(["accept", "decline", "cancel"])
+              .describe("How to respond to the interaction"),
+            content: z
+              .string()
+              .describe("Optional JSON-encoded response content for form elicitations")
+              .default("{}"),
+          },
         },
-      },
-      ({ executionId, action, content: rawContent }) =>
-        Runtime.runPromise(runtime)(
-          anchor(resumeExecution(executionId, action, parseJsonContent(rawContent))),
-        ),
+        ({ executionId, action, content: rawContent }) =>
+          Runtime.runPromise(runtime)(
+            anchor(resumeExecution(executionId, action, parseJsonContent(rawContent))),
+          ),
+      ),
+    ).pipe(
+      Effect.withSpan("mcp.host.register_tool", {
+        attributes: { "mcp.tool.name": "resume" },
+      }),
     );
 
     // --- capability-based tool visibility ---
@@ -294,8 +333,10 @@ export const createExecutorMcpServer = <E extends Cause.YieldableError>(
       }
     };
 
-    syncToolAvailability();
-    server.server.oninitialized = syncToolAvailability;
+    yield* Effect.sync(() => {
+      syncToolAvailability();
+      server.server.oninitialized = syncToolAvailability;
+    }).pipe(Effect.withSpan("mcp.host.sync_tool_availability"));
 
     return server;
-  });
+  }).pipe(Effect.withSpan("mcp.host.create_executor_server"));

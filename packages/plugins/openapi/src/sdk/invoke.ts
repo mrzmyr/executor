@@ -102,9 +102,13 @@ export const resolveHeaders = (
 ): Effect.Effect<
   Record<string, string>,
   OpenApiInvocationError | StorageFailure
-> =>
-  Effect.gen(function* () {
-    const entries = Object.entries(headers);
+> => {
+  const entries = Object.entries(headers);
+  const secretCount = entries.reduce(
+    (acc, [, value]) => (typeof value === "string" ? acc : acc + 1),
+    0,
+  );
+  return Effect.gen(function* () {
     // Fan out secret lookups: on every invocation, one or two headers
     // typically each hit the secret store. Resolving them in parallel
     // is a free wall-clock win — preserved order is only needed for
@@ -134,7 +138,15 @@ export const resolveHeaders = (
     const resolved: Record<string, string> = {};
     for (const { name, value } of values) resolved[name] = value;
     return resolved;
-  });
+  }).pipe(
+    Effect.withSpan("plugin.openapi.secret.resolve", {
+      attributes: {
+        "plugin.openapi.headers.total": entries.length,
+        "plugin.openapi.headers.secret_count": secretCount,
+      },
+    }),
+  );
+};
 
 const applyHeaders = (
   request: HttpClientRequest.HttpClientRequest,
@@ -169,6 +181,14 @@ export const invoke = Effect.fn("OpenApi.invoke")(function* (
   resolvedHeaders: Record<string, string>,
 ) {
   const client = yield* HttpClient.HttpClient;
+
+  yield* Effect.annotateCurrentSpan({
+    "http.method": operation.method.toUpperCase(),
+    "http.route": operation.pathTemplate,
+    "plugin.openapi.method": operation.method.toUpperCase(),
+    "plugin.openapi.path_template": operation.pathTemplate,
+    "plugin.openapi.headers.resolved_count": Object.keys(resolvedHeaders).length,
+  });
 
   const resolvedPath = yield* resolvePath(operation.pathTemplate, args, operation.parameters);
 
@@ -216,6 +236,9 @@ export const invoke = Effect.fn("OpenApi.invoke")(function* (
   );
 
   const status = response.status;
+  yield* Effect.annotateCurrentSpan({
+    "http.status_code": status,
+  });
   const responseHeaders: Record<string, string> = { ...response.headers };
 
   const contentType = response.headers["content-type"] ?? null;
@@ -268,7 +291,16 @@ export const invokeWithLayer = (
       ).pipe(Layer.provide(httpClientLayer))
     : httpClientLayer;
 
-  return invoke(operation, args, resolvedHeaders).pipe(Effect.provide(clientWithBaseUrl));
+  return invoke(operation, args, resolvedHeaders).pipe(
+    Effect.provide(clientWithBaseUrl),
+    Effect.withSpan("plugin.openapi.invoke", {
+      attributes: {
+        "plugin.openapi.method": operation.method.toUpperCase(),
+        "plugin.openapi.path_template": operation.pathTemplate,
+        "plugin.openapi.base_url": baseUrl,
+      },
+    }),
+  );
 };
 
 // ---------------------------------------------------------------------------

@@ -194,7 +194,11 @@ const makeFullInvoker = (executor: Executor, invokeOptions: InvokeOptions): Sand
 
         return searchTools(executor, args.query ?? "", limit, {
           namespace: args.namespace,
-        });
+        }).pipe(
+          Effect.withSpan("mcp.tool.dispatch", {
+            attributes: { "mcp.tool.name": path, "executor.tool.builtin": true },
+          }),
+        );
       }
       if (path === "executor.sources.list") {
         if (args !== undefined && !isRecord(args)) {
@@ -225,7 +229,11 @@ const makeFullInvoker = (executor: Executor, invokeOptions: InvokeOptions): Sand
         return listExecutorSources(executor, {
           query: isRecord(args) && typeof args.query === "string" ? args.query : undefined,
           limit,
-        });
+        }).pipe(
+          Effect.withSpan("mcp.tool.dispatch", {
+            attributes: { "mcp.tool.name": path, "executor.tool.builtin": true },
+          }),
+        );
       }
       if (path === "describe.tool") {
         if (!isRecord(args)) {
@@ -248,7 +256,15 @@ const makeFullInvoker = (executor: Executor, invokeOptions: InvokeOptions): Sand
           );
         }
 
-        return describeTool(executor, args.path);
+        return describeTool(executor, args.path).pipe(
+          Effect.withSpan("mcp.tool.dispatch", {
+            attributes: {
+              "mcp.tool.name": path,
+              "executor.tool.builtin": true,
+              "executor.tool.target_path": args.path,
+            },
+          }),
+        );
       }
       return base.invoke({ path, args });
     },
