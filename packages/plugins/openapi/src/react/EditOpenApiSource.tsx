@@ -50,6 +50,7 @@ import {
   OPENAPI_OAUTH_CALLBACK_PATH,
   OPENAPI_OAUTH_CHANNEL,
   OPENAPI_OAUTH_POPUP_NAME,
+  resolveOAuthUrl,
 } from "./AddOpenApiSource";
 import type { SpecPreview, OAuth2Preset } from "../sdk/preview";
 import { OAuth2Auth } from "../sdk/types";
@@ -68,6 +69,7 @@ import type { StoredSourceSchemaType } from "../sdk/store";
 function ConnectionRow(props: {
   readonly auth: OAuth2Auth;
   readonly sourceName: string;
+  readonly sourceBaseUrl: string;
   readonly preset: OAuth2Preset | null;
   readonly previewError: string | null;
 }) {
@@ -104,6 +106,8 @@ function ConnectionRow(props: {
     setBusy(true);
     setError(null);
     try {
+      const tokenUrl = resolveOAuthUrl(auth.tokenUrl, props.sourceBaseUrl);
+
       if (auth.flow === "clientCredentials") {
         // No popup, no session — the backend exchanges tokens inline.
         if (!auth.clientSecretSecretId) {
@@ -117,7 +121,7 @@ function ConnectionRow(props: {
             displayName: props.sourceName || auth.securitySchemeName,
             securitySchemeName: auth.securitySchemeName,
             flow: "clientCredentials",
-            tokenUrl: auth.tokenUrl,
+            tokenUrl,
             clientIdSecretId: auth.clientIdSecretId,
             clientSecretSecretId: auth.clientSecretSecretId,
             scopes: [...auth.scopes],
@@ -134,14 +138,19 @@ function ConnectionRow(props: {
         return;
       }
 
+      const authorizationUrl = resolveOAuthUrl(
+        Option.getOrElse(preset.authorizationUrl, () => ""),
+        props.sourceBaseUrl,
+      );
+
       const response = await doStartOAuth({
         path: { scopeId },
         payload: {
           displayName: props.sourceName || auth.securitySchemeName,
           securitySchemeName: auth.securitySchemeName,
           flow: "authorizationCode",
-          authorizationUrl: Option.getOrElse(preset.authorizationUrl, () => ""),
-          tokenUrl: auth.tokenUrl,
+          authorizationUrl,
+          tokenUrl,
           redirectUrl,
           clientIdSecretId: auth.clientIdSecretId,
           clientSecretSecretId: auth.clientSecretSecretId,
@@ -210,6 +219,7 @@ function ConnectionRow(props: {
     redirectUrl,
     scopeId,
     props.sourceName,
+    props.sourceBaseUrl,
     refreshStatus,
   ]);
 
@@ -319,6 +329,7 @@ function ConnectionRow(props: {
 
 function ConnectionsSection(props: {
   readonly sourceName: string;
+  readonly sourceBaseUrl: string;
   readonly spec: string;
   readonly oauth2Entries: readonly OAuth2Auth[];
 }) {
@@ -373,6 +384,7 @@ function ConnectionsSection(props: {
             key={auth.securitySchemeName}
             auth={auth}
             sourceName={props.sourceName}
+            sourceBaseUrl={props.sourceBaseUrl}
             preset={presetFor(auth.securitySchemeName)}
             previewError={previewError}
           />
@@ -494,6 +506,7 @@ function EditForm(props: {
       {oauth2Entries.length > 0 && (
         <ConnectionsSection
           sourceName={props.initial.name}
+          sourceBaseUrl={baseUrl.trim() || props.initial.config.baseUrl || ""}
           spec={props.initial.config.spec}
           oauth2Entries={oauth2Entries}
         />
