@@ -8,6 +8,13 @@
       "when": 1776367874348,
       "tag": "0000_lame_rage",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1776678968180,
+      "tag": "0001_harsh_meltdown",
+      "breakpoints": true
     }
   ]
 }
