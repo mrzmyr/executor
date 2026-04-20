@@ -24,6 +24,8 @@ const namespaceParam = HttpApiSchema.param("namespace", Schema.String);
 // Auth payload (only for remote)
 // ---------------------------------------------------------------------------
 
+const JsonObject = Schema.Record({ key: Schema.String, value: Schema.Unknown });
+
 const AuthPayload = Schema.Union(
   Schema.Struct({ kind: Schema.Literal("none") }),
   Schema.Struct({
@@ -39,6 +41,9 @@ const AuthPayload = Schema.Union(
     tokenType: Schema.optional(Schema.String),
     expiresAt: Schema.NullOr(Schema.Number),
     scope: Schema.NullOr(Schema.String),
+    clientInformation: Schema.optional(Schema.NullOr(JsonObject)),
+    authorizationServerUrl: Schema.optional(Schema.NullOr(Schema.String)),
+    resourceMetadataUrl: Schema.optional(Schema.NullOr(Schema.String)),
   }),
 );
 
@@ -108,6 +113,14 @@ const StartOAuthPayload = Schema.Struct({
   endpoint: Schema.String,
   redirectUrl: Schema.String,
   queryParams: Schema.optional(Schema.NullOr(StringMap)),
+  accessTokenSecretId: Schema.String,
+  refreshTokenSecretId: Schema.optional(Schema.NullOr(Schema.String)),
+  /** Source-level OAuth state captured by a previous user's flow. When
+   *  passed, DCR is skipped — the same client_id is re-used so the
+   *  source's auth config stays stable across users. */
+  clientInformation: Schema.optional(Schema.NullOr(JsonObject)),
+  authorizationServerUrl: Schema.optional(Schema.NullOr(Schema.String)),
+  resourceMetadataUrl: Schema.optional(Schema.NullOr(Schema.String)),
 });
 
 const CompleteOAuthPayload = Schema.Struct({
@@ -153,6 +166,9 @@ const CompleteOAuthResponse = Schema.Struct({
   tokenType: Schema.String,
   expiresAt: Schema.NullOr(Schema.Number),
   scope: Schema.NullOr(Schema.String),
+  clientInformation: Schema.NullOr(JsonObject),
+  authorizationServerUrl: Schema.NullOr(Schema.String),
+  resourceMetadataUrl: Schema.NullOr(Schema.String),
 });
 
 // ---------------------------------------------------------------------------

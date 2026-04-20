@@ -49,6 +49,22 @@ function findPreset(id: string | undefined): McpPreset | undefined {
   return mcpPresets.find((p) => p.id === id);
 }
 
+// Stable secret ids for an MCP source's OAuth access/refresh tokens.
+// The same ids are passed into `startOAuth` AND stored on the source's
+// auth config, so at invoke time the per-user scope (which actually
+// holds the value) resolves via shadowing over the source-level id.
+// Keyed by namespace so reconnecting overwrites the previous token
+// rather than leaking orphaned secret rows.
+const mcpOAuthTokenSecretIds = (
+  namespaceSlug: string,
+): { readonly accessTokenSecretId: string; readonly refreshTokenSecretId: string } => {
+  const prefix = `mcp_${namespaceSlug}`;
+  return {
+    accessTokenSecretId: `${prefix}_access_token`,
+    refreshTokenSecretId: `${prefix}_refresh_token`,
+  };
+};
+
 // ---------------------------------------------------------------------------
 // State machine (remote flow)
 // ---------------------------------------------------------------------------
@@ -59,6 +75,12 @@ type OAuthTokens = {
   tokenType: string;
   expiresAt: number | null;
   scope: string | null;
+  /** Source-level OAuth state captured during the flow. Persisted on
+   *  the source's auth config so refreshes + future user OAuth flows
+   *  re-use the same DCR client + skip discovery. */
+  clientInformation: Record<string, unknown> | null;
+  authorizationServerUrl: string | null;
+  resourceMetadataUrl: string | null;
 };
 
 type ProbeResult = {
@@ -419,9 +441,19 @@ export default function AddMcpSource(props: {
     dispatch({ type: "oauth-start" });
     try {
       const redirectUrl = `${window.location.origin}/api/mcp/oauth/callback`;
+      const namespaceSlug =
+        slugifyNamespace(remoteIdentity.namespace) ||
+        slugifyNamespace(probe?.namespace ?? "") ||
+        "mcp";
+      const tokenIds = mcpOAuthTokenSecretIds(namespaceSlug);
       const result = await doStartOAuth({
         path: { scopeId },
-        payload: { endpoint: state.url.trim(), redirectUrl },
+        payload: {
+          endpoint: state.url.trim(),
+          redirectUrl,
+          accessTokenSecretId: tokenIds.accessTokenSecretId,
+          refreshTokenSecretId: tokenIds.refreshTokenSecretId,
+        },
       });
       dispatch({ type: "oauth-waiting", sessionId: result.sessionId });
       oauthCleanup.current = openOAuthPopup(
@@ -437,6 +469,9 @@ export default function AddMcpSource(props: {
                 tokenType: data.tokenType,
                 expiresAt: data.expiresAt,
                 scope: data.scope,
+                clientInformation: data.clientInformation ?? null,
+                authorizationServerUrl: data.authorizationServerUrl ?? null,
+                resourceMetadataUrl: data.resourceMetadataUrl ?? null,
               },
             });
           } else {
@@ -454,7 +489,7 @@ export default function AddMcpSource(props: {
         error: e instanceof Error ? e.message : "Failed to start OAuth",
       });
     }
-  }, [state.url, scopeId, doStartOAuth]);
+  }, [state.url, scopeId, doStartOAuth, remoteIdentity.namespace, probe?.namespace]);
 
   const handleCancelOAuth = useCallback(() => {
     oauthCleanup.current?.();
@@ -482,6 +517,9 @@ export default function AddMcpSource(props: {
               tokenType: tokens.tokenType,
               expiresAt: tokens.expiresAt,
               scope: tokens.scope,
+              clientInformation: tokens.clientInformation,
+              authorizationServerUrl: tokens.authorizationServerUrl,
+              resourceMetadataUrl: tokens.resourceMetadataUrl,
             }
           : { kind: "none" as const };
     const headers = Object.fromEntries(

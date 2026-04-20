@@ -15,6 +15,9 @@ export type McpTransport = typeof McpTransport.Type;
 // Connection auth (only applies to remote sources)
 // ---------------------------------------------------------------------------
 
+/** JSON object loosely typed — used for opaque OAuth state we just round-trip. */
+const JsonObject = Schema.Record({ key: Schema.String, value: Schema.Unknown });
+
 export const McpConnectionAuth = Schema.Union(
   Schema.Struct({ kind: Schema.Literal("none") }),
   Schema.Struct({
@@ -30,6 +33,27 @@ export const McpConnectionAuth = Schema.Union(
     tokenType: Schema.optionalWith(Schema.String, { default: () => "Bearer" }),
     expiresAt: Schema.NullOr(Schema.Number),
     scope: Schema.NullOr(Schema.String),
+    /**
+     * Source-level OAuth state shared by every user. Lives on the
+     * source row (org scope) so DCR runs once per source instead of
+     * once per user, and so refresh can use the same client_id the
+     * upstream auth server originally registered.
+     *
+     * - `clientInformation`: DCR-issued client credentials (client_id,
+     *   optional client_secret). When present, no DCR happens on
+     *   subsequent OAuth flows or refreshes.
+     * - `authorizationServerUrl` / `resourceMetadataUrl`: discovery
+     *   URLs captured at first OAuth so refreshes don't re-discover.
+     */
+    clientInformation: Schema.optionalWith(Schema.NullOr(JsonObject), {
+      default: () => null,
+    }),
+    authorizationServerUrl: Schema.optionalWith(Schema.NullOr(Schema.String), {
+      default: () => null,
+    }),
+    resourceMetadataUrl: Schema.optionalWith(Schema.NullOr(Schema.String), {
+      default: () => null,
+    }),
   }),
 );
 export type McpConnectionAuth = typeof McpConnectionAuth.Type;

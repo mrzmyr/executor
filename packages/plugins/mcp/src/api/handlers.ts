@@ -204,6 +204,11 @@ export const McpHandlers = HttpApiBuilder.group(ExecutorApiWithMcp, "mcp", (hand
           endpoint: payload.endpoint,
           redirectUrl: payload.redirectUrl,
           queryParams: payload.queryParams,
+          accessTokenSecretId: payload.accessTokenSecretId,
+          refreshTokenSecretId: payload.refreshTokenSecretId,
+          clientInformation: payload.clientInformation,
+          authorizationServerUrl: payload.authorizationServerUrl,
+          resourceMetadataUrl: payload.resourceMetadataUrl,
         });
       })),
     )

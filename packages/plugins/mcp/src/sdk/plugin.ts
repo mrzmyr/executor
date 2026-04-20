@@ -1,10 +1,17 @@
 import { Duration, Effect, Exit, Scope, ScopedCache } from "effect";
 
-import type { OAuthClientProvider } from "@modelcontextprotocol/sdk/client/auth.js";
-import type { OAuthTokens } from "@modelcontextprotocol/sdk/shared/auth.js";
+import type {
+  OAuthClientProvider,
+  OAuthDiscoveryState,
+} from "@modelcontextprotocol/sdk/client/auth.js";
+import type {
+  OAuthClientInformationMixed,
+  OAuthTokens,
+} from "@modelcontextprotocol/sdk/shared/auth.js";
 
 import {
   definePlugin,
+  ScopeId,
   SecretId,
   SetSecretInput,
   SourceDetectionResult,
@@ -89,6 +96,30 @@ export interface McpOAuthStartInput {
   readonly endpoint: string;
   readonly redirectUrl: string;
   readonly queryParams?: Record<string, string> | null;
+  /**
+   * Executor scope id where the minted access/refresh tokens will land.
+   * Defaults to `ctx.scopes[0].id` (innermost) — for a per-user stack
+   * `[user, org]` that pins tokens to the user scope so the source's
+   * stored `accessTokenSecretId` resolves per-user via shadowing.
+   */
+  readonly tokenScope?: string;
+  /**
+   * Pre-decided secret ids for the minted tokens. Mint deterministically
+   * (e.g. `mcp_${namespace}_access_token`) so the source's stored
+   * OAuth2 auth carries the same id everyone reads, and `ctx.secrets.get`
+   * resolves per-user via scope fall-through.
+   */
+  readonly accessTokenSecretId: string;
+  readonly refreshTokenSecretId?: string | null;
+  /**
+   * Source-level OAuth state captured by a previous user's flow. Pass
+   * the values stored on the source's auth config to skip Dynamic
+   * Client Registration — the new user's flow re-uses the same
+   * client_id and discovery results.
+   */
+  readonly clientInformation?: Record<string, unknown> | null;
+  readonly authorizationServerUrl?: string | null;
+  readonly resourceMetadataUrl?: string | null;
 }
 
 export interface McpOAuthStartResponse {
@@ -108,6 +139,12 @@ export interface McpOAuthCompleteResponse {
   readonly tokenType: string;
   readonly expiresAt: number | null;
   readonly scope: string | null;
+  /** DCR client + discovery URLs captured during the flow. The UI
+   *  stores them on the source's auth config so refreshes don't
+   *  re-register or re-discover. */
+  readonly clientInformation: Record<string, unknown> | null;
+  readonly authorizationServerUrl: string | null;
+  readonly resourceMetadataUrl: string | null;
 }
 
 export interface McpProbeResult {
@@ -168,41 +205,81 @@ const toBinding = (entry: McpToolManifestEntry): McpToolBinding =>
     outputSchema: entry.outputSchema,
   });
 
-const makeOAuthProvider = (
-  accessToken: string,
-  tokenType: string,
-  refreshToken?: string,
-): OAuthClientProvider => ({
-  get redirectUrl() {
-    return "http://localhost/oauth/callback";
-  },
-  get clientMetadata() {
-    return {
-      redirect_uris: ["http://localhost/oauth/callback"],
-      grant_types: ["authorization_code", "refresh_token"] as string[],
-      response_types: ["code"] as string[],
-      token_endpoint_auth_method: "none" as const,
-      client_name: "Executor",
-    };
-  },
-  clientInformation: () => undefined,
-  saveClientInformation: () => {},
-  tokens: async (): Promise<OAuthTokens> => ({
-    access_token: accessToken,
-    token_type: tokenType,
-    ...(refreshToken ? { refresh_token: refreshToken } : {}),
-  }),
-  saveTokens: async () => {},
-  redirectToAuthorization: async () => {
-    throw new Error("MCP OAuth re-authorization required");
-  },
-  saveCodeVerifier: () => {},
-  codeVerifier: () => {
-    throw new Error("No active PKCE verifier");
-  },
-  saveDiscoveryState: () => {},
-  discoveryState: () => undefined,
-});
+interface OAuthProviderInputs {
+  readonly accessToken: string;
+  readonly tokenType: string;
+  readonly refreshToken?: string;
+  readonly expiresAt?: number | null;
+  readonly scope?: string | null;
+  /** Source-level state — same for every user. */
+  readonly clientInformation?: OAuthClientInformationMixed | null;
+  readonly authorizationServerUrl?: string | null;
+  readonly resourceMetadataUrl?: string | null;
+  readonly endpoint: string;
+  /**
+   * Called when the SDK refreshes tokens (grant_type=refresh_token).
+   * Persisting new tokens back to per-user secrets is what closes the
+   * refresh loop — without it the next invocation reads stale values.
+   */
+  readonly onRefresh?: (tokens: OAuthTokens) => Promise<void> | void;
+}
+
+const makeOAuthProvider = (inputs: OAuthProviderInputs): OAuthClientProvider => {
+  let currentTokens: OAuthTokens = {
+    access_token: inputs.accessToken,
+    token_type: inputs.tokenType,
+    ...(inputs.refreshToken ? { refresh_token: inputs.refreshToken } : {}),
+    ...(inputs.expiresAt
+      ? { expires_in: Math.max(0, Math.floor((inputs.expiresAt - Date.now()) / 1000)) }
+      : {}),
+    ...(inputs.scope ? { scope: inputs.scope } : {}),
+  };
+  let clientInformation: OAuthClientInformationMixed | undefined =
+    inputs.clientInformation ?? undefined;
+  let discoveryState: OAuthDiscoveryState | undefined =
+    inputs.authorizationServerUrl || inputs.resourceMetadataUrl
+      ? {
+          authorizationServerUrl:
+            inputs.authorizationServerUrl ?? new URL("/", inputs.endpoint).toString(),
+          resourceMetadataUrl: inputs.resourceMetadataUrl ?? undefined,
+        }
+      : undefined;
+
+  return {
+    get redirectUrl() {
+      return "http://localhost/oauth/callback";
+    },
+    get clientMetadata() {
+      return {
+        redirect_uris: ["http://localhost/oauth/callback"],
+        grant_types: ["authorization_code", "refresh_token"] as string[],
+        response_types: ["code"] as string[],
+        token_endpoint_auth_method: "none" as const,
+        client_name: "Executor",
+      };
+    },
+    clientInformation: () => clientInformation,
+    saveClientInformation: (ci) => {
+      clientInformation = ci;
+    },
+    tokens: () => currentTokens,
+    saveTokens: async (t) => {
+      currentTokens = t;
+      if (inputs.onRefresh) await inputs.onRefresh(t);
+    },
+    redirectToAuthorization: async () => {
+      throw new Error("MCP OAuth re-authorization required");
+    },
+    saveCodeVerifier: () => {},
+    codeVerifier: () => {
+      throw new Error("No active PKCE verifier");
+    },
+    saveDiscoveryState: (s) => {
+      discoveryState = s;
+    },
+    discoveryState: () => discoveryState,
+  };
+};
 
 const remoteConnectionError = (message: string) =>
   new McpConnectionError({ transport: "remote", message });
@@ -263,11 +340,58 @@ const resolveConnectorInput = (
       const refreshToken = auth.refreshTokenSecretId
         ? (yield* ctx.secrets.get(auth.refreshTokenSecretId)) ?? undefined
         : undefined;
-      authProvider = makeOAuthProvider(
+      // Capture the resolved owning scope of these secrets so refreshed
+      // tokens land back at the same per-user scope. `ctx.secrets.get`
+      // walks the executor scope stack innermost-first, so the existing
+      // value lives at whichever scope shadowed the source-level id —
+      // we mirror that with `ctx.scopes[0]!.id`, matching the scope
+      // chosen at startOAuth time.
+      const tokenScope = ScopeId.make(ctx.scopes[0]!.id as string);
+      const accessSecretId = auth.accessTokenSecretId;
+      const refreshSecretId = auth.refreshTokenSecretId;
+      authProvider = makeOAuthProvider({
         accessToken,
-        auth.tokenType ?? "Bearer",
+        tokenType: auth.tokenType ?? "Bearer",
         refreshToken,
-      );
+        expiresAt: auth.expiresAt,
+        scope: auth.scope,
+        clientInformation: auth.clientInformation as
+          | OAuthClientInformationMixed
+          | null
+          | undefined,
+        authorizationServerUrl: auth.authorizationServerUrl,
+        resourceMetadataUrl: auth.resourceMetadataUrl,
+        endpoint: sd.endpoint,
+        onRefresh: async (tokens) => {
+          // Persist refreshed tokens back to the calling user's scope
+          // so subsequent invocations see the new value rather than
+          // re-refreshing on every request. Uses runPromise because
+          // OAuthClientProvider.saveTokens is an async callback, not
+          // an Effect.
+          await Effect.runPromise(
+            ctx.secrets.set(
+              new SetSecretInput({
+                id: SecretId.make(accessSecretId),
+                scope: tokenScope,
+                name: "MCP OAuth Access Token",
+                value: tokens.access_token,
+              }),
+            ),
+          );
+          if (tokens.refresh_token && refreshSecretId) {
+            await Effect.runPromise(
+              ctx.secrets.set(
+                new SetSecretInput({
+                  id: SecretId.make(refreshSecretId),
+                  scope: tokenScope,
+                  name: "MCP OAuth Refresh Token",
+                  value: tokens.refresh_token,
+                }),
+              ),
+            );
+          }
+        },
+      });
     }
 
     return {
@@ -736,10 +860,17 @@ export const mcpPlugin = definePlugin(
             }
 
             const sessionId = `mcp_oauth_${crypto.randomUUID()}`;
+            const tokenScope = input.tokenScope ?? (ctx.scopes[0]!.id as string);
             const started = yield* startMcpOAuthAuthorization({
               endpoint: fullEndpoint,
               redirectUrl: input.redirectUrl,
               state: sessionId,
+              clientInformation: input.clientInformation as
+                | OAuthClientInformationMixed
+                | null
+                | undefined,
+              authorizationServerUrl: input.authorizationServerUrl,
+              resourceMetadataUrl: input.resourceMetadataUrl,
             }).pipe(
               Effect.mapError((e) =>
                 mcpOAuthError(`OAuth start failed: ${e.message}`),
@@ -748,7 +879,7 @@ export const mcpPlugin = definePlugin(
             );
 
             yield* ctx.storage
-              .putOAuthSession(sessionId, ctx.scopes[0]!.id as string, {
+              .putOAuthSession(sessionId, tokenScope, {
                 endpoint: fullEndpoint,
                 redirectUrl: input.redirectUrl,
                 codeVerifier: started.codeVerifier,
@@ -757,6 +888,9 @@ export const mcpPlugin = definePlugin(
                 resourceMetadata: started.resourceMetadata,
                 authorizationServerMetadata: started.authorizationServerMetadata,
                 clientInformation: started.clientInformation,
+                tokenScope,
+                accessTokenSecretId: input.accessTokenSecretId,
+                refreshTokenSecretId: input.refreshTokenSecretId ?? null,
               })
               .pipe(Effect.withSpan("mcp.plugin.oauth.persist_session"));
 
@@ -796,13 +930,14 @@ export const mcpPlugin = definePlugin(
               Effect.withSpan("mcp.plugin.oauth.exchange_code"),
             );
 
-            // MCP OAuth tokens are user-specific, so they land at the
-            // innermost scope. On a single-scope executor that's the
-            // only scope; on a per-user stack `[user, org]` it's the
-            // user scope — so tokens shadow org-level fallbacks for
-            // the caller's own invocations.
-            const tokenScope = ctx.scopes[0]!.id;
-            const accessSecretId = `mcp-oauth-access-${input.state}`;
+            // Token storage is fully driven by the session: scope and
+            // secret ids were chosen at startOAuth time and pinned to
+            // the row. That keeps shadowing deterministic — every
+            // user's OAuth flow on the same source writes to the same
+            // ids, so the source's stored OAuth2 auth resolves
+            // per-user via scope fall-through.
+            const tokenScope = ScopeId.make(session.tokenScope);
+            const accessSecretId = session.accessTokenSecretId;
             yield* ctx.secrets
               .set(
                 new SetSecretInput({
@@ -819,8 +954,8 @@ export const mcpPlugin = definePlugin(
               );
 
             let refreshTokenSecretId: string | null = null;
-            if (exchanged.tokens.refresh_token) {
-              const refreshId = `mcp-oauth-refresh-${input.state}`;
+            if (exchanged.tokens.refresh_token && session.refreshTokenSecretId) {
+              const refreshId = session.refreshTokenSecretId;
               yield* ctx.secrets
                 .set(
                   new SetSecretInput({
@@ -853,6 +988,15 @@ export const mcpPlugin = definePlugin(
               tokenType: exchanged.tokens.token_type ?? "Bearer",
               expiresAt,
               scope: exchanged.tokens.scope ?? null,
+              // Echo the source-level OAuth state captured during this
+              // flow. The UI persists it on the source's auth config so
+              // refreshes (and any future user's OAuth) re-use the same
+              // DCR client + skip discovery.
+              clientInformation: exchanged.clientInformation as
+                | Record<string, unknown>
+                | null,
+              authorizationServerUrl: exchanged.authorizationServerUrl,
+              resourceMetadataUrl: exchanged.resourceMetadataUrl,
             };
           }).pipe(Effect.withSpan("mcp.plugin.complete_oauth"));
 
@@ -946,6 +1090,7 @@ export const mcpPlugin = definePlugin(
             toolName: entry.binding.toolName,
             args,
             sourceData: sd,
+            invokerScope: ctx.scopes[0]!.id as string,
             resolveConnector: () =>
               resolveConnectorInput(sd, ctx, allowStdio).pipe(
                 Effect.flatMap((ci) => createMcpConnector(ci)),

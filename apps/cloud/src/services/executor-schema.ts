@@ -1,4 +1,4 @@
-import { pgTable, text, boolean, timestamp, integer, jsonb, index, primaryKey } from "drizzle-orm/pg-core";
+import { pgTable, text, boolean, timestamp, bigint, jsonb, index, primaryKey } from "drizzle-orm/pg-core";
 
 export const source = pgTable("source", {
   id: text('id').notNull(),
@@ -126,7 +126,7 @@ export const mcp_oauth_session = pgTable("mcp_oauth_session", {
   id: text('id').notNull(),
   scope_id: text('scope_id').notNull(),
   session: jsonb('session').notNull(),
-  expires_at: integer('expires_at').notNull(),
+  expires_at: bigint('expires_at', { mode: 'number' }).notNull(),
   created_at: timestamp('created_at').notNull()
 }, (table) => [
   primaryKey({ columns: [table.scope_id, table.id] }),
