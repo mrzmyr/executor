@@ -89,6 +89,28 @@ const substituteUrlVariables = (url: string, values: Record<string, string>): st
   return out;
 };
 
+/**
+ * OpenAPI 3.x requires OAuth2 tokenUrl/authorizationUrl to be absolute,
+ * but some specs ship relative paths like `/api/rest/v1/oauth/token`.
+ * Resolve them against the source's chosen baseUrl so the backend can
+ * fetch them directly and the absolute URL is what gets persisted on
+ * OAuth2Auth.
+ */
+export function resolveOAuthUrl(url: string, baseUrl: string): string {
+  if (!url) return url;
+  try {
+    new URL(url);
+    return url;
+  } catch {
+    if (!baseUrl) return url;
+    try {
+      return new URL(url, baseUrl).toString();
+    } catch {
+      return url;
+    }
+  }
+}
+
 type StrategySelection =
   | { readonly kind: "none" }
   | { readonly kind: "custom" }
@@ -389,6 +411,11 @@ export default function AddOpenApiSource(props: {
         selectedOAuth2Preset.securitySchemeName,
       );
 
+      const tokenUrl = resolveOAuthUrl(
+        selectedOAuth2Preset.tokenUrl,
+        resolvedBaseUrl,
+      );
+
       if (selectedOAuth2Preset.flow === "clientCredentials") {
         // RFC 6749 §4.4: no user-interactive consent step. The client_secret
         // is mandatory; the backend exchanges tokens inline and returns a
@@ -404,7 +431,7 @@ export default function AddOpenApiSource(props: {
             displayName,
             securitySchemeName: selectedOAuth2Preset.securitySchemeName,
             flow: "clientCredentials",
-            tokenUrl: selectedOAuth2Preset.tokenUrl,
+            tokenUrl,
             clientIdSecretId: oauth2ClientIdSecretId,
             clientSecretSecretId: oauth2ClientSecretSecretId,
             scopes: [...oauth2SelectedScopes],
@@ -421,14 +448,19 @@ export default function AddOpenApiSource(props: {
         return;
       }
 
+      const authorizationUrl = resolveOAuthUrl(
+        Option.getOrElse(selectedOAuth2Preset.authorizationUrl, () => ""),
+        resolvedBaseUrl,
+      );
+
       const response = await doStartOAuth({
         path: { scopeId },
         payload: {
           displayName,
           securitySchemeName: selectedOAuth2Preset.securitySchemeName,
           flow: "authorizationCode",
-          authorizationUrl: Option.getOrElse(selectedOAuth2Preset.authorizationUrl, () => ""),
-          tokenUrl: selectedOAuth2Preset.tokenUrl,
+          authorizationUrl,
+          tokenUrl,
           redirectUrl: oauth2RedirectUrl,
           clientIdSecretId: oauth2ClientIdSecretId,
           clientSecretSecretId: oauth2ClientSecretSecretId,
@@ -498,6 +530,7 @@ export default function AddOpenApiSource(props: {
     oauth2ClientSecretSecretId,
     oauth2SelectedScopes,
     oauth2RedirectUrl,
+    resolvedBaseUrl,
     preview,
     doStartOAuth,
     scopeId,
