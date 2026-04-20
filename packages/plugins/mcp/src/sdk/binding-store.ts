@@ -42,7 +42,7 @@ export const mcpSchema = defineSchema({
       id: { type: "string", required: true },
       scope_id: { type: "string", required: true, index: true },
       session: { type: "json", required: true },
-      expires_at: { type: "number", required: true },
+      expires_at: { type: "number", required: true, bigint: true },
       created_at: { type: "date", required: true },
     },
   },
