@@ -3,7 +3,6 @@ import handler from "@tanstack/react-start/server-entry";
 import { instrument, type TraceConfig } from "@microlabs/otel-cf-workers";
 
 import { McpSessionDO as McpSessionDOBase } from "./mcp-session";
-import { server } from "./env";
 
 // ---------------------------------------------------------------------------
 // OTEL config for the main fetch handler — `otel-cf-workers` owns the global
@@ -15,40 +14,36 @@ import { server } from "./env";
 // DOMException "Illegal invocation".
 // ---------------------------------------------------------------------------
 
-const parseSampleRatio = (value: string): number => {
+const parseSampleRatio = (value: string | undefined): number => {
   const n = Number(value);
   if (!Number.isFinite(n)) return 1;
   return Math.min(1, Math.max(0, n));
 };
 
-const otelConfig: TraceConfig = {
+const otelConfig = (env: Env): TraceConfig => ({
   service: { name: "executor-cloud", version: "1.0.0" },
   exporter: {
-    url: server.AXIOM_TRACES_URL,
+    url: env.AXIOM_TRACES_URL ?? "https://api.axiom.co/v1/traces",
     headers: {
-      Authorization: `Bearer ${server.AXIOM_TOKEN}`,
-      "X-Axiom-Dataset": server.AXIOM_DATASET,
+      Authorization: `Bearer ${env.AXIOM_TOKEN ?? ""}`,
+      "X-Axiom-Dataset": env.AXIOM_DATASET ?? "executor-cloud",
     },
   },
   sampling: {
     headSampler: {
       // Keep remote parent decisions and make local sampling policy explicit.
       acceptRemote: true,
-      ratio: parseSampleRatio(server.AXIOM_TRACES_SAMPLE_RATIO),
+      ratio: parseSampleRatio(env.AXIOM_TRACES_SAMPLE_RATIO),
     },
   },
-};
+});
 
 // otel-cf-workers owns the global TracerProvider. Sentry's OTEL compat shim
 // registers a ProxyTracerProvider of its own, which prevents otel-cf-workers
 // from finding its WorkerTracer and breaks the whole request path with
 // "global tracer is not of type WorkerTracer".
-//
-// The `_env` parameter is unused — `server` from `./env` already gives us
-// typed access to every secret. It's only in the signature so Sentry's
-// generics infer the DO's `Env` type correctly.
-const sentryOptions = (_env: Env) => ({
-  dsn: server.SENTRY_DSN,
+const sentryOptions = (env: Env) => ({
+  dsn: env.SENTRY_DSN,
   tracesSampleRate: 0,
   enableLogs: true,
   sendDefaultPii: true,
@@ -76,6 +71,28 @@ export const McpSessionDO = Sentry.instrumentDurableObjectWithSentry(
 // Worker fetch handler
 // ---------------------------------------------------------------------------
 
-const instrumentedHandler = instrument({ fetch: handler.fetch }, otelConfig);
+// Skip OTLP wiring when no Axiom token is configured (dev without secrets).
+// Otherwise the exporter ships every span with `Bearer ` (empty), which
+// returns 401 on every batch and eventually drops the keep-alive socket —
+// the Node http agent's unhandled `'error'` then crashes the process with
+// ECONNRESET. It also registers otel-cf-workers' `WorkerTracer` as the
+// global tracer; spans started outside its config ALS then die with
+// "Config is undefined". Matches the gate in `DoTelemetryLive`.
+// `instrument()` mutates the handler it's given (replaces `.fetch` with the
+// proxied version), so capture the raw fetch first and then build the
+// instrumented handler from a separate object.
+const rawFetch = handler.fetch;
+const instrumentedHandler = instrument({ fetch: rawFetch }, otelConfig);
 
-export default Sentry.withSentry(sentryOptions, instrumentedHandler);
+const dispatchHandler = {
+  fetch: (request: Request, env: Env, ctx: unknown) => {
+    const fn = env.AXIOM_TOKEN ? instrumentedHandler.fetch! : rawFetch;
+    return (fn as (req: Request, env: Env, ctx: unknown) => Response | Promise<Response>)(
+      request,
+      env,
+      ctx,
+    );
+  },
+};
+
+export default Sentry.withSentry(sentryOptions, dispatchHandler);

@@ -3,8 +3,8 @@ import { Effect } from "effect";
 
 import { UserStoreService } from "../auth/context";
 import { AuthContext } from "../auth/middleware";
+import { env } from "cloudflare:workers";
 import { WorkOSAuth } from "../auth/workos";
-import { server } from "../env";
 import { AutumnService } from "../services/autumn";
 import { OrgHttpApi } from "./compose";
 import { Forbidden } from "./api";
@@ -144,7 +144,7 @@ export const OrgHandlers = HttpApiBuilder.group(OrgHttpApi, "org", (handlers) =>
         const workos = yield* WorkOSAuth;
         const { link } = yield* workos.generateDomainVerificationPortalLink(
           auth.organizationId,
-          server.VITE_PUBLIC_SITE_URL ? `${server.VITE_PUBLIC_SITE_URL}/org` : "/org",
+          env.VITE_PUBLIC_SITE_URL ? `${env.VITE_PUBLIC_SITE_URL}/org` : "/org",
         );
         return { link };
       }),

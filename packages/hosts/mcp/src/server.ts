@@ -66,6 +66,10 @@ type SharedMcpServerConfig = {
    * under whichever request triggered it; see the Cloud DO).
    */
   readonly parentSpan?: Tracer.AnySpan | (() => Tracer.AnySpan | undefined);
+  /**
+   * Enable verbose MCP capability / elicitation debug logging.
+   */
+  readonly debug?: boolean;
 };
 
 export type ExecutorMcpServerConfig<E extends Cause.YieldableError = Cause.YieldableError> =
@@ -85,8 +89,20 @@ const getElicitationSupport = (server: McpServer): { form: boolean; url: boolean
   return { form: Boolean(elicitation.form), url: Boolean(elicitation.url) };
 };
 
+const readDebugDefault = (): boolean => {
+  if (typeof process === "undefined" || !process.env) return false;
+  const value = process.env.EXECUTOR_MCP_DEBUG;
+  return value === "1" || value === "true";
+};
+
 const supportsManagedElicitation = (server: McpServer): boolean =>
   getElicitationSupport(server).form;
+
+const capabilitySnapshot = (server: McpServer) => ({
+  clientCapabilities: server.server.getClientCapabilities() ?? null,
+  elicitationSupport: getElicitationSupport(server),
+  managedElicitation: supportsManagedElicitation(server),
+});
 
 type ElicitInputParams =
   | {
@@ -118,7 +134,10 @@ const elicitationRequestToParams: (request: ElicitationRequest) => ElicitInputPa
   );
 
 const makeMcpElicitationHandler =
-  (server: McpServer): ElicitationHandler =>
+  (
+    server: McpServer,
+    debugLog?: (event: string, data: Record<string, unknown>) => void,
+  ): ElicitationHandler =>
   (ctx: ElicitationContext): Effect.Effect<typeof ElicitationResponse.Type> => {
     const { url: supportsUrl } = getElicitationSupport(server);
 
@@ -133,19 +152,51 @@ const makeMcpElicitationHandler =
         : elicitationRequestToParams(ctx.request);
 
     return Effect.promise(async (): Promise<typeof ElicitationResponse.Type> => {
+      debugLog?.("elicitation.request", {
+        requestTag: ctx.request._tag,
+        supportsUrl,
+        message: ctx.request.message,
+        hasRequestedSchema:
+          ctx.request._tag === "FormElicitation"
+            ? Object.keys(ctx.request.requestedSchema).length > 0
+            : false,
+        url: ctx.request._tag === "UrlElicitation" ? ctx.request.url : undefined,
+        clientCapabilities: server.server.getClientCapabilities() ?? null,
+      });
       try {
         const response = await server.server.elicitInput(
           params as Parameters<typeof server.server.elicitInput>[0],
         );
+
+        debugLog?.("elicitation.response", {
+          requestTag: ctx.request._tag,
+          action: response.action,
+          hasContent:
+            typeof response.content === "object" &&
+            response.content !== null &&
+            Object.keys(response.content).length > 0,
+        });
 
         return {
           action: response.action,
           content: response.content,
         };
       } catch (err) {
+        debugLog?.("elicitation.error", {
+          requestTag: ctx.request._tag,
+          error:
+            err instanceof Error
+              ? { name: err.name, message: err.message, stack: err.stack }
+              : { message: String(err) },
+          clientCapabilities: server.server.getClientCapabilities() ?? null,
+        });
         console.error(
           "[executor] elicitInput failed — falling back to cancel.",
-          err instanceof Error ? err.message : err,
+          JSON.stringify({
+            error: err instanceof Error ? err.message : String(err),
+            requestTag: ctx.request._tag,
+            ...capabilitySnapshot(server),
+          }),
         );
         return { action: "cancel" };
       }
@@ -205,6 +256,15 @@ export const createExecutorMcpServer = <E extends Cause.YieldableError>(
     // deferred past the outer Effect's await), so we use the runtime to
     // re-enter Effect-land at each callback edge.
     const runtime = yield* Effect.runtime<never>();
+    const debugEnabled = config.debug ?? readDebugDefault();
+    const debugLog = (event: string, data: Record<string, unknown>) => {
+      if (!debugEnabled) return;
+      try {
+        console.error(`[executor:mcp] ${event} ${JSON.stringify(data)}`);
+      } catch {
+        console.error(`[executor:mcp] ${event}`, data);
+      }
+    };
 
     const resolveParentSpan = (): Tracer.AnySpan | undefined => {
       const ps = config.parentSpan;
@@ -228,13 +288,27 @@ export const createExecutorMcpServer = <E extends Cause.YieldableError>(
 
     const executeCode = (code: string): Effect.Effect<McpToolResult, E> =>
       Effect.gen(function* () {
+        debugLog("execute.call", {
+          managedElicitation: supportsManagedElicitation(server),
+          elicitationSupport: getElicitationSupport(server),
+          clientCapabilities: server.server.getClientCapabilities() ?? null,
+          codeLength: code.length,
+        });
         if (supportsManagedElicitation(server)) {
           const result = yield* engine.execute(code, {
-            onElicitation: makeMcpElicitationHandler(server),
+            onElicitation: makeMcpElicitationHandler(server, debugLog),
           });
           return toMcpResult(formatExecuteResult(result));
         }
         const outcome = yield* engine.executeWithPause(code);
+        debugLog("execute.paused_flow_result", {
+          status: outcome.status,
+          executionId: outcome.status === "paused" ? outcome.execution.id : undefined,
+          interactionKind:
+            outcome.status === "paused"
+              ? outcome.execution.elicitationContext.request._tag
+              : undefined,
+        });
         return outcome.status === "completed"
           ? toMcpResult(formatExecuteResult(outcome.result))
           : toMcpPausedResult(formatPausedExecution(outcome.execution));
@@ -253,8 +327,15 @@ export const createExecutorMcpServer = <E extends Cause.YieldableError>(
       content: Record<string, unknown> | undefined,
     ): Effect.Effect<McpToolResult, E> =>
       Effect.gen(function* () {
+        debugLog("resume.call", {
+          executionId,
+          action,
+          hasContent: content !== undefined,
+          clientCapabilities: server.server.getClientCapabilities() ?? null,
+        });
         const outcome = yield* engine.resume(executionId, { action, content });
         if (!outcome) {
+          debugLog("resume.missing_execution", { executionId });
           return {
             content: [
               { type: "text" as const, text: `No paused execution: ${executionId}` },
@@ -262,6 +343,15 @@ export const createExecutorMcpServer = <E extends Cause.YieldableError>(
             isError: true,
           } satisfies McpToolResult;
         }
+        debugLog("resume.result", {
+          executionId,
+          status: outcome.status,
+          nextExecutionId: outcome.status === "paused" ? outcome.execution.id : undefined,
+          interactionKind:
+            outcome.status === "paused"
+              ? outcome.execution.elicitationContext.request._tag
+              : undefined,
+        });
         return outcome.status === "completed"
           ? toMcpResult(formatExecuteResult(outcome.result))
           : toMcpPausedResult(formatPausedExecution(outcome.execution));
@@ -331,6 +421,19 @@ export const createExecutorMcpServer = <E extends Cause.YieldableError>(
       } else {
         resumeTool.enable();
       }
+      console.error(
+        "[executor] MCP capability snapshot",
+        JSON.stringify({
+          ...capabilitySnapshot(server),
+          resumeEnabled: !supportsManagedElicitation(server),
+        }),
+      );
+      debugLog("tool.visibility", {
+        clientCapabilities: server.server.getClientCapabilities() ?? null,
+        elicitationSupport: getElicitationSupport(server),
+        managedElicitation: supportsManagedElicitation(server),
+        resumeEnabled: !supportsManagedElicitation(server),
+      });
     };
 
     yield* Effect.sync(() => {

@@ -20,15 +20,14 @@ import * as Sentry from "@sentry/cloudflare";
 import { Context, Effect, Layer, Option, Schema } from "effect";
 import { createRemoteJWKSet, jwtVerify } from "jose";
 
-import { server } from "./env";
 import { TelemetryLive } from "./services/telemetry";
 
 // ---------------------------------------------------------------------------
 // Constants
 // ---------------------------------------------------------------------------
 
-const AUTHKIT_DOMAIN = server.MCP_AUTHKIT_DOMAIN;
-const RESOURCE_ORIGIN = server.MCP_RESOURCE_ORIGIN;
+const AUTHKIT_DOMAIN = env.MCP_AUTHKIT_DOMAIN ?? "https://signin.executor.sh";
+const RESOURCE_ORIGIN = env.MCP_RESOURCE_ORIGIN ?? "https://executor.sh";
 
 const jwks = createRemoteJWKSet(new URL(`${AUTHKIT_DOMAIN}/oauth2/jwks`));
 
@@ -526,7 +525,9 @@ const dispatchPost = (request: Request, token: VerifiedToken) =>
     const ns = env.MCP_SESSION;
     const stub = ns.get(ns.newUniqueId());
     const propagation = yield* currentPropagationHeaders(request);
-    yield* Effect.promise(() => stub.init({ organizationId }, propagation));
+    yield* Effect.promise(() =>
+      stub.init({ organizationId, userId: token.accountId }, propagation),
+    );
     const propagated = withPropagationHeaders(request, propagation);
     const raw = yield* Effect.promise(
       () => stub.handleRequest(propagated) as Promise<Response>,

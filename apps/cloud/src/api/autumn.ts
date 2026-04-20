@@ -1,9 +1,9 @@
+import { env } from "cloudflare:workers";
 import { Effect } from "effect";
 import { HttpServerRequest, HttpServerResponse } from "@effect/platform";
 import { autumnHandler } from "autumn-js/backend";
 
 import { WorkOSAuth } from "../auth/workos";
-import { server } from "../env";
 import { HttpResponseError, isServerError, toErrorServerResponse } from "./error-response";
 import { SharedServices } from "./layers";
 
@@ -59,7 +59,7 @@ export const AutumnApiApp = Effect.gen(function* () {
         email: session.email,
       },
       clientOptions: {
-        secretKey: server.AUTUMN_SECRET_KEY,
+        secretKey: env.AUTUMN_SECRET_KEY ?? "",
       },
       pathPrefix: "/autumn",
     }),

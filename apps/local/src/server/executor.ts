@@ -154,7 +154,7 @@ const createLocalExecutorLayer = () => {
       });
 
       const executor = yield* createExecutor({
-        scope,
+        scopes: [scope],
         adapter,
         blobs,
         plugins,

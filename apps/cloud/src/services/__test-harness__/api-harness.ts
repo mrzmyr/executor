@@ -181,7 +181,7 @@ const createTestScopedExecutor = (scopeId: string, scopeName: string) =>
       name: scopeName,
       createdAt: new Date(),
     });
-    return yield* createExecutor({ scope, adapter, blobs, plugins });
+    return yield* createExecutor({ scopes: [scope], adapter, blobs, plugins });
   });
 
 // ---------------------------------------------------------------------------

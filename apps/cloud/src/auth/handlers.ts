@@ -6,9 +6,9 @@ import { AUTH_PATHS, CloudAuthApi, CloudAuthPublicApi } from "./api";
 import { SessionContext } from "./middleware";
 import { UserStoreService } from "./context";
 import { authorizeOrganization } from "./authorize-organization";
+import { env } from "cloudflare:workers";
 import { WorkOSError } from "./errors";
 import { WorkOSAuth } from "./workos";
-import { server } from "../env";
 
 const COOKIE_OPTIONS = {
   path: "/",
@@ -40,7 +40,7 @@ export const CloudAuthPublicHandlers = HttpApiBuilder.group(
           // Use the explicit public site URL — in dev, the request's Host
           // header points at the internal proxy target, not the public URL
           // WorkOS needs to redirect back to.
-          const origin = server.VITE_PUBLIC_SITE_URL;
+          const origin = env.VITE_PUBLIC_SITE_URL ?? "";
           const url = workos.getAuthorizationUrl(`${origin}${AUTH_PATHS.callback}`);
           return HttpServerResponse.redirect(url, { status: 302 });
         }),

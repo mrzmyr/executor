@@ -25,7 +25,6 @@ import type { DrizzleDb, DbServiceShape } from "./services/db";
 import { CoreSharedServices } from "./api/core-shared-services";
 import { UserStoreService } from "./auth/context";
 import { resolveOrganization } from "./auth/resolve-organization";
-import { server } from "./env";
 import { DbService, combinedSchema } from "./services/db";
 import { makeExecutionStack } from "./services/execution-stack";
 import { DoTelemetryLive } from "./services/telemetry";
@@ -36,6 +35,7 @@ import { DoTelemetryLive } from "./services/telemetry";
 
 export type McpSessionInit = {
   organizationId: string;
+  userId: string;
 };
 
 export type IncomingTraceHeaders = {
@@ -109,6 +109,7 @@ type DbHandle = DbServiceShape & { end: () => Promise<void> };
 type SessionMeta = {
   readonly organizationId: string;
   readonly organizationName: string;
+  readonly userId: string;
 };
 
 /**
@@ -124,7 +125,12 @@ const makeDbHandle = (options: {
   readonly idleTimeout: number;
   readonly maxLifetime: number;
 }): DbHandle => {
-  const connectionString = env.HYPERDRIVE?.connectionString ?? server.DATABASE_URL;
+  // Prefer DATABASE_URL so local dev connects directly to PGlite and
+  // bypasses Miniflare's Hyperdrive proxy, which resolves to
+  // `*.hyperdrive.local:5432` and times out — the resulting ECONNRESET
+  // surfaces as an unhandled socket error that kills the vite dev server.
+  // Matches the priority in `services/db.ts`.
+  const connectionString = env.DATABASE_URL || env.HYPERDRIVE?.connectionString || "";
   const sql = postgres(connectionString, {
     max: 1,
     idle_timeout: options.idleTimeout,
@@ -159,6 +165,7 @@ const makeSessionServices = (dbHandle: DbHandle) =>
 
 const resolveSessionMeta = Effect.fn("McpSessionDO.resolveSessionMeta")(function* (
   organizationId: string,
+  userId: string,
 ) {
     const org = yield* resolveOrganization(organizationId);
     if (!org) {
@@ -167,10 +174,11 @@ const resolveSessionMeta = Effect.fn("McpSessionDO.resolveSessionMeta")(function
     return {
       organizationId: org.id,
       organizationName: org.name,
+      userId,
     } satisfies SessionMeta;
   });
 
-const requestScopedRuntimeEnabled = server.MCP_SESSION_REQUEST_SCOPED_RUNTIME === "true";
+const requestScopedRuntimeEnabled = env.MCP_SESSION_REQUEST_SCOPED_RUNTIME === "true";
 
 // ---------------------------------------------------------------------------
 // Durable Object
@@ -238,6 +246,7 @@ export class McpSessionDO extends DurableObject {
     const self = this;
     return Effect.gen(function* () {
       const { executor, engine } = yield* makeExecutionStack(
+        sessionMeta.userId,
         sessionMeta.organizationId,
         sessionMeta.organizationName,
       );
@@ -251,6 +260,7 @@ export class McpSessionDO extends DurableObject {
         engine,
         description,
         parentSpan: () => self.currentRequestSpan ?? undefined,
+        debug: env.EXECUTOR_MCP_DEBUG === "true",
       }).pipe(Effect.withSpan("McpSessionDO.createExecutorMcpServer"));
       const transport = new WorkerTransport({
         sessionIdGenerator: () => self.ctx.id.toString(),
@@ -272,9 +282,10 @@ export class McpSessionDO extends DurableObject {
     return Effect.gen(function* () {
       const dbHandle = makeRequestScopedDb();
       try {
-        const sessionMeta = yield* resolveSessionMeta(token.organizationId).pipe(
-          Effect.provide(makeResolveOrganizationServices(dbHandle)),
-        );
+        const sessionMeta = yield* resolveSessionMeta(
+          token.organizationId,
+          token.userId,
+        ).pipe(Effect.provide(makeResolveOrganizationServices(dbHandle)));
         yield* Effect.promise(() => self.saveSessionMeta(sessionMeta)).pipe(
           Effect.withSpan("mcp.session.save_meta"),
         );

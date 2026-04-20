@@ -21,6 +21,9 @@ export const ErrorCaptureLive: Layer.Layer<ErrorCapture> = Layer.succeed(
     captureException: (cause) =>
       Effect.sync(() => {
         const squashed = Cause.squash(cause);
+        // Mirror to console so dev terminals see the defect; Sentry gets the
+        // full structured cause for production correlation.
+        console.error("[api] unhandled cause:", Cause.pretty(cause));
         const eventId = Sentry.captureException(squashed, (scope) => {
           scope.setExtra("cause", Cause.pretty(cause));
           return scope;

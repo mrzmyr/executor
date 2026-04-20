@@ -27,12 +27,18 @@ const lookupOrgForRequest = (request: HttpServerRequest.HttpServerRequest) =>
     const session = yield* workos.authenticateRequest(webRequest);
     if (!session || !session.organizationId) return null;
 
-    return yield* authorizeOrganization(session.userId, session.organizationId);
+    const org = yield* authorizeOrganization(session.userId, session.organizationId);
+    if (!org) return null;
+    return { org, userId: session.userId };
   });
 
-const createProtectedApp = (organizationId: string, organizationName: string) =>
+const createProtectedApp = (userId: string, organizationId: string, organizationName: string) =>
   Effect.gen(function* () {
-    const { executor, engine } = yield* makeExecutionStack(organizationId, organizationName);
+    const { executor, engine } = yield* makeExecutionStack(
+      userId,
+      organizationId,
+      organizationName,
+    );
 
     const requestServices = Layer.mergeAll(
       Layer.succeed(ExecutorService, executor),
@@ -58,8 +64,8 @@ const createProtectedApp = (organizationId: string, organizationName: string) =>
 
 export const ProtectedApiApp = Effect.gen(function* () {
   const request = yield* HttpServerRequest.HttpServerRequest;
-  const org = yield* lookupOrgForRequest(request);
-  if (!org) {
+  const session = yield* lookupOrgForRequest(request);
+  if (!session) {
     return yield* Effect.fail(
       new HttpResponseError({
         status: 403,
@@ -69,7 +75,7 @@ export const ProtectedApiApp = Effect.gen(function* () {
     );
   }
 
-  const app = yield* createProtectedApp(org.id, org.name);
+  const app = yield* createProtectedApp(session.userId, session.org.id, session.org.name);
   return yield* app;
 }).pipe(
   Effect.provide(SharedServices),

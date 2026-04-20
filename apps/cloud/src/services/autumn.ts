@@ -2,11 +2,10 @@
 // Autumn billing service — wraps the autumn-js SDK with Effect
 // ---------------------------------------------------------------------------
 
+import { env } from "cloudflare:workers";
 import * as Sentry from "@sentry/cloudflare";
 import { Autumn } from "autumn-js";
 import { Context, Data, Effect, Layer } from "effect";
-
-import { server } from "../env";
 
 // ---------------------------------------------------------------------------
 // Errors
@@ -36,7 +35,7 @@ export type IAutumnService = Readonly<{
 // ---------------------------------------------------------------------------
 
 const make = Effect.sync(() => {
-  const secretKey = server.AUTUMN_SECRET_KEY;
+  const secretKey = env.AUTUMN_SECRET_KEY;
 
   if (!secretKey) {
     const notConfigured = Effect.die(

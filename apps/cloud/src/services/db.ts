@@ -18,7 +18,6 @@ import type { PgDatabase } from "drizzle-orm/pg-core";
 import postgres, { type Sql } from "postgres";
 import * as cloudSchema from "./schema";
 import * as executorSchema from "./executor-schema";
-import { server } from "../env";
 
 // Exported so every drizzle() call in the cloud app shares one schema
 // object. Historically `mcp-session.ts` built its own and forgot to spread
@@ -38,10 +37,7 @@ const resolveConnectionString = () => {
   // In local dev prefer an explicit DATABASE_URL (direct connection to
   // the PGlite socket server) so we bypass Miniflare's Hyperdrive proxy.
   // In production fall back to the Hyperdrive binding.
-  if (server.DATABASE_URL) {
-    return server.DATABASE_URL;
-  }
-  return env.HYPERDRIVE?.connectionString ?? server.DATABASE_URL;
+  return env.DATABASE_URL || env.HYPERDRIVE?.connectionString || "";
 };
 
 const makeSql = (): Sql =>

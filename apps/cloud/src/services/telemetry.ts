@@ -53,9 +53,8 @@ import {
   ATTR_SERVICE_NAME,
   ATTR_SERVICE_VERSION,
 } from "@opentelemetry/semantic-conventions";
+import { env } from "cloudflare:workers";
 import { Effect, Layer } from "effect";
-
-import { server } from "../env";
 
 const SERVICE_NAME = "executor-cloud";
 const SERVICE_VERSION = "1.0.0";
@@ -71,7 +70,7 @@ export const TelemetryLive: Layer.Layer<never> = OtelTracer.layerGlobal.pipe(
 let installed = false;
 const ensureGlobalTracerProvider = (): boolean => {
   if (installed) return true;
-  if (!server.AXIOM_TOKEN) return false;
+  if (!env.AXIOM_TOKEN) return false;
   const provider = new WebTracerProvider({
     resource: resourceFromAttributes({
       [ATTR_SERVICE_NAME]: SERVICE_NAME,
@@ -80,10 +79,10 @@ const ensureGlobalTracerProvider = (): boolean => {
     spanProcessors: [
       new SimpleSpanProcessor(
         new OTLPTraceExporter({
-          url: server.AXIOM_TRACES_URL,
+          url: env.AXIOM_TRACES_URL ?? "https://api.axiom.co/v1/traces",
           headers: {
-            Authorization: `Bearer ${server.AXIOM_TOKEN}`,
-            "X-Axiom-Dataset": server.AXIOM_DATASET,
+            Authorization: `Bearer ${env.AXIOM_TOKEN}`,
+            "X-Axiom-Dataset": env.AXIOM_DATASET ?? "executor-cloud",
           },
         }),
       ),
