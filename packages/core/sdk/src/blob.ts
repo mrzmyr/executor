@@ -25,6 +25,15 @@ export interface BlobStore {
     namespace: string,
     key: string,
   ) => Effect.Effect<string | null, StorageError>;
+  /** Multi-namespace lookup for a single key. Backends issue one query
+   *  (`WHERE namespace IN (...) AND key = ?`) and return the hits keyed
+   *  by namespace — the caller applies its own precedence. Lets
+   *  `pluginBlobStore` walk the scope stack in O(1) round-trips instead
+   *  of one per scope. */
+  readonly getMany: (
+    namespaces: readonly string[],
+    key: string,
+  ) => Effect.Effect<ReadonlyMap<string, string>, StorageError>;
   readonly put: (
     namespace: string,
     key: string,
@@ -90,9 +99,12 @@ export const pluginBlobStore = (
 ): PluginBlobStore => ({
   get: (key) =>
     Effect.gen(function* () {
-      for (const scope of scopes) {
-        const value = yield* store.get(nsFor(scope, pluginId), key);
-        if (value !== null) return value;
+      const namespaces = scopes.map((s) => nsFor(s, pluginId));
+      const hits = yield* store.getMany(namespaces, key);
+      if (hits.size === 0) return null;
+      for (const ns of namespaces) {
+        const v = hits.get(ns);
+        if (v !== undefined) return v;
       }
       return null;
     }),
@@ -105,13 +117,12 @@ export const pluginBlobStore = (
       store.delete(nsFor(options.scope, pluginId), key),
     ),
   has: (key) =>
-    Effect.gen(function* () {
-      for (const scope of scopes) {
-        const found = yield* store.has(nsFor(scope, pluginId), key);
-        if (found) return true;
-      }
-      return false;
-    }),
+    store
+      .getMany(
+        scopes.map((s) => nsFor(s, pluginId)),
+        key,
+      )
+      .pipe(Effect.map((hits) => hits.size > 0)),
 });
 
 /**
@@ -128,6 +139,15 @@ export const makeInMemoryBlobStore = (): BlobStore => {
   const k = (ns: string, key: string) => `${ns}::${key}`;
   return {
     get: (ns, key) => Effect.sync(() => store.get(k(ns, key)) ?? null),
+    getMany: (namespaces, key) =>
+      Effect.sync(() => {
+        const hits = new Map<string, string>();
+        for (const ns of namespaces) {
+          const v = store.get(k(ns, key));
+          if (v !== undefined) hits.set(ns, v);
+        }
+        return hits;
+      }),
     put: (ns, key, value) =>
       Effect.sync(() => {
         store.set(k(ns, key), value);
