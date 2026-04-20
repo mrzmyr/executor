@@ -4,12 +4,12 @@ import { Option } from "effect";
 
 import { openOAuthPopup, type OAuthPopupResult } from "@executor/plugin-oauth2/react";
 
-import { SecretPicker } from "@executor/react/plugins/secret-picker";
 import { useScope } from "@executor/react/api/scope-context";
 import { sourceWriteKeys } from "@executor/react/api/reactivity-keys";
 import { usePendingSources } from "@executor/react/api/optimistic";
 import { HeadersList } from "@executor/react/plugins/headers-list";
 import {
+  CreatableSecretPicker,
   matchPresetKey,
   type HeaderState,
 } from "@executor/react/plugins/secret-header-auth";
@@ -20,6 +20,7 @@ import {
 } from "@executor/react/plugins/source-identity";
 import { useSecretPickerSecrets } from "@executor/react/plugins/use-secret-picker-secrets";
 import { Button } from "@executor/react/components/button";
+import { CopyButton } from "@executor/react/components/copy-button";
 import {
   CardStack,
   CardStackContent,
@@ -56,8 +57,9 @@ import {
   type ServerVariable,
 } from "../sdk/types";
 
-const OPENAPI_OAUTH_CHANNEL = "executor:openapi-oauth-result";
-const OPENAPI_OAUTH_POPUP_NAME = "openapi-oauth";
+export const OPENAPI_OAUTH_CHANNEL = "executor:openapi-oauth-result";
+export const OPENAPI_OAUTH_POPUP_NAME = "openapi-oauth";
+export const OPENAPI_OAUTH_CALLBACK_PATH = "/api/openapi/oauth/callback";
 
 // Stable secret ids for the access/refresh tokens a given OAuth2 security
 // scheme on a given source mints. The same ids must be passed into
@@ -259,6 +261,10 @@ export default function AddOpenApiSource(props: {
   const customHeadersValid = customHeaders.every((ch) => ch.name.trim() && ch.secretId);
 
   const oauth2Presets: readonly OAuth2Preset[] = preview?.oauth2Presets ?? [];
+  const oauth2RedirectUrl =
+    typeof window !== "undefined"
+      ? `${window.location.origin}${OPENAPI_OAUTH_CALLBACK_PATH}`
+      : OPENAPI_OAUTH_CALLBACK_PATH;
   const selectedOAuth2Preset: OAuth2Preset | null =
     strategy.kind === "oauth2" ? (oauth2Presets[strategy.presetIndex] ?? null) : null;
 
@@ -391,7 +397,7 @@ export default function AddOpenApiSource(props: {
           flow: "authorizationCode",
           authorizationUrl: Option.getOrElse(selectedOAuth2Preset.authorizationUrl, () => ""),
           tokenUrl: selectedOAuth2Preset.tokenUrl,
-          redirectUrl: `${window.location.origin}/api/openapi/oauth/callback`,
+          redirectUrl: oauth2RedirectUrl,
           clientIdSecretId: oauth2ClientIdSecretId,
           clientSecretSecretId: oauth2ClientSecretSecretId,
           scopes: [...oauth2SelectedScopes],
@@ -453,6 +459,7 @@ export default function AddOpenApiSource(props: {
     oauth2ClientIdSecretId,
     oauth2ClientSecretSecretId,
     oauth2SelectedScopes,
+    oauth2RedirectUrl,
     preview,
     doStartOAuth,
     scopeId,
@@ -820,14 +827,28 @@ export default function AddOpenApiSource(props: {
             {selectedOAuth2Preset && (
               <div className="space-y-3 rounded-lg border border-border/60 bg-muted/10 p-3">
                 <div className="space-y-1.5">
+                  <FieldLabel className="text-[11px]">
+                    Redirect URL{" "}
+                    <span className="text-muted-foreground">
+                      · add this to your OAuth app's allowed redirects
+                    </span>
+                  </FieldLabel>
+                  <div className="flex items-center gap-1 rounded-md border border-border bg-background/50 px-2.5 py-1.5 font-mono text-[11px]">
+                    <span className="truncate flex-1 text-foreground">{oauth2RedirectUrl}</span>
+                    <CopyButton value={oauth2RedirectUrl} />
+                  </div>
+                </div>
+                <div className="space-y-1.5">
                   <FieldLabel className="text-[11px]">Client ID secret</FieldLabel>
-                  <SecretPicker
+                  <CreatableSecretPicker
                     value={oauth2ClientIdSecretId}
                     onSelect={(id: string) => {
                       setOauth2ClientIdSecretId(id);
                       setOauth2Auth(null);
                     }}
                     secrets={secretList}
+                    sourceName={identity.name}
+                    secretLabel="Client ID"
                   />
                 </div>
                 <div className="space-y-1.5">
@@ -837,13 +858,15 @@ export default function AddOpenApiSource(props: {
                       · optional for public clients with PKCE
                     </span>
                   </FieldLabel>
-                  <SecretPicker
+                  <CreatableSecretPicker
                     value={oauth2ClientSecretSecretId}
                     onSelect={(id: string) => {
                       setOauth2ClientSecretSecretId(id);
                       setOauth2Auth(null);
                     }}
                     secrets={secretList}
+                    sourceName={identity.name}
+                    secretLabel="Client Secret"
                   />
                 </div>
                 <div className="space-y-1.5">

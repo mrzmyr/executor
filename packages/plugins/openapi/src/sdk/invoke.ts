@@ -302,13 +302,18 @@ export const invokeWithLayer = (
 // Derive annotations from HTTP method
 // ---------------------------------------------------------------------------
 
-const SAFE_METHODS = new Set(["get", "head", "options"]);
+const DEFAULT_REQUIRE_APPROVAL = new Set(["post", "put", "patch", "delete"]);
 
 export const annotationsForOperation = (
   method: string,
   pathTemplate: string,
+  policy?: { readonly requireApprovalFor?: readonly string[] },
 ): { requiresApproval?: boolean; approvalDescription?: string } => {
-  if (SAFE_METHODS.has(method.toLowerCase())) return {};
+  const m = method.toLowerCase();
+  const requireSet = policy?.requireApprovalFor
+    ? new Set(policy.requireApprovalFor.map((v) => v.toLowerCase()))
+    : DEFAULT_REQUIRE_APPROVAL;
+  if (!requireSet.has(m)) return {};
   return {
     requiresApproval: true,
     approvalDescription: `${method.toUpperCase()} ${pathTemplate}`,
