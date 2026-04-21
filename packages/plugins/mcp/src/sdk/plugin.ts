@@ -1260,7 +1260,7 @@ export const mcpPlugin = definePlugin(
       // providerState blob — captured in completeOAuth — carries
       // everything the MCP SDK needs to skip discovery + DCR and go
       // straight to the refresh token endpoint.
-      connectionProviders: (ctx): readonly ConnectionProvider[] => [
+      connectionProviders: (_ctx): readonly ConnectionProvider[] => [
         {
           key: MCP_OAUTH2_PROVIDER_KEY,
           refresh: (input: ConnectionRefreshInput) =>
