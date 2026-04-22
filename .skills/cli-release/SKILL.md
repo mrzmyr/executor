@@ -67,6 +67,13 @@ Lead with **user-visible stories**, not commit subjects. Group related commits i
 - The `.changeset/*.md` body shows up in the Version Packages PR description. Use the same content (or a condensed version) as the release-notes file.
 - Frontmatter is `"executor": patch` (or `minor`/`major` if owner says so).
 
+### Post-release archival (manual)
+After a release publishes, rename `apps/cli/release-notes/next.md` → `apps/cli/release-notes/v<version>.md` and commit on `main` (or in a small follow-up PR). This:
+- Preserves the historical notes file-by-version (matches `release.ts`'s preferred lookup path).
+- Resets `next.md` absence so the next cycle starts from a blank file — no chance of last release's content leaking into the next one.
+
+`release.ts` falls back to `next.md` if `v<version>.md` is missing, so skipping the rename won't break a publish; it just leaves stale content in `next.md` for the next release.
+
 ## Beta release flow
 
 ```
