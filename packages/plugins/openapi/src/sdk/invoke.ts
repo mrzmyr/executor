@@ -5,9 +5,11 @@ import type { StorageFailure } from "@executor/sdk";
 
 import { OpenApiInvocationError } from "./errors";
 import {
+  type EncodingObject,
   type HeaderValue,
   type OperationBinding,
   InvocationResult,
+  type MediaBinding,
   type OperationParameter,
 } from "./types";
 
@@ -207,13 +209,170 @@ const toUint8Array = (value: unknown): Uint8Array | null => {
 type FormDataRecord = Parameters<typeof HttpClientRequest.bodyFormDataRecord>[1];
 type FormDataCoercible = FormDataRecord[string];
 
-// Best-effort build of a FormData entry record: most primitives pass through,
-// plain objects get JSON-stringified so a server receives `{...}` instead of
-// `[object Object]`. File/Blob are handled natively by bodyFormDataRecord.
-const coerceFormDataRecord = (value: Record<string, unknown>): FormDataRecord => {
+// Pull a plain ArrayBuffer out of a Uint8Array — `new Blob([u8])` rejects
+// views whose `.buffer` is `SharedArrayBuffer | ArrayBuffer` under strict
+// lib.dom typings.
+const toArrayBuffer = (bytes: Uint8Array): ArrayBuffer => {
+  const copy = new ArrayBuffer(bytes.byteLength);
+  new Uint8Array(copy).set(bytes);
+  return copy;
+};
+
+// ---------------------------------------------------------------------------
+// OpenAPI 3.x encoding — per-property style/explode/allowReserved/contentType
+// for multipart/form-data and application/x-www-form-urlencoded bodies.
+// Spec ref: https://spec.openapis.org/oas/v3.1.0#encoding-object
+// ---------------------------------------------------------------------------
+
+type StyleExplode = {
+  readonly style: string;
+  readonly explode: boolean;
+  readonly allowReserved: boolean;
+};
+
+const DEFAULT_FORM_STYLE: StyleExplode = {
+  style: "form",
+  explode: true,
+  allowReserved: false,
+};
+
+const resolveStyleExplode = (e: EncodingObject | undefined): StyleExplode => {
+  if (!e) return DEFAULT_FORM_STYLE;
+  return {
+    style: Option.getOrElse(e.style, () => DEFAULT_FORM_STYLE.style),
+    explode: Option.getOrElse(e.explode, () => DEFAULT_FORM_STYLE.explode),
+    allowReserved: Option.getOrElse(e.allowReserved, () => DEFAULT_FORM_STYLE.allowReserved),
+  };
+};
+
+// RFC 3986 §2.2 reserved chars. `allowReserved: true` leaves these
+// unencoded; default OAS behavior encodes everything non-unreserved.
+const RESERVED_UNENCODED_RE = /[A-Za-z0-9\-._~:/?#[\]@!$&'()*+,;=]/;
+
+const encodeFormValue = (v: unknown, allowReserved: boolean): string => {
+  const raw = typeof v === "object" && v !== null ? JSON.stringify(v) : String(v);
+  if (!allowReserved) return encodeURIComponent(raw);
+  // Walk char-by-char so the reserved set passes through as-is.
+  let out = "";
+  for (const ch of raw) {
+    out += RESERVED_UNENCODED_RE.test(ch) ? ch : encodeURIComponent(ch);
+  }
+  return out;
+};
+
+/**
+ * Serialize a record to application/x-www-form-urlencoded with OAS3 style
+ * rules honored per-field. Supports `form` (default), `deepObject`,
+ * `pipeDelimited`, `spaceDelimited` styles with `explode` true / false.
+ */
+const serializeFormUrlEncoded = (
+  value: Record<string, unknown>,
+  encoding: Record<string, EncodingObject> | undefined,
+): string => {
+  const parts: string[] = [];
+  for (const [key, raw] of Object.entries(value)) {
+    if (raw === undefined || raw === null) continue;
+    const { style, explode, allowReserved } = resolveStyleExplode(encoding?.[key]);
+    const encKey = encodeURIComponent(key);
+
+    if (Array.isArray(raw)) {
+      if (explode) {
+        for (const v of raw) {
+          parts.push(`${encKey}=${encodeFormValue(v, allowReserved)}`);
+        }
+      } else {
+        const sep =
+          style === "spaceDelimited" ? " " : style === "pipeDelimited" ? "|" : ",";
+        parts.push(
+          `${encKey}=${encodeFormValue(
+            raw.map((v) => (typeof v === "object" ? JSON.stringify(v) : String(v))).join(sep),
+            allowReserved,
+          )}`,
+        );
+      }
+      continue;
+    }
+
+    if (typeof raw === "object") {
+      const entries = Object.entries(raw as Record<string, unknown>).filter(
+        ([, v]) => v !== undefined && v !== null,
+      );
+      if (style === "deepObject") {
+        for (const [subkey, subval] of entries) {
+          // Encode the whole `key[subkey]` fragment so `[` / `]` become
+          // `%5B` / `%5D`. Matches swagger-client's behaviour and remains
+          // accepted by common server-side parsers (qs, Rails, etc.).
+          parts.push(
+            `${encodeURIComponent(`${key}[${subkey}]`)}=${encodeFormValue(
+              subval,
+              allowReserved,
+            )}`,
+          );
+        }
+      } else if (explode) {
+        // form + explode=true on object: sub-keys become top-level fields.
+        for (const [subkey, subval] of entries) {
+          parts.push(
+            `${encodeURIComponent(subkey)}=${encodeFormValue(subval, allowReserved)}`,
+          );
+        }
+      } else {
+        // form + explode=false on object: flatten to csv key,val,key,val.
+        const flat = entries.flatMap(([k, v]) => [
+          k,
+          typeof v === "object" ? JSON.stringify(v) : String(v),
+        ]);
+        parts.push(`${encKey}=${encodeFormValue(flat.join(","), allowReserved)}`);
+      }
+      continue;
+    }
+
+    parts.push(`${encKey}=${encodeFormValue(raw, allowReserved)}`);
+  }
+  return parts.join("&");
+};
+
+/**
+ * Best-effort build of a multipart FormData entry record.
+ *
+ * If `encoding[key].contentType` is declared (OAS3 §4.8.15), wrap the value
+ * in a `Blob` with that type so the runtime multipart framer emits the
+ * per-part `Content-Type` header (e.g. `application/json` for a metadata
+ * part whose server expects parsed JSON).
+ *
+ * Otherwise: primitives pass through, arrays handle their item types, byte
+ * shapes wrap as Blob, nested objects JSON-stringify (never `[object Object]`).
+ */
+const coerceFormDataRecord = (
+  value: Record<string, unknown>,
+  encoding: Record<string, EncodingObject> | undefined,
+): FormDataRecord => {
   const out: Record<string, FormDataCoercible> = {};
   for (const [key, raw] of Object.entries(value)) {
     if (raw === undefined || raw === null) continue;
+
+    const partType = encoding?.[key]
+      ? Option.getOrUndefined(encoding[key]!.contentType)
+      : undefined;
+
+    // Explicit per-part content type: wrap in a typed Blob so the framer
+    // emits `Content-Type: <partType>` on this part. JSON types get the
+    // value JSON-stringified first so the blob body is valid JSON.
+    if (partType) {
+      const isJson =
+        partType.startsWith("application/json") || partType.includes("+json");
+      const serialized =
+        typeof raw === "string"
+          ? raw
+          : isJson
+            ? JSON.stringify(raw)
+            : typeof raw === "object"
+              ? JSON.stringify(raw)
+              : String(raw);
+      out[key] = new Blob([serialized], { type: partType });
+      continue;
+    }
+
     if (
       typeof raw === "string" ||
       typeof raw === "number" ||
@@ -246,15 +405,6 @@ const coerceFormDataRecord = (value: Record<string, unknown>): FormDataRecord =>
   return out;
 };
 
-// Pull a plain ArrayBuffer out of a Uint8Array — `new Blob([u8])` rejects
-// views whose `.buffer` is `SharedArrayBuffer | ArrayBuffer` under strict
-// lib.dom typings.
-const toArrayBuffer = (bytes: Uint8Array): ArrayBuffer => {
-  const copy = new ArrayBuffer(bytes.byteLength);
-  new Uint8Array(copy).set(bytes);
-  return copy;
-};
-
 // ---------------------------------------------------------------------------
 // Request body dispatch
 //
@@ -274,6 +424,7 @@ const applyRequestBody = (
   request: HttpClientRequest.HttpClientRequest,
   contentType: string,
   bodyValue: unknown,
+  encoding: Record<string, EncodingObject> | undefined,
 ): HttpClientRequest.HttpClientRequest => {
   if (isJsonContentType(contentType)) {
     // Pre-serialized JSON strings pass through with the declared media
@@ -288,6 +439,16 @@ const applyRequestBody = (
     if (typeof bodyValue === "string") {
       return HttpClientRequest.bodyText(request, bodyValue, contentType);
     }
+    if (typeof bodyValue === "object" && bodyValue !== null && !Array.isArray(bodyValue)) {
+      // Serialize ourselves so OAS3 encoding (style/explode/deepObject)
+      // is honored. bodyUrlParams doesn't know about per-field style.
+      const serialized = serializeFormUrlEncoded(
+        bodyValue as Record<string, unknown>,
+        encoding,
+      );
+      return HttpClientRequest.bodyText(request, serialized, contentType);
+    }
+    // Non-object body — fall back to platform helper (handles URLSearchParams).
     return HttpClientRequest.bodyUrlParams(
       request,
       bodyValue as Parameters<typeof HttpClientRequest.bodyUrlParams>[1],
@@ -301,7 +462,7 @@ const applyRequestBody = (
     if (typeof bodyValue === "object" && bodyValue !== null) {
       return HttpClientRequest.bodyFormDataRecord(
         request,
-        coerceFormDataRecord(bodyValue as Record<string, unknown>),
+        coerceFormDataRecord(bodyValue as Record<string, unknown>, encoding),
       );
     }
     // String / primitive under multipart is almost certainly wrong on the
@@ -383,7 +544,23 @@ export const invoke = Effect.fn("OpenApi.invoke")(function* (
     const rb = operation.requestBody.value;
     const bodyValue = args.body ?? args.input;
     if (bodyValue !== undefined) {
-      request = applyRequestBody(request, rb.contentType, bodyValue);
+      // Resolve which declared media type to use. When the spec declares
+      // multiple, the caller can override via `args.contentType`; otherwise
+      // we use the first-declared (spec author's preferred ordering).
+      const contentsOpt = Option.getOrUndefined(rb.contents);
+      const requestedCt =
+        typeof args.contentType === "string" ? args.contentType : undefined;
+      const selected: MediaBinding | undefined =
+        contentsOpt && requestedCt
+          ? contentsOpt.find((c) => c.contentType === requestedCt)
+          : undefined;
+      const chosenCt = selected?.contentType ?? rb.contentType;
+      const chosenEncoding = selected
+        ? Option.getOrUndefined(selected.encoding)
+        : contentsOpt && contentsOpt[0]
+          ? Option.getOrUndefined(contentsOpt[0].encoding)
+          : undefined;
+      request = applyRequestBody(request, chosenCt, bodyValue, chosenEncoding);
     }
   }
 
