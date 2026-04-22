@@ -52,10 +52,12 @@ export {
 } from "./errors";
 
 export {
+  EncodingObject,
   ExtractedOperation,
   ExtractionResult,
   InvocationConfig,
   InvocationResult,
+  MediaBinding,
   OAuth2Auth,
   OpenApiOAuthSession,
   OperationBinding,

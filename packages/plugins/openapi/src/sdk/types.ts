@@ -41,12 +41,45 @@ export class OperationParameter extends Schema.Class<OperationParameter>("Operat
   description: Schema.optionalWith(Schema.String, { as: "Option" }),
 }) {}
 
+/**
+ * OpenAPI 3.x `Encoding Object` (§4.8.15). Declared per-property inside a
+ * multipart/form-data or application/x-www-form-urlencoded request body.
+ *
+ * - `contentType` — for multipart, overrides the per-part `Content-Type`
+ *   header (e.g. `application/json` for a JSON-encoded metadata part).
+ * - `style` / `explode` / `allowReserved` — for form-urlencoded, control
+ *   array / object serialization the same way parameter-level style does.
+ */
+export class EncodingObject extends Schema.Class<EncodingObject>("EncodingObject")({
+  contentType: Schema.optionalWith(Schema.String, { as: "Option" }),
+  style: Schema.optionalWith(Schema.String, { as: "Option" }),
+  explode: Schema.optionalWith(Schema.Boolean, { as: "Option" }),
+  allowReserved: Schema.optionalWith(Schema.Boolean, { as: "Option" }),
+}) {}
+
+export class MediaBinding extends Schema.Class<MediaBinding>("MediaBinding")({
+  contentType: Schema.String,
+  schema: Schema.optionalWith(Schema.Unknown, { as: "Option" }),
+  encoding: Schema.optionalWith(
+    Schema.Record({ key: Schema.String, value: EncodingObject }),
+    { as: "Option" },
+  ),
+}) {}
+
 export class OperationRequestBody extends Schema.Class<OperationRequestBody>(
   "OperationRequestBody",
 )({
   required: Schema.Boolean,
+  /** Default media type — first declared in spec order (not JSON-first).
+   *  Used when the caller does not override via the tool's `contentType` arg. */
   contentType: Schema.String,
+  /** Schema of the default media type. Kept for backward compat with stored
+   *  bindings from before `contents` was added. */
   schema: Schema.optionalWith(Schema.Unknown, { as: "Option" }),
+  /** All declared media types in spec order. Populated by `extract.ts`
+   *  going forward; older persisted bindings may have this unset and will
+   *  fall back to `{contentType, schema}`. */
+  contents: Schema.optionalWith(Schema.Array(MediaBinding), { as: "Option" }),
 }) {}
 
 export class ExtractedOperation extends Schema.Class<ExtractedOperation>("ExtractedOperation")({
