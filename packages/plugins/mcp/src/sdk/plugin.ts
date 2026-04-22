@@ -650,8 +650,15 @@ export const mcpPlugin = definePlugin(
             const namespace = normalizeNamespace(config);
             const sd = toStoredSourceData(config);
 
-            // Resolve auth (may fail if stdio gate is off)
-            const ci = yield* resolveConnectorInput(sd, ctx, allowStdio).pipe(
+            // Stdio sources are gated — a resolver failure there is a
+            // config error the admin must fix before the source makes
+            // sense to persist at all. For remote sources we defer the
+            // resolver failure: auth might not be ready yet (oauth2
+            // connection awaiting per-user sign-in, header secret
+            // awaiting upload) but the source row should still land so
+            // it shows up in the list and exposes a Sign-in affordance.
+            const resolved = yield* resolveConnectorInput(sd, ctx, allowStdio).pipe(
+              Effect.either,
               Effect.withSpan("mcp.plugin.resolve_connector", {
                 attributes: {
                   "mcp.source.namespace": namespace,
@@ -660,20 +667,26 @@ export const mcpPlugin = definePlugin(
               }),
             );
 
-            const connector = createMcpConnector(ci);
-            // Try discovery. If it fails (auth, network, bad spec), we still
-            // want the source to land in the catalog so users see it in
-            // their list and can retry via refresh. The error still
-            // propagates to the caller so boot-time sync logs the reason.
-            const discovery = yield* discoverTools(connector).pipe(
-              Effect.mapError((err) =>
-                mcpDiscoveryError(`MCP discovery failed: ${err.message}`),
-              ),
-              Effect.either,
-              Effect.withSpan("mcp.plugin.discover_tools", {
-                attributes: { "mcp.source.namespace": namespace },
-              }),
-            );
+            if (resolved._tag === "Left" && sd.transport === "stdio") {
+              return yield* Effect.fail(resolved.left);
+            }
+
+            // Try discovery only if we have a live connector input.
+            // Otherwise fall straight through to the persist step with
+            // an empty manifest and surface the resolver failure to
+            // the caller at the end.
+            const discovery =
+              resolved._tag === "Right"
+                ? yield* discoverTools(createMcpConnector(resolved.right)).pipe(
+                    Effect.mapError((err) =>
+                      mcpDiscoveryError(`MCP discovery failed: ${err.message}`),
+                    ),
+                    Effect.either,
+                    Effect.withSpan("mcp.plugin.discover_tools", {
+                      attributes: { "mcp.source.namespace": namespace },
+                    }),
+                  )
+                : ({ _tag: "Left", left: resolved.left } as const);
             const manifest =
               discovery._tag === "Right"
                 ? discovery.right
