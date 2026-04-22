@@ -378,12 +378,16 @@ export default function AddMcpSource(props: {
   const remoteHeadersComplete = remoteHeaders.every(
     (header) => header.name.trim() && header.value.trim(),
   );
+  // OAuth is "ready to save" even without tokens — the source is stored
+  // with a stable connectionId pointer, and each user completes their
+  // own sign-in via McpSignInButton on the source detail page (per-user
+  // scope shadowing means each user's tokens land at their own scope).
   const authReady =
     remoteAuthMode === "none"
       ? canUseNone
       : remoteAuthMode === "header"
         ? headerAuthComplete
-        : tokens !== null;
+        : true;
   const canAdd = Boolean(probe) && authReady && remoteHeadersComplete && !isAdding && !isOAuthBusy;
   // Probe failures are shown inline on the URL field; other failures
   // (OAuth start, add source) render in the bottom error block.
@@ -493,6 +497,17 @@ export default function AddMcpSource(props: {
     if (!probe) return;
     dispatch({ type: "add-start" });
     const headerAuth = remoteAuthHeaders[0];
+    // For oauth2 sources saved without completing the flow, use the
+    // same stable connectionId the handleOAuth path would have used.
+    // This pins the source's auth pointer, so when a per-user sign-in
+    // runs later (via McpSignInButton) it mints the connection at the
+    // user scope against the same id — innermost-wins shadowing then
+    // resolves tokens per-user at invoke time.
+    const deferredOAuthConnectionId = mcpOAuthConnectionId(
+      slugifyNamespace(remoteIdentity.namespace) ||
+        slugifyNamespace(probe.namespace ?? "") ||
+        "mcp",
+    );
     const auth =
       remoteAuthMode === "header" && headerAuth?.secretId
         ? {
@@ -501,10 +516,10 @@ export default function AddMcpSource(props: {
             secretId: headerAuth.secretId,
             ...(headerAuth.prefix ? { prefix: headerAuth.prefix } : {}),
           }
-        : remoteAuthMode === "oauth2" && tokens
+        : remoteAuthMode === "oauth2"
           ? {
               kind: "oauth2" as const,
-              connectionId: tokens.connectionId,
+              connectionId: tokens?.connectionId ?? deferredOAuthConnectionId,
             }
           : { kind: "none" as const };
     const headers = Object.fromEntries(
@@ -788,9 +803,15 @@ export default function AddMcpSource(props: {
               {remoteAuthMode === "oauth2" && (
                 <>
                   {!tokens && state.step === "probed" && (
-                    <Button onClick={handleOAuth}  variant="outline">
-                      Sign in
-                    </Button>
+                    <div className="flex flex-col gap-2">
+                      <Button onClick={handleOAuth} variant="outline">
+                        Sign in
+                      </Button>
+                      <p className="text-[11px] text-muted-foreground">
+                        Optional — you can save the source now and each user can sign
+                        in from the source detail page later.
+                      </p>
+                    </div>
                   )}
 
                   {!tokens && state.step === "oauth-starting" && (
