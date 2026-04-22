@@ -175,6 +175,171 @@ const isFormUrlEncoded = (ct: string | null | undefined): boolean =>
 const isMultipartFormData = (ct: string | null | undefined): boolean =>
   normalizeContentType(ct).startsWith("multipart/form-data");
 
+const isXmlContentType = (ct: string | null | undefined): boolean => {
+  const normalized = normalizeContentType(ct);
+  if (!normalized) return false;
+  return (
+    normalized === "application/xml" ||
+    normalized === "text/xml" ||
+    normalized.endsWith("+xml")
+  );
+};
+
+const isTextContentType = (ct: string | null | undefined): boolean =>
+  normalizeContentType(ct).startsWith("text/");
+
+const isOctetStream = (ct: string | null | undefined): boolean =>
+  normalizeContentType(ct) === "application/octet-stream";
+
+const toUint8Array = (value: unknown): Uint8Array | null => {
+  if (value instanceof Uint8Array) return value;
+  if (value instanceof ArrayBuffer) return new Uint8Array(value);
+  if (ArrayBuffer.isView(value)) {
+    const view = value as ArrayBufferView;
+    return new Uint8Array(view.buffer, view.byteOffset, view.byteLength);
+  }
+  if (Array.isArray(value) && value.every((v) => typeof v === "number")) {
+    return new Uint8Array(value as readonly number[]);
+  }
+  return null;
+};
+
+type FormDataRecord = Parameters<typeof HttpClientRequest.bodyFormDataRecord>[1];
+type FormDataCoercible = FormDataRecord[string];
+
+// Best-effort build of a FormData entry record: most primitives pass through,
+// plain objects get JSON-stringified so a server receives `{...}` instead of
+// `[object Object]`. File/Blob are handled natively by bodyFormDataRecord.
+const coerceFormDataRecord = (value: Record<string, unknown>): FormDataRecord => {
+  const out: Record<string, FormDataCoercible> = {};
+  for (const [key, raw] of Object.entries(value)) {
+    if (raw === undefined || raw === null) continue;
+    if (
+      typeof raw === "string" ||
+      typeof raw === "number" ||
+      typeof raw === "boolean" ||
+      raw instanceof Blob ||
+      (typeof File !== "undefined" && raw instanceof File)
+    ) {
+      out[key] = raw as FormDataCoercible;
+      continue;
+    }
+    if (Array.isArray(raw)) {
+      out[key] = raw.map((v) =>
+        typeof v === "string" ||
+        typeof v === "number" ||
+        typeof v === "boolean" ||
+        v instanceof Blob ||
+        (typeof File !== "undefined" && v instanceof File)
+          ? (v as FormDataCoercible)
+          : JSON.stringify(v),
+      ) as FormDataCoercible;
+      continue;
+    }
+    const bytes = toUint8Array(raw);
+    if (bytes) {
+      out[key] = new Blob([toArrayBuffer(bytes)]);
+      continue;
+    }
+    out[key] = JSON.stringify(raw);
+  }
+  return out;
+};
+
+// Pull a plain ArrayBuffer out of a Uint8Array — `new Blob([u8])` rejects
+// views whose `.buffer` is `SharedArrayBuffer | ArrayBuffer` under strict
+// lib.dom typings.
+const toArrayBuffer = (bytes: Uint8Array): ArrayBuffer => {
+  const copy = new ArrayBuffer(bytes.byteLength);
+  new Uint8Array(copy).set(bytes);
+  return copy;
+};
+
+// ---------------------------------------------------------------------------
+// Request body dispatch
+//
+// Dispatch is driven by the spec-declared content type first, JS type of
+// the provided body second. Servers that advertise a specific content type
+// almost always reject anything else (e.g. a multipart endpoint will hang
+// waiting for valid framing if it receives `application/json`), so the
+// content type wins.
+//
+// Within each content type we accept both pre-serialized strings (user
+// already produced the wire format) and structured JS values we can
+// serialize ourselves. The last-resort fallback is `JSON.stringify(body)`
+// — never `String(body)` (which produces the useless `[object Object]`).
+// ---------------------------------------------------------------------------
+
+const applyRequestBody = (
+  request: HttpClientRequest.HttpClientRequest,
+  contentType: string,
+  bodyValue: unknown,
+): HttpClientRequest.HttpClientRequest => {
+  if (isJsonContentType(contentType)) {
+    // Pre-serialized JSON strings pass through with the declared media
+    // type preserved (important for `application/vnd.foo+json` etc.).
+    if (typeof bodyValue === "string") {
+      return HttpClientRequest.bodyText(request, bodyValue, contentType);
+    }
+    return HttpClientRequest.bodyUnsafeJson(request, bodyValue);
+  }
+
+  if (isFormUrlEncoded(contentType)) {
+    if (typeof bodyValue === "string") {
+      return HttpClientRequest.bodyText(request, bodyValue, contentType);
+    }
+    return HttpClientRequest.bodyUrlParams(
+      request,
+      bodyValue as Parameters<typeof HttpClientRequest.bodyUrlParams>[1],
+    );
+  }
+
+  if (isMultipartFormData(contentType)) {
+    if (bodyValue instanceof FormData) {
+      return HttpClientRequest.bodyFormData(request, bodyValue);
+    }
+    if (typeof bodyValue === "object" && bodyValue !== null) {
+      return HttpClientRequest.bodyFormDataRecord(
+        request,
+        coerceFormDataRecord(bodyValue as Record<string, unknown>),
+      );
+    }
+    // String / primitive under multipart is almost certainly wrong on the
+    // caller's end — send it as text with their declared content type and
+    // let the server produce a useful error.
+    return HttpClientRequest.bodyText(request, String(bodyValue), contentType);
+  }
+
+  if (isOctetStream(contentType)) {
+    const bytes = toUint8Array(bodyValue);
+    if (bytes) return HttpClientRequest.bodyUint8Array(request, bytes, contentType);
+    if (typeof bodyValue === "string") {
+      return HttpClientRequest.bodyText(request, bodyValue, contentType);
+    }
+    // Unknown shape — serialize as JSON so at least the payload is visible.
+    return HttpClientRequest.bodyText(request, JSON.stringify(bodyValue), contentType);
+  }
+
+  if (isXmlContentType(contentType) || isTextContentType(contentType)) {
+    if (typeof bodyValue === "string") {
+      return HttpClientRequest.bodyText(request, bodyValue, contentType);
+    }
+    const bytes = toUint8Array(bodyValue);
+    if (bytes) return HttpClientRequest.bodyUint8Array(request, bytes, contentType);
+    // Object body under text/xml is unusual — stringify so the caller sees
+    // their own payload instead of `[object Object]`.
+    return HttpClientRequest.bodyText(request, JSON.stringify(bodyValue), contentType);
+  }
+
+  // Unknown content type: respect what the caller supplied.
+  if (typeof bodyValue === "string") {
+    return HttpClientRequest.bodyText(request, bodyValue, contentType);
+  }
+  const bytes = toUint8Array(bodyValue);
+  if (bytes) return HttpClientRequest.bodyUint8Array(request, bytes, contentType);
+  return HttpClientRequest.bodyText(request, JSON.stringify(bodyValue), contentType);
+};
+
 // ---------------------------------------------------------------------------
 // Public API — invoke a single operation
 // ---------------------------------------------------------------------------
@@ -218,23 +383,7 @@ export const invoke = Effect.fn("OpenApi.invoke")(function* (
     const rb = operation.requestBody.value;
     const bodyValue = args.body ?? args.input;
     if (bodyValue !== undefined) {
-      if (isJsonContentType(rb.contentType)) {
-        request = HttpClientRequest.bodyUnsafeJson(request, bodyValue);
-      } else if (typeof bodyValue === "string") {
-        request = HttpClientRequest.bodyText(request, bodyValue, rb.contentType);
-      } else if (isFormUrlEncoded(rb.contentType)) {
-        request = HttpClientRequest.bodyUrlParams(
-          request,
-          bodyValue as Parameters<typeof HttpClientRequest.bodyUrlParams>[1],
-        );
-      } else if (isMultipartFormData(rb.contentType)) {
-        request = HttpClientRequest.bodyFormDataRecord(
-          request,
-          bodyValue as Parameters<typeof HttpClientRequest.bodyFormDataRecord>[1],
-        );
-      } else {
-        request = HttpClientRequest.bodyText(request, JSON.stringify(bodyValue), rb.contentType);
-      }
+      request = applyRequestBody(request, rb.contentType, bodyValue);
     }
   }
 
