@@ -182,6 +182,7 @@ const resolveSessionMeta = Effect.fn("McpSessionDO.resolveSessionMeta")(function
 // ---------------------------------------------------------------------------
 
 export class McpSessionDO extends DurableObject {
+  private readonly instanceCreatedAt = Date.now();
   private mcpServer: McpServer | null = null;
   private transport: WorkerTransport | null = null;
   private initialized = false;
@@ -221,6 +222,17 @@ export class McpSessionDO extends DurableObject {
   private async saveSessionMeta(sessionMeta: SessionMeta): Promise<void> {
     this.sessionMeta = sessionMeta;
     await this.ctx.storage.put(SESSION_META_KEY, sessionMeta);
+  }
+
+  private entryAttrs(methodEnteredAt: number): Record<string, unknown> {
+    const now = Date.now();
+    return {
+      "mcp.do.instance_age_ms": now - this.instanceCreatedAt,
+      "mcp.do.method_entry_delay_ms": now - methodEnteredAt,
+      "mcp.session.initialized": this.initialized,
+      "mcp.session.has_transport": !!this.transport,
+      "mcp.session.has_meta_memory": !!this.sessionMeta,
+    };
   }
 
   private clearSessionState(): Effect.Effect<void> {
@@ -274,6 +286,68 @@ export class McpSessionDO extends DurableObject {
     );
   }
 
+  private closeRuntime(): Effect.Effect<void> {
+    const self = this;
+    return Effect.promise(async () => {
+      if (self.transport) {
+        await self.transport.close().catch(() => undefined);
+        self.transport = null;
+      }
+      if (self.mcpServer) {
+        await self.mcpServer.close().catch(() => undefined);
+        self.mcpServer = null;
+      }
+      if (self.dbHandle) {
+        await self.dbHandle.end();
+        self.dbHandle = null;
+      }
+      self.initialized = false;
+    }).pipe(Effect.orDie);
+  }
+
+  private restoreRuntimeFromStorage(
+    request: Request,
+  ): Effect.Effect<"restored" | "missing_meta"> {
+    const self = this;
+    return Effect.gen(function* () {
+      if (self.initialized && self.transport) return "restored" as const;
+
+      const sessionMeta = yield* self.loadSessionMeta();
+      if (!sessionMeta) {
+        yield* Effect.annotateCurrentSpan({
+          "mcp.session.restore.outcome": "missing_meta",
+        });
+        return "missing_meta" as const;
+      }
+
+      yield* self.closeRuntime();
+      self.dbHandle = makeLongLivedDb();
+      const runtime = yield* self.createConnectedRuntime(sessionMeta, {
+        dbHandle: self.dbHandle,
+        enableJsonResponse: request.method !== "GET",
+      });
+      self.mcpServer = runtime.mcpServer;
+      self.transport = runtime.transport;
+      self.initialized = true;
+      self.lastActivityMs = Date.now();
+      yield* Effect.promise(() => self.ctx.storage.setAlarm(Date.now() + HEARTBEAT_MS)).pipe(
+        Effect.withSpan("McpSessionDO.setAlarm"),
+      );
+      yield* Effect.annotateCurrentSpan({
+        "mcp.session.restore.outcome": "restored",
+      });
+      return "restored" as const;
+    }).pipe(
+      Effect.withSpan("McpSessionDO.restoreRuntime", {
+        attributes: {
+          "mcp.request.method": request.method,
+          "mcp.request.session_id_present": !!request.headers.get("mcp-session-id"),
+        },
+      }),
+      Effect.orDie,
+    );
+  }
+
   private resolveAndStoreSessionMeta(token: McpSessionInit) {
     const self = this;
     return Effect.gen(function* () {
@@ -294,9 +368,14 @@ export class McpSessionDO extends DurableObject {
   }
 
   async init(token: McpSessionInit, incoming?: IncomingTraceHeaders): Promise<void> {
+    const methodEnteredAt = Date.now();
     if (this.initialized) return;
+    const self = this;
     return Effect.runPromise(
-      this.doInit(token).pipe(
+      Effect.gen(function* () {
+        yield* Effect.annotateCurrentSpan(self.entryAttrs(methodEnteredAt));
+        yield* self.doInit(token);
+      }).pipe(
         Effect.withSpan("McpSessionDO.init", {
           attributes: { "mcp.auth.organization_id": token.organizationId },
         }),
@@ -356,6 +435,7 @@ export class McpSessionDO extends DurableObject {
   }
 
   async handleRequest(request: Request): Promise<Response> {
+    const methodEnteredAt = Date.now();
     // Wrap the dispatch in an Effect span so every DO request — not just
     // the rare new-session `init()` — shows up in Axiom. Basic attributes
     // only (method, session-id presence, response status); rich client
@@ -368,6 +448,7 @@ export class McpSessionDO extends DurableObject {
     } satisfies IncomingTraceHeaders;
     const self = this;
     const program = Effect.gen(function* () {
+      yield* Effect.annotateCurrentSpan(self.entryAttrs(methodEnteredAt));
       // Capture the request-entry span so the host-mcp `parentSpan` getter
       // — fired by deferred MCP SDK callbacks after this Effect has already
       // returned — anchors engine spans under the same trace. Cleared in a
@@ -403,9 +484,19 @@ export class McpSessionDO extends DurableObject {
 
   private dispatchRequest(request: Request): Effect.Effect<Response> {
     if (!this.initialized || !this.transport) {
-      return Effect.succeed(
-        jsonRpcError(404, -32001, "Session timed out due to inactivity — please reconnect"),
-      );
+      if (request.method === "DELETE") {
+        return this.clearSessionState().pipe(
+          Effect.as(new Response(null, { status: 204 })),
+          Effect.withSpan("mcp.session.stale_delete"),
+        );
+      }
+      return Effect.gen(this, function* () {
+        const restored = yield* this.restoreRuntimeFromStorage(request);
+        if (restored === "restored") {
+          return yield* this.dispatchRequest(request);
+        }
+        return jsonRpcError(404, -32001, "Session timed out due to inactivity — please reconnect");
+      });
     }
 
     this.lastActivityMs = Date.now();
@@ -461,18 +552,7 @@ export class McpSessionDO extends DurableObject {
   }
 
   private async cleanup(): Promise<void> {
-    if (this.transport) {
-      await this.transport.close().catch(() => undefined);
-      this.transport = null;
-    }
-    if (this.mcpServer) {
-      await this.mcpServer.close().catch(() => undefined);
-      this.mcpServer = null;
-    }
-    if (this.dbHandle) {
-      await this.dbHandle.end();
-      this.dbHandle = null;
-    }
+    await Effect.runPromise(this.closeRuntime());
     await Effect.runPromise(this.clearSessionState());
   }
 }
