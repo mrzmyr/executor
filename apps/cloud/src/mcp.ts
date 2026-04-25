@@ -88,22 +88,36 @@ export class McpAuth extends Context.Tag("@executor/cloud/McpAuth")<
 
 export const McpAuthLive = Layer.succeed(McpAuth, {
   verifyBearer: (request) =>
-    Effect.promise(async () => {
+    Effect.gen(function* () {
       const authHeader = request.headers.get("authorization");
-      if (!authHeader?.startsWith(BEARER_PREFIX)) return null;
+      if (!authHeader?.startsWith(BEARER_PREFIX)) {
+        yield* Effect.annotateCurrentSpan({ "mcp.auth.outcome": "missing_bearer" });
+        return null;
+      }
       try {
-        const { payload } = await jwtVerify(authHeader.slice(BEARER_PREFIX.length), jwks, {
-          issuer: AUTHKIT_DOMAIN,
-        });
-        if (!payload.sub) return null;
-        return {
+        const { payload } = yield* Effect.promise(() =>
+          jwtVerify(authHeader.slice(BEARER_PREFIX.length), jwks, {
+            issuer: AUTHKIT_DOMAIN,
+          }),
+        ).pipe(Effect.withSpan("mcp.auth.jwt_verify"));
+        if (!payload.sub) {
+          yield* Effect.annotateCurrentSpan({ "mcp.auth.outcome": "missing_subject" });
+          return null;
+        }
+        const token = {
           accountId: payload.sub,
           organizationId: (payload.org_id as string | undefined) ?? null,
         };
+        yield* Effect.annotateCurrentSpan({
+          "mcp.auth.outcome": "verified",
+          "mcp.auth.has_organization": !!token.organizationId,
+        });
+        return token;
       } catch {
+        yield* Effect.annotateCurrentSpan({ "mcp.auth.outcome": "invalid" });
         return null;
       }
-    }),
+    }).pipe(Effect.withSpan("mcp.auth.verify_bearer")),
 });
 
 // ---------------------------------------------------------------------------
@@ -216,7 +230,7 @@ const readJsonRpcEnvelope = (request: Request): Effect.Effect<Option.Option<Json
     } catch {
       return Option.none();
     }
-  });
+  }).pipe(Effect.withSpan("mcp.request.read_json_rpc"));
 
 const methodAttrs = (envelope: JsonRpcEnvelope): Record<string, unknown> => {
   const params = envelope.params ?? {};
@@ -305,7 +319,14 @@ const annotateMcpRequest = (
       ...baseAttrs,
       ...rpcAttrs(envelope),
     });
-  });
+  }).pipe(
+    Effect.withSpan("mcp.request.annotate", {
+      attributes: {
+        "mcp.request.method": request.method,
+        "mcp.request.parse_body": opts.parseBody,
+      },
+    }),
+  );
 
 // ---------------------------------------------------------------------------
 // OAuth metadata endpoints
@@ -507,6 +528,13 @@ const forwardToExistingSession = (request: Request, sessionId: string, peek: boo
     const propagated = withPropagationHeaders(request, propagation);
     const raw = yield* Effect.promise(
       () => stub.handleRequest(propagated) as Promise<Response>,
+    ).pipe(
+      Effect.withSpan("mcp.do.handle_request", {
+        attributes: {
+          "mcp.request.method": request.method,
+          "mcp.request.session_id_present": true,
+        },
+      }),
     );
     const annotated = peek ? yield* peekAndAnnotate(raw) : raw;
     return HttpServerResponse.raw(annotated);
@@ -527,10 +555,21 @@ const dispatchPost = (request: Request, token: VerifiedToken) =>
     const propagation = yield* currentPropagationHeaders(request);
     yield* Effect.promise(() =>
       stub.init({ organizationId, userId: token.accountId }, propagation),
+    ).pipe(
+      Effect.withSpan("mcp.do.init", {
+        attributes: { "mcp.request.session_id_present": false },
+      }),
     );
     const propagated = withPropagationHeaders(request, propagation);
     const raw = yield* Effect.promise(
       () => stub.handleRequest(propagated) as Promise<Response>,
+    ).pipe(
+      Effect.withSpan("mcp.do.handle_request", {
+        attributes: {
+          "mcp.request.method": request.method,
+          "mcp.request.session_id_present": false,
+        },
+      }),
     );
     const annotated = yield* peekAndAnnotate(raw);
     return HttpServerResponse.raw(annotated);
