@@ -251,10 +251,11 @@ describe("/mcp unknown session id", () => {
 describe("/mcp notification responses", () => {
   it("returns 202 with an empty body for notifications/initialized", async () => {
     const orgId = nextOrgId();
+    const accountId = nextAccountId();
     await seedOrg(orgId);
 
     const initializeResponse = await mcpPost({
-      bearer: makeTestBearer(nextAccountId(), orgId),
+      bearer: makeTestBearer(accountId, orgId),
       body: INITIALIZE_REQUEST,
     });
     expect(initializeResponse.status).toBe(200);
@@ -262,7 +263,7 @@ describe("/mcp notification responses", () => {
     expect(sessionId).toBeTruthy();
 
     const notificationResponse = await mcpPost({
-      bearer: makeTestBearer(nextAccountId(), orgId),
+      bearer: makeTestBearer(accountId, orgId),
       sessionId,
       body: INITIALIZED_NOTIFICATION,
     });
@@ -276,10 +277,11 @@ describe("/mcp notification responses", () => {
 describe("/mcp session restore", () => {
   it("restores an initialized SDK transport from durable storage", async () => {
     const orgId = nextOrgId();
+    const accountId = nextAccountId();
     await seedOrg(orgId);
 
     const initializeResponse = await mcpPost({
-      bearer: makeTestBearer(nextAccountId(), orgId),
+      bearer: makeTestBearer(accountId, orgId),
       body: INITIALIZE_REQUEST,
     });
     expect(initializeResponse.status).toBe(200);
@@ -295,7 +297,7 @@ describe("/mcp session restore", () => {
     });
 
     const response = await mcpPost({
-      bearer: makeTestBearer(nextAccountId(), orgId),
+      bearer: makeTestBearer(accountId, orgId),
       sessionId,
       body: TOOLS_LIST_REQUEST,
     });
@@ -306,6 +308,45 @@ describe("/mcp session restore", () => {
     };
     expect(body.jsonrpc).toBe("2.0");
     expect(body.result?.tools?.some((tool) => tool.name === "execute")).toBe(true);
+  }, 15_000);
+
+  it("reproduces cross-account session reuse via leaked mcp-session-id", async () => {
+    const victimOrgId = nextOrgId();
+    const attackerOrgId = nextOrgId();
+    const victimAccountId = nextAccountId();
+    const attackerAccountId = nextAccountId();
+    await seedOrg(victimOrgId);
+
+    const initializeResponse = await mcpPost({
+      bearer: makeTestBearer(victimAccountId, victimOrgId),
+      body: INITIALIZE_REQUEST,
+    });
+    expect(initializeResponse.status).toBe(200);
+    const sessionId = initializeResponse.headers.get("mcp-session-id");
+    expect(sessionId).toBeTruthy();
+
+    const ns = env.MCP_SESSION;
+    const stub = ns.get(ns.idFromString(sessionId!));
+    await runInDurableObject(stub, async (instance) => {
+      await Effect.runPromise(
+        (instance as unknown as { closeRuntime: () => Effect.Effect<void> }).closeRuntime(),
+      );
+    });
+
+    const response = await mcpPost({
+      bearer: makeTestBearer(attackerAccountId, attackerOrgId),
+      sessionId,
+      body: TOOLS_LIST_REQUEST,
+    });
+
+    expect(response.status).toBe(403);
+    const body = (await response.json()) as {
+      readonly jsonrpc: string;
+      readonly error?: { readonly code: number; readonly message: string };
+    };
+    expect(body.jsonrpc).toBe("2.0");
+    expect(body.error?.code).toBe(-32003);
+    expect(body.error?.message).toMatch(/does not belong/i);
   }, 15_000);
 });
 

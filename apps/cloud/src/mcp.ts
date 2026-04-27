@@ -32,6 +32,8 @@ const RESOURCE_ORIGIN = env.MCP_RESOURCE_ORIGIN ?? "https://executor.sh";
 const jwks = createRemoteJWKSet(new URL(`${AUTHKIT_DOMAIN}/oauth2/jwks`));
 
 const BEARER_PREFIX = "Bearer ";
+const INTERNAL_ACCOUNT_ID_HEADER = "x-executor-mcp-account-id";
+const INTERNAL_ORGANIZATION_ID_HEADER = "x-executor-mcp-organization-id";
 
 const CORS_ALLOW_ORIGIN = { "access-control-allow-origin": "*" } as const;
 
@@ -544,6 +546,13 @@ const withPropagationHeaders = (
   return new Request(request, { headers });
 };
 
+const withVerifiedIdentityHeaders = (request: Request, token: VerifiedToken): Request => {
+  const headers = new Headers(request.headers);
+  headers.set(INTERNAL_ACCOUNT_ID_HEADER, token.accountId);
+  headers.set(INTERNAL_ORGANIZATION_ID_HEADER, token.organizationId ?? "");
+  return new Request(request, { headers });
+};
+
 const withMcpResponseHeaders = (response: Response): Response => {
   const headers = new Headers(response.headers);
   headers.set("access-control-allow-origin", "*");
@@ -560,12 +569,20 @@ const withMcpResponseHeaders = (response: Response): Response => {
  * with `HttpServerResponse.raw` lets streaming bodies (SSE) pass through
  * `HttpApp.toWebHandler`'s conversion unchanged.
  */
-const forwardToExistingSession = (request: Request, sessionId: string, peek: boolean) =>
+const forwardToExistingSession = (
+  request: Request,
+  sessionId: string,
+  peek: boolean,
+  token: VerifiedToken,
+) =>
   Effect.gen(function* () {
     const ns = env.MCP_SESSION;
     const stub = ns.get(ns.idFromString(sessionId));
     const propagation = yield* currentPropagationHeaders(request);
-    const propagated = withPropagationHeaders(request, propagation);
+    const propagated = withPropagationHeaders(
+      withVerifiedIdentityHeaders(request, token),
+      propagation,
+    );
     const raw = yield* Effect.promise(
       () => stub.handleRequest(propagated) as Promise<Response>,
     ).pipe(
@@ -588,7 +605,7 @@ const dispatchPost = (request: Request, token: VerifiedToken) =>
     }
 
     const sessionId = request.headers.get("mcp-session-id");
-    if (sessionId) return yield* forwardToExistingSession(request, sessionId, true);
+    if (sessionId) return yield* forwardToExistingSession(request, sessionId, true, token);
 
     const ns = env.MCP_SESSION;
     const stub = ns.get(ns.newUniqueId());
@@ -600,7 +617,10 @@ const dispatchPost = (request: Request, token: VerifiedToken) =>
         attributes: { "mcp.request.session_id_present": false },
       }),
     );
-    const propagated = withPropagationHeaders(request, propagation);
+    const propagated = withPropagationHeaders(
+      withVerifiedIdentityHeaders(request, token),
+      propagation,
+    );
     const raw = yield* Effect.promise(
       () => stub.handleRequest(propagated) as Promise<Response>,
     ).pipe(
@@ -615,16 +635,16 @@ const dispatchPost = (request: Request, token: VerifiedToken) =>
     return HttpServerResponse.raw(withMcpResponseHeaders(annotated));
   });
 
-const dispatchGet = (request: Request) => {
+const dispatchGet = (request: Request, token: VerifiedToken) => {
   const sessionId = request.headers.get("mcp-session-id");
   if (!sessionId) return Effect.succeed(jsonRpcError(400, -32000, "mcp-session-id header required for SSE"));
-  return forwardToExistingSession(request, sessionId, false);
+  return forwardToExistingSession(request, sessionId, false, token);
 };
 
-const dispatchDelete = (request: Request) => {
+const dispatchDelete = (request: Request, token: VerifiedToken) => {
   const sessionId = request.headers.get("mcp-session-id");
   if (!sessionId) return Effect.succeed(HttpServerResponse.empty({ status: 204 }));
-  return forwardToExistingSession(request, sessionId, true);
+  return forwardToExistingSession(request, sessionId, true, token);
 };
 
 // ---------------------------------------------------------------------------
@@ -680,9 +700,9 @@ export const mcpApp: Effect.Effect<
     case "POST":
       return yield* dispatchPost(request, token);
     case "GET":
-      return yield* dispatchGet(request);
+      return yield* dispatchGet(request, token);
     case "DELETE":
-      return yield* dispatchDelete(request);
+      return yield* dispatchDelete(request, token);
     default:
       return jsonRpcError(405, -32001, "Method not allowed");
   }

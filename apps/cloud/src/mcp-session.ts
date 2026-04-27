@@ -55,6 +55,8 @@ const LONG_LIVED_DB_MAX_LIFETIME_SECONDS = 120;
 const TRANSPORT_STATE_KEY = "transport";
 const SESSION_META_KEY = "session-meta";
 const LAST_ACTIVITY_KEY = "last-activity-ms";
+const INTERNAL_ACCOUNT_ID_HEADER = "x-executor-mcp-account-id";
+const INTERNAL_ORGANIZATION_ID_HEADER = "x-executor-mcp-organization-id";
 
 // ---------------------------------------------------------------------------
 // Errors
@@ -73,6 +75,9 @@ const jsonRpcError = (status: number, code: number, message: string) =>
     status,
     headers: { "content-type": "application/json" },
   });
+
+const sessionOwnerMismatch = () =>
+  jsonRpcError(403, -32003, "MCP session does not belong to the current bearer");
 
 // W3C propagation across the worker→DO boundary. mcp.ts injects the worker's
 // `traceparent` and forwards incoming `tracestate` / `baggage` headers on
@@ -371,6 +376,25 @@ export class McpSessionDO extends DurableObject {
     );
   }
 
+  private validateSessionOwner(request: Request): Effect.Effect<Response | null> {
+    return Effect.gen(this, function* () {
+      const sessionMeta = yield* this.loadSessionMeta();
+      if (!sessionMeta) return null;
+
+      const accountId = request.headers.get(INTERNAL_ACCOUNT_ID_HEADER);
+      const organizationId = request.headers.get(INTERNAL_ORGANIZATION_ID_HEADER);
+      const matches =
+        accountId === sessionMeta.userId &&
+        organizationId === sessionMeta.organizationId;
+
+      yield* Effect.annotateCurrentSpan({
+        "mcp.session.owner_match": matches,
+      });
+
+      return matches ? null : sessionOwnerMismatch();
+    }).pipe(Effect.withSpan("mcp.session.validate_owner"));
+  }
+
   private resolveAndStoreSessionMeta(token: McpSessionInit) {
     const self = this;
     return Effect.gen(function* () {
@@ -504,6 +528,14 @@ export class McpSessionDO extends DurableObject {
   }
 
   private dispatchRequest(request: Request): Effect.Effect<Response> {
+    return Effect.gen(this, function* () {
+      const ownerError = yield* this.validateSessionOwner(request);
+      if (ownerError) return ownerError;
+      return yield* this.dispatchAuthorizedRequest(request);
+    });
+  }
+
+  private dispatchAuthorizedRequest(request: Request): Effect.Effect<Response> {
     if (!this.initialized || !this.transport) {
       if (request.method === "DELETE") {
         return this.clearSessionState().pipe(
@@ -514,7 +546,7 @@ export class McpSessionDO extends DurableObject {
       return Effect.gen(this, function* () {
         const restored = yield* this.restoreRuntimeFromStorage(request);
         if (restored === "restored") {
-          return yield* this.dispatchRequest(request);
+          return yield* this.dispatchAuthorizedRequest(request);
         }
         return jsonRpcError(404, -32001, "Session timed out due to inactivity — please reconnect");
       });
