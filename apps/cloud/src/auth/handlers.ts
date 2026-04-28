@@ -1,4 +1,4 @@
-import { HttpApi, HttpApiBuilder, HttpServerResponse } from "@effect/platform";
+import { HttpApi, HttpApiBuilder, HttpServerRequest, HttpServerResponse } from "@effect/platform";
 import { Effect } from "effect";
 import { setCookie, deleteCookie } from "@tanstack/react-start/server";
 
@@ -16,6 +16,40 @@ const COOKIE_OPTIONS = {
   sameSite: "lax" as const,
   maxAge: 60 * 60 * 24 * 7,
   secure: true,
+};
+
+const STATE_COOKIE = "wos-login-state";
+const STATE_COOKIE_OPTIONS = {
+  path: "/",
+  httpOnly: true,
+  sameSite: "lax" as const,
+  maxAge: 10 * 60,
+  secure: true,
+};
+
+const randomState = (): string => {
+  const bytes = new Uint8Array(32);
+  crypto.getRandomValues(bytes);
+  return Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("");
+};
+
+const parseCookie = (cookieHeader: string | null, name: string): string | null => {
+  if (!cookieHeader) return null;
+  const match = cookieHeader
+    .split(";")
+    .map((c) => c.trim())
+    .find((c) => c.startsWith(`${name}=`));
+  if (!match) return null;
+  return match.slice(name.length + 1) || null;
+};
+
+const timingSafeEqual = (a: string, b: string): boolean => {
+  if (a.length !== b.length) return false;
+  let diff = 0;
+  for (let i = 0; i < a.length; i++) {
+    diff |= a.charCodeAt(i) ^ b.charCodeAt(i);
+  }
+  return diff === 0;
 };
 
 // ---------------------------------------------------------------------------
@@ -41,14 +75,25 @@ export const CloudAuthPublicHandlers = HttpApiBuilder.group(
           // header points at the internal proxy target, not the public URL
           // WorkOS needs to redirect back to.
           const origin = env.VITE_PUBLIC_SITE_URL ?? "";
-          const url = workos.getAuthorizationUrl(`${origin}${AUTH_PATHS.callback}`);
+          const state = randomState();
+          setCookie(STATE_COOKIE, state, STATE_COOKIE_OPTIONS);
+          const url = workos.getAuthorizationUrl(`${origin}${AUTH_PATHS.callback}`, state);
           return HttpServerResponse.redirect(url, { status: 302 });
         }),
       )
-      .handleRaw("callback", ({ urlParams }) =>
+      .handleRaw("callback", ({ request, urlParams }) =>
         Effect.gen(function* () {
           const workos = yield* WorkOSAuth;
           const users = yield* UserStoreService;
+          const webRequest = yield* Effect.mapError(
+            HttpServerRequest.toWeb(request),
+            () => new WorkOSError(),
+          );
+          const cookieState = parseCookie(webRequest.headers.get("cookie"), STATE_COOKIE);
+          if (!cookieState || !timingSafeEqual(cookieState, urlParams.state)) {
+            deleteCookie(STATE_COOKIE, { path: "/" });
+            return HttpServerResponse.text("Invalid login state", { status: 400 });
+          }
 
           const result = yield* workos.authenticateWithCode(urlParams.code);
 
@@ -79,6 +124,7 @@ export const CloudAuthPublicHandlers = HttpApiBuilder.group(
           }
 
           setCookie("wos-session", sealedSession, COOKIE_OPTIONS);
+          deleteCookie(STATE_COOKIE, { path: "/" });
           return HttpServerResponse.redirect("/", { status: 302 });
         }),
       ),
