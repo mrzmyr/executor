@@ -10,7 +10,12 @@ import {
 } from "../sdk/errors";
 import { SpecPreview } from "../sdk/preview";
 import { StoredSourceSchema } from "../sdk/store";
-import { OAuth2Auth } from "../sdk/types";
+import {
+  OAuth2Auth,
+  OAuth2SourceConfig,
+  OpenApiSourceBindingInput,
+  OpenApiSourceBindingRef,
+} from "../sdk/types";
 
 // ---------------------------------------------------------------------------
 // Params
@@ -18,6 +23,7 @@ import { OAuth2Auth } from "../sdk/types";
 
 const scopeIdParam = HttpApiSchema.param("scopeId", ScopeId);
 const namespaceParam = HttpApiSchema.param("namespace", Schema.String);
+const sourceScopeIdParam = HttpApiSchema.param("sourceScopeId", ScopeId);
 
 // ---------------------------------------------------------------------------
 // Payloads
@@ -29,7 +35,7 @@ const AddSpecPayload = Schema.Struct({
   baseUrl: Schema.optional(Schema.String),
   namespace: Schema.optional(Schema.String),
   headers: Schema.optional(Schema.Record({ key: Schema.String, value: Schema.Unknown })),
-  oauth2: Schema.optional(OAuth2Auth),
+  oauth2: Schema.optional(Schema.Union(OAuth2Auth, OAuth2SourceConfig)),
 });
 
 const PreviewSpecPayload = Schema.Struct({
@@ -40,10 +46,20 @@ const UpdateSourcePayload = Schema.Struct({
   name: Schema.optional(Schema.String),
   baseUrl: Schema.optional(Schema.String),
   headers: Schema.optional(Schema.Record({ key: Schema.String, value: Schema.Unknown })),
+  // Set after a successful re-authenticate to refresh the source's
+  // stored OAuth2 metadata.
+  oauth2: Schema.optional(Schema.Union(OAuth2Auth, OAuth2SourceConfig)),
 });
 
 const UpdateSourceResponse = Schema.Struct({
   updated: Schema.Boolean,
+});
+
+const RemoveBindingPayload = Schema.Struct({
+  sourceId: Schema.String,
+  sourceScope: ScopeId,
+  slot: Schema.String,
+  scope: ScopeId,
 });
 
 // ---------------------------------------------------------------------------
@@ -59,23 +75,61 @@ const AddSpecResponse = Schema.Struct({
 // OAuth payloads / responses
 // ---------------------------------------------------------------------------
 
-const StartOAuthPayload = Schema.Struct({
+// Shared identity fields for both OAuth2 flows.
+//
+// `sourceId` (namespace) pins the resulting Connection *name* to a
+// stable per-source value so repeated sign-ins refresh an existing
+// row per scope instead of spawning a fresh UUID every click. Both
+// flows write at the innermost executor scope by default (per-user
+// row, per-user token), which preserves per-user credentials via
+// scope-stacked secret shadowing.
+//
+// `tokenScope` defaults to `ctx.scopes[0].id` (innermost). Callers
+// can override — e.g. an admin writing an org-wide shared connection
+// — and the SDK validates that the target is in the executor's stack.
+const StartOAuthIdentityFields = {
   displayName: Schema.String,
   securitySchemeName: Schema.String,
-  flow: Schema.Literal("authorizationCode"),
-  authorizationUrl: Schema.String,
   tokenUrl: Schema.String,
-  redirectUrl: Schema.String,
   clientIdSecretId: Schema.String,
-  clientSecretSecretId: Schema.optional(Schema.NullOr(Schema.String)),
   scopes: Schema.Array(Schema.String),
-});
+  tokenScope: Schema.optional(ScopeId),
+  connectionId: Schema.optional(Schema.String),
+  sourceId: Schema.String,
+} as const;
 
-const StartOAuthResponse = Schema.Struct({
-  sessionId: Schema.String,
-  authorizationUrl: Schema.String,
-  scopes: Schema.Array(Schema.String),
-});
+const StartOAuthPayload = Schema.Union(
+  Schema.Struct({
+    ...StartOAuthIdentityFields,
+    flow: Schema.Literal("authorizationCode"),
+    authorizationUrl: Schema.String,
+    redirectUrl: Schema.String,
+    clientSecretSecretId: Schema.optional(Schema.NullOr(Schema.String)),
+  }),
+  // RFC 6749 §4.4 — no user-interactive step, no session, no popup. The
+  // plugin exchanges tokens inline and returns a completed auth. The
+  // client_secret is required (the grant is client authentication + token
+  // request) and no refresh token is issued (§4.4.3).
+  Schema.Struct({
+    ...StartOAuthIdentityFields,
+    flow: Schema.Literal("clientCredentials"),
+    clientSecretSecretId: Schema.String,
+  }),
+);
+
+const StartOAuthResponse = Schema.Union(
+  Schema.Struct({
+    flow: Schema.Literal("authorizationCode"),
+    sessionId: Schema.String,
+    authorizationUrl: Schema.String,
+    scopes: Schema.Array(Schema.String),
+  }),
+  Schema.Struct({
+    flow: Schema.Literal("clientCredentials"),
+    auth: OAuth2Auth,
+    scopes: Schema.Array(Schema.String),
+  }),
+);
 
 const CompleteOAuthPayload = Schema.Struct({
   state: Schema.String,
@@ -90,15 +144,8 @@ const OAuthCallbackUrlParams = Schema.Struct({
   error_description: Schema.optional(Schema.String),
 });
 
-// ---------------------------------------------------------------------------
-// Errors with HTTP status
-// ---------------------------------------------------------------------------
-
-const ParseError = OpenApiParseError.annotations(HttpApiSchema.annotations({ status: 400 }));
-const ExtractionError = OpenApiExtractionError.annotations(
-  HttpApiSchema.annotations({ status: 400 }),
-);
-const OAuthError = OpenApiOAuthError.annotations(HttpApiSchema.annotations({ status: 400 }));
+// HTTP status on the three domain errors lives on their class
+// declarations in `../sdk/errors.ts` — see the comment there.
 
 // ---------------------------------------------------------------------------
 // Group
@@ -138,6 +185,22 @@ export class OpenApiGroup extends HttpApiGroup.make("openapi")
       .addSuccess(UpdateSourceResponse),
   )
   .add(
+    HttpApiEndpoint.get(
+      "listSourceBindings",
+    )`/scopes/${scopeIdParam}/openapi/sources/${namespaceParam}/base/${sourceScopeIdParam}/bindings`
+      .addSuccess(Schema.Array(OpenApiSourceBindingRef)),
+  )
+  .add(
+    HttpApiEndpoint.post("setSourceBinding")`/scopes/${scopeIdParam}/openapi/source-bindings`
+      .setPayload(OpenApiSourceBindingInput)
+      .addSuccess(OpenApiSourceBindingRef),
+  )
+  .add(
+    HttpApiEndpoint.post("removeSourceBinding")`/scopes/${scopeIdParam}/openapi/source-bindings/remove`
+      .setPayload(RemoveBindingPayload)
+      .addSuccess(Schema.Struct({ removed: Schema.Boolean })),
+  )
+  .add(
     HttpApiEndpoint.post("startOAuth")`/scopes/${scopeIdParam}/openapi/oauth/start`
       .setPayload(StartOAuthPayload)
       .addSuccess(StartOAuthResponse),
@@ -161,6 +224,6 @@ export class OpenApiGroup extends HttpApiGroup.make("openapi")
   // `InternalError` is the shared opaque 500 translated at the HTTP
   // edge by `withCapture`.
   .addError(InternalError)
-  .addError(ParseError)
-  .addError(ExtractionError)
-  .addError(OAuthError) {}
+  .addError(OpenApiParseError)
+  .addError(OpenApiExtractionError)
+  .addError(OpenApiOAuthError) {}

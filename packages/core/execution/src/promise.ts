@@ -1,24 +1,28 @@
 // ---------------------------------------------------------------------------
 // @executor/execution/promise — Promise-native surface for the execution
-// engine. Accepts a Promise-style Executor (from @executor/sdk) and an
-// async `onElicitation` handler — no Effect imports required by callers.
+// engine.
+// ---------------------------------------------------------------------------
 //
-// Under the hood the engine is Effect-based, so we wrap the incoming
-// Promise executor into the minimal Effect shape the engine consumes,
-// and bridge the elicitation handler via `Effect.tryPromise`.
+// `engine.ts` is Effect-native; this module runs each method with
+// `Effect.runPromise` at the boundary so hosts that can't compose Effects
+// (the MCP SDK tool handlers, plain async call sites) can still use the
+// engine. Callers already inside an Effect context should import directly
+// from `@executor/execution` to keep trace context intact.
 // ---------------------------------------------------------------------------
 
 import { Effect } from "effect";
+import type * as Cause from "effect/Cause";
 
 import type {
   ElicitationContext,
   ElicitationResponse,
   Executor as PromiseExecutor,
 } from "@executor/sdk";
-import type { CodeExecutor, ExecuteResult } from "@executor/codemode-core";
+import type { CodeExecutionError, CodeExecutor, ExecuteResult } from "@executor/codemode-core";
 
 import {
   createExecutionEngine as createEffectExecutionEngine,
+  type ExecutionEngine as EffectExecutionEngine,
   type ExecutionResult,
   type PausedExecution,
   type ResumeResponse,
@@ -28,9 +32,11 @@ export type ElicitationHandler = (
   ctx: ElicitationContext,
 ) => Promise<ElicitationResponse>;
 
-export type ExecutionEngineConfig = {
+export type ExecutionEngineConfig<
+  E extends Cause.YieldableError = CodeExecutionError,
+> = {
   readonly executor: PromiseExecutor;
-  readonly codeExecutor: CodeExecutor;
+  readonly codeExecutor: CodeExecutor<E>;
 };
 
 export type ExecutionEngine = {
@@ -49,7 +55,7 @@ export type ExecutionEngine = {
 /**
  * Wrap a Promise-style executor into the Effect shape the engine consumes.
  * Only the four method families the engine actually touches need wrapping:
- * `tools.{invoke,list,schema}` and `sources.list`.
+ * `tools.{invoke,list,schema,definitions}` and `sources.list`.
  */
 const wrapPromiseExecutor = (pe: PromiseExecutor): any => ({
   scope: (pe as any).scope,
@@ -84,35 +90,44 @@ const wrapPromiseExecutor = (pe: PromiseExecutor): any => ({
   },
 });
 
-export const createExecutionEngine = (
-  config: ExecutionEngineConfig,
-): ExecutionEngine => {
-  const engine = createEffectExecutionEngine({
-    executor: wrapPromiseExecutor(config.executor),
-    codeExecutor: config.codeExecutor,
-  });
-  return {
-    execute: (code, options) =>
+/**
+ * Promise-wrap an Effect-native `ExecutionEngine` (from `./engine`).
+ * Exposed separately so callers that already hold an Effect engine
+ * (apps/cloud's execution-stack composes both) can convert it for hosts
+ * that need the Promise surface (host-mcp).
+ */
+export const toPromiseExecutionEngine = <E extends Cause.YieldableError>(
+  engine: EffectExecutionEngine<E>,
+): ExecutionEngine => ({
+  execute: (code, options) =>
+    Effect.runPromise(
       engine.execute(code, {
         onElicitation: (ctx) =>
-          Effect.tryPromise(() => options.onElicitation(ctx)).pipe(
-            Effect.orDie,
-          ),
+          Effect.tryPromise(() => options.onElicitation(ctx)).pipe(Effect.orDie),
       }),
-    executeWithPause: (code) => engine.executeWithPause(code),
-    resume: (executionId, response) => engine.resume(executionId, response),
-    getDescription: () => engine.getDescription(),
-  };
-};
+    ),
+  executeWithPause: (code) => Effect.runPromise(engine.executeWithPause(code)),
+  resume: (executionId, response) => Effect.runPromise(engine.resume(executionId, response)),
+  getDescription: () => Effect.runPromise(engine.getDescription),
+});
+
+export const createExecutionEngine = <
+  E extends Cause.YieldableError = CodeExecutionError,
+>(
+  config: ExecutionEngineConfig<E>,
+): ExecutionEngine =>
+  toPromiseExecutionEngine(
+    createEffectExecutionEngine({
+      executor: wrapPromiseExecutor(config.executor),
+      codeExecutor: config.codeExecutor,
+    }),
+  );
 
 // ---------------------------------------------------------------------------
 // Re-exports — plain types/helpers that don't carry Effect signatures.
 // ---------------------------------------------------------------------------
 
-export {
-  formatExecuteResult,
-  formatPausedExecution,
-} from "./engine";
+export { formatExecuteResult, formatPausedExecution } from "./engine";
 
 export type { ExecutionResult, PausedExecution, ResumeResponse };
 

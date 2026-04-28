@@ -6,6 +6,7 @@ import { runOAuthCallback } from "@executor/plugin-oauth2/http";
 import { addGroup, capture, InternalError } from "@executor/api";
 import { OpenApiOAuthError } from "../sdk/errors";
 import type {
+  ConfiguredHeaderValue,
   OpenApiPluginExtension,
   HeaderValue,
   OpenApiUpdateSourceInput,
@@ -60,15 +61,18 @@ export const OpenApiHandlers = HttpApiBuilder.group(ExecutorApiWithOpenApi, "ope
         return yield* ext.previewSpec(payload.spec);
       })),
     )
-    .handle("addSpec", ({ payload }) =>
+    .handle("addSpec", ({ path, payload }) =>
       capture(Effect.gen(function* () {
         const ext = yield* OpenApiExtensionService;
         const result = yield* ext.addSpec({
           spec: payload.spec,
+          scope: path.scopeId,
           name: payload.name,
           baseUrl: payload.baseUrl,
           namespace: payload.namespace,
-          headers: payload.headers as Record<string, HeaderValue> | undefined,
+          headers: payload.headers as
+            | Record<string, HeaderValue | ConfiguredHeaderValue>
+            | undefined,
           oauth2: payload.oauth2,
         });
         return {
@@ -80,33 +84,80 @@ export const OpenApiHandlers = HttpApiBuilder.group(ExecutorApiWithOpenApi, "ope
     .handle("getSource", ({ path }) =>
       capture(Effect.gen(function* () {
         const ext = yield* OpenApiExtensionService;
-        return yield* ext.getSource(path.namespace);
+        return yield* ext.getSource(path.namespace, path.scopeId);
       })),
     )
     .handle("updateSource", ({ path, payload }) =>
       capture(Effect.gen(function* () {
         const ext = yield* OpenApiExtensionService;
-        yield* ext.updateSource(path.namespace, {
+        yield* ext.updateSource(path.namespace, path.scopeId, {
           name: payload.name,
           baseUrl: payload.baseUrl,
-          headers: payload.headers as Record<string, HeaderValue> | undefined,
+          headers: payload.headers as
+            | Record<string, HeaderValue | ConfiguredHeaderValue>
+            | undefined,
+          oauth2: payload.oauth2,
         } as OpenApiUpdateSourceInput);
         return { updated: true };
+      })),
+    )
+    .handle("listSourceBindings", ({ path }) =>
+      capture(Effect.gen(function* () {
+        const ext = yield* OpenApiExtensionService;
+        return yield* ext.listSourceBindings(path.namespace, path.sourceScopeId);
+      })),
+    )
+    .handle("setSourceBinding", ({ payload }) =>
+      capture(Effect.gen(function* () {
+        const ext = yield* OpenApiExtensionService;
+        return yield* ext.setSourceBinding(payload);
+      })),
+    )
+    .handle("removeSourceBinding", ({ payload }) =>
+      capture(Effect.gen(function* () {
+        const ext = yield* OpenApiExtensionService;
+        yield* ext.removeSourceBinding(
+          payload.sourceId,
+          payload.sourceScope,
+          payload.slot,
+          payload.scope,
+        );
+        return { removed: true };
       })),
     )
     .handle("startOAuth", ({ payload }) =>
       capture(Effect.gen(function* () {
         const ext = yield* OpenApiExtensionService;
+        // No tokenScope -> plugin defaults to ctx.scopes[0].id
+        // (innermost) for both OAuth flows.
+        const tokenScope = payload.tokenScope as string | undefined;
+        if (payload.flow === "clientCredentials") {
+          return yield* ext.startOAuth({
+            flow: "clientCredentials",
+            sourceId: payload.sourceId,
+            displayName: payload.displayName,
+            securitySchemeName: payload.securitySchemeName,
+            tokenUrl: payload.tokenUrl,
+            clientIdSecretId: payload.clientIdSecretId,
+            clientSecretSecretId: payload.clientSecretSecretId,
+            scopes: [...payload.scopes],
+            tokenScope,
+            connectionId: payload.connectionId,
+          });
+        }
         return yield* ext.startOAuth({
+          flow: "authorizationCode",
+          sourceId: payload.sourceId,
           displayName: payload.displayName,
           securitySchemeName: payload.securitySchemeName,
-          flow: payload.flow,
           authorizationUrl: payload.authorizationUrl,
           tokenUrl: payload.tokenUrl,
           redirectUrl: payload.redirectUrl,
           clientIdSecretId: payload.clientIdSecretId,
           clientSecretSecretId: payload.clientSecretSecretId ?? null,
           scopes: [...payload.scopes],
+          tokenScope,
+          connectionId: payload.connectionId,
         });
       })),
     )

@@ -11,7 +11,7 @@
 //     generation, encode/decode all happen in storage-core
 // ---------------------------------------------------------------------------
 
-import { Effect } from "effect";
+import { Effect, Schedule } from "effect";
 import {
   and,
   asc,
@@ -260,31 +260,85 @@ const isUniqueViolation = (cause: unknown): boolean => {
   return false;
 };
 
+// drizzle-orm wraps driver errors as `DrizzleQueryError` with a synthetic
+// `"Failed query: <SQL>\nparams: <values>"` message and the real driver
+// error on `.cause`. Walk down so classification + logging see the
+// server-side code/message (`23505`, `value too long`, etc.) instead of
+// the SQL+bound-values blob, which for OpenAPI specs is 1MB+ of spec text.
+const unwrapDriverCause = (cause: unknown): unknown => {
+  let cur = cause;
+  for (let i = 0; i < 5; i++) {
+    if (!cur || typeof cur !== "object") return cur;
+    const c = cur as { cause?: unknown; code?: unknown; message?: unknown };
+    if (typeof c.code === "string" && c.code.length > 0) return cur;
+    if (c.cause && c.cause !== cur) {
+      cur = c.cause;
+      continue;
+    }
+    return cur;
+  }
+  return cur;
+};
+
 const classifyError = (
   op: string,
   model: string | undefined,
   cause: unknown,
 ): StorageFailure => {
-  if (isUniqueViolation(cause)) {
+  const driverCause = unwrapDriverCause(cause);
+  if (isUniqueViolation(driverCause)) {
     return model !== undefined
       ? new UniqueViolationError({ model })
       : new UniqueViolationError({});
   }
   return new StorageError({
-    message: `[storage-drizzle] ${op} failed: ${cause instanceof Error ? cause.message : String(cause)}`,
-    cause,
+    message: `[storage-drizzle] ${op} failed: ${driverCause instanceof Error ? driverCause.message : String(driverCause)}`,
+    cause: driverCause,
   });
 };
+
+// Hyperdrive (Cloudflare's Postgres pooler) periodically hands out a
+// stale pooled connection that drops the write mid-query. Drizzle
+// surfaces this as a driver error we classify into a StorageError whose
+// message contains "Network connection lost" or "CONNECTION_CLOSED".
+// Retrying on a fresh pooled connection almost always succeeds, so we
+// retry transient errors twice with short exponential backoff. Unique
+// violations and anything else fail fast.
+export const isTransientStorageError = (err: StorageFailure): boolean => {
+  if (err._tag !== "StorageError") return false;
+  const msg = err.message;
+  return (
+    msg.includes("Network connection lost") ||
+    msg.includes("CONNECTION_CLOSED") ||
+    msg.includes("Connection terminated") ||
+    msg.includes("ECONNRESET")
+  );
+};
+
+const transientRetrySchedule = Schedule.exponential("50 millis");
+
+const withTransientRetry = <T>(
+  effect: Effect.Effect<T, StorageFailure>,
+): Effect.Effect<T, StorageFailure> =>
+  effect.pipe(
+    Effect.retry({
+      while: isTransientStorageError,
+      times: 2,
+      schedule: transientRetrySchedule,
+    }),
+  );
 
 const runPromise = <T>(
   op: string,
   fn: () => Promise<T>,
   model?: string,
 ): Effect.Effect<T, StorageFailure> =>
-  Effect.tryPromise({
-    try: fn,
-    catch: (cause) => classifyError(op, model, cause),
-  });
+  withTransientRetry(
+    Effect.tryPromise({
+      try: fn,
+      catch: (cause) => classifyError(op, model, cause),
+    }),
+  );
 
 // ---------------------------------------------------------------------------
 // withReturning — mirrors better-auth's helper. sqlite + pg support
@@ -361,6 +415,12 @@ export const drizzleAdapter = (options: DrizzleAdapterOptions): DBAdapter => {
     return t;
   };
 
+  const backendAttrs = (model: string) => ({
+    "executor.storage.backend": "drizzle" as const,
+    "executor.storage.drizzle.provider": provider,
+    "executor.storage.table": model,
+  });
+
   const custom: CustomAdapter = {
     create: ({ model, data }) =>
       Effect.gen(function* () {
@@ -375,7 +435,11 @@ export const drizzleAdapter = (options: DrizzleAdapterOptions): DBAdapter => {
           model,
         );
         return row as never;
-      }),
+      }).pipe(
+        Effect.withSpan("executor.storage.backend.create", {
+          attributes: backendAttrs(model),
+        }),
+      ),
 
     // Real multi-row INSERT in fixed-size chunks. One statement per
     // chunk, not one per row — per-row loops blow the Hyperdrive
@@ -401,7 +465,14 @@ export const drizzleAdapter = (options: DrizzleAdapterOptions): DBAdapter => {
           for (const row of rows) all.push(row);
         }
         return all as never;
-      }),
+      }).pipe(
+        Effect.withSpan("executor.storage.backend.create_many", {
+          attributes: {
+            ...backendAttrs(model),
+            "executor.storage.row_count": data.length,
+          },
+        }),
+      ),
 
     findOne: ({ model, where, join }) =>
       Effect.gen(function* () {
@@ -430,7 +501,11 @@ export const drizzleAdapter = (options: DrizzleAdapterOptions): DBAdapter => {
           model,
         )) as Record<string, unknown>[];
         return (rows[0] ?? null) as never;
-      }),
+      }).pipe(
+        Effect.withSpan("executor.storage.backend.find_one", {
+          attributes: backendAttrs(model),
+        }),
+      ),
 
     findMany: ({ model, where, limit, sortBy, offset, join }) =>
       Effect.gen(function* () {
@@ -477,7 +552,11 @@ export const drizzleAdapter = (options: DrizzleAdapterOptions): DBAdapter => {
           model,
         )) as Record<string, unknown>[];
         return rows as never[];
-      }),
+      }).pipe(
+        Effect.withSpan("executor.storage.backend.find_many", {
+          attributes: backendAttrs(model),
+        }),
+      ),
 
     count: ({ model, where }) =>
       Effect.gen(function* () {
@@ -492,7 +571,11 @@ export const drizzleAdapter = (options: DrizzleAdapterOptions): DBAdapter => {
         )) as { c: number | string | bigint }[];
         const raw = rows[0]?.c ?? 0;
         return typeof raw === "number" ? raw : Number(raw);
-      }),
+      }).pipe(
+        Effect.withSpan("executor.storage.backend.count", {
+          attributes: backendAttrs(model),
+        }),
+      ),
 
     update: ({ model, where, update }) =>
       Effect.gen(function* () {
@@ -529,7 +612,11 @@ export const drizzleAdapter = (options: DrizzleAdapterOptions): DBAdapter => {
           model,
         )) as Record<string, unknown>[];
         return (reread[0] ?? null) as never;
-      }),
+      }).pipe(
+        Effect.withSpan("executor.storage.backend.update", {
+          attributes: backendAttrs(model),
+        }),
+      ),
 
     updateMany: ({ model, where, update }) =>
       Effect.gen(function* () {
@@ -554,7 +641,11 @@ export const drizzleAdapter = (options: DrizzleAdapterOptions): DBAdapter => {
           model,
         );
         return n;
-      }),
+      }).pipe(
+        Effect.withSpan("executor.storage.backend.update_many", {
+          attributes: backendAttrs(model),
+        }),
+      ),
 
     delete: ({ model, where }) =>
       Effect.gen(function* () {
@@ -575,7 +666,11 @@ export const drizzleAdapter = (options: DrizzleAdapterOptions): DBAdapter => {
           () => Promise.resolve(db.delete(table).where(eq(table.id, first.id))),
           model,
         );
-      }),
+      }).pipe(
+        Effect.withSpan("executor.storage.backend.delete", {
+          attributes: backendAttrs(model),
+        }),
+      ),
 
     deleteMany: ({ model, where }) =>
       Effect.gen(function* () {
@@ -598,7 +693,11 @@ export const drizzleAdapter = (options: DrizzleAdapterOptions): DBAdapter => {
           model,
         );
         return n;
-      }),
+      }).pipe(
+        Effect.withSpan("executor.storage.backend.delete_many", {
+          attributes: backendAttrs(model),
+        }),
+      ),
   };
 
   // Transaction strategy differs by dialect:
@@ -659,6 +758,13 @@ export const drizzleAdapter = (options: DrizzleAdapterOptions): DBAdapter => {
               if (e instanceof TxFailure) return e.inner;
               return classifyError("pg transaction", undefined, e);
             }),
+            Effect.withSpan("executor.storage.backend.transaction", {
+              attributes: {
+                "executor.storage.backend": "drizzle",
+                "executor.storage.drizzle.provider": provider,
+                "executor.storage.transaction.strategy": "drizzle_native",
+              },
+            }),
           ) as Effect.Effect<R, E | StorageFailure>;
         }
 
@@ -711,7 +817,15 @@ export const drizzleAdapter = (options: DrizzleAdapterOptions): DBAdapter => {
             });
           }
           return result;
-        });
+        }).pipe(
+          Effect.withSpan("executor.storage.backend.transaction", {
+            attributes: {
+              "executor.storage.backend": "drizzle",
+              "executor.storage.drizzle.provider": provider,
+              "executor.storage.transaction.strategy": "raw_begin_commit",
+            },
+          }),
+        );
       }
     : undefined;
 

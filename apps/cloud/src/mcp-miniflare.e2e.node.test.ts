@@ -93,6 +93,9 @@ class Worker extends Context.Tag("MiniflareE2E/Worker")<
 
 type CapturedSpan = {
   readonly name: string;
+  readonly traceId: string;
+  readonly spanId: string;
+  readonly parentSpanId: string | null;
   readonly attributes: Record<string, unknown>;
 };
 
@@ -142,7 +145,13 @@ type OtlpAttributeValue = {
   readonly boolValue?: boolean;
 };
 type OtlpAttribute = { readonly key: string; readonly value?: OtlpAttributeValue };
-type OtlpSpan = { readonly name: string; readonly attributes?: ReadonlyArray<OtlpAttribute> };
+type OtlpSpan = {
+  readonly name: string;
+  readonly traceId?: string;
+  readonly spanId?: string;
+  readonly parentSpanId?: string;
+  readonly attributes?: ReadonlyArray<OtlpAttribute>;
+};
 type OtlpPayload = {
   readonly resourceSpans?: ReadonlyArray<{
     readonly scopeSpans?: ReadonlyArray<{ readonly spans?: ReadonlyArray<OtlpSpan> }>;
@@ -189,7 +198,13 @@ const TelemetryReceiverLive = Layer.scoped(
                   for (const a of sp.attributes ?? []) {
                     attrs[a.key] = unwrapAttrValue(a.value);
                   }
-                  store.push({ name: sp.name, attributes: attrs });
+                  store.push({
+                    name: sp.name,
+                    traceId: sp.traceId ?? "",
+                    spanId: sp.spanId ?? "",
+                    parentSpanId: sp.parentSpanId ? sp.parentSpanId : null,
+                    attributes: attrs,
+                  });
                 }
               }
             }
@@ -312,6 +327,38 @@ const connectClient = async (
 // ---------------------------------------------------------------------------
 
 layer(TestEnv, { timeout: 60_000 })("cloud MCP over real HTTP (miniflare)", (it) => {
+  it.effect("returns 401 for malformed bearer tokens through the production auth layer", () =>
+    Effect.gen(function* () {
+      const { baseUrl } = yield* Worker;
+      const response = yield* Effect.promise(() =>
+        fetch(new URL("/__test__/real-auth-mcp", baseUrl), {
+          method: "POST",
+          headers: {
+            accept: "application/json, text/event-stream",
+            authorization: "Bearer bogus",
+            "content-type": "application/json",
+          },
+          body: JSON.stringify({
+            jsonrpc: "2.0",
+            id: 1,
+            method: "initialize",
+            params: {
+              protocolVersion: "2025-06-18",
+              capabilities: {},
+              clientInfo: { name: "mcp-miniflare-invalid-bearer", version: "0" },
+            },
+          }),
+        }),
+      );
+      expect(response.status).toBe(401);
+      expect(response.headers.get("www-authenticate") ?? "").toContain(
+        "https://test-resource.example.com/.well-known/oauth-protected-resource/mcp",
+      );
+      const body = yield* Effect.promise(() => response.json());
+      expect(body).toEqual({ error: "unauthorized" });
+    }), 30_000,
+  );
+
   it.effect("completes the initialize handshake via SDK", () =>
     Effect.gen(function* () {
       const { baseUrl, seedOrg } = yield* Worker;
@@ -431,6 +478,8 @@ layer(TestEnv, { timeout: 60_000 })("cloud MCP over real HTTP (miniflare)", (it)
       expect(handleSpan.attributes["mcp.request.method"]).toBeDefined();
       // 200 for normal POSTs, 202 for notifications/initialized.
       expect([200, 202]).toContain(handleSpan.attributes["mcp.response.status_code"]);
+      expect(handleSpan.attributes["mcp.response.content_type"]).toEqual(expect.any(String));
+      expect(handleSpan.attributes["mcp.transport.enable_json_response"]).toBe(true);
 
       // init runs once per new session and should appear on the initialize POST.
       yield* Effect.promise(() =>
@@ -438,4 +487,5 @@ layer(TestEnv, { timeout: 60_000 })("cloud MCP over real HTTP (miniflare)", (it)
       );
     }), 30_000,
   );
+
 });

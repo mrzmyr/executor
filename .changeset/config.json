@@ -32,9 +32,6 @@
     "@executor/marketing",
     "@executor/runtime-dynamic-worker",
     "@executor/runtime-secure-exec",
-    "@executor/react",
-    "@executor/api",
-    "@executor/config",
     "@executor/storage-postgres",
     "@executor/plugin-workos-vault",
     "@executor/example-promise-sdk"

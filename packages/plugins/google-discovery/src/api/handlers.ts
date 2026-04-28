@@ -65,10 +65,13 @@ export const GoogleDiscoveryHandlers = HttpApiBuilder.group(
           return yield* ext.probeDiscovery(payload.discoveryUrl);
         })),
       )
-      .handle("addSource", ({ payload }) =>
+      .handle("addSource", ({ path, payload }) =>
         capture(Effect.gen(function* () {
           const ext = yield* GoogleDiscoveryExtensionService;
-          return yield* ext.addSource(payload as GoogleDiscoveryAddSourceInput);
+          return yield* ext.addSource({
+            ...(payload as Omit<GoogleDiscoveryAddSourceInput, "scope">),
+            scope: path.scopeId,
+          });
         })),
       )
       .handle("startOAuth", ({ payload }) =>
@@ -81,6 +84,7 @@ export const GoogleDiscoveryHandlers = HttpApiBuilder.group(
             clientSecretSecretId: payload.clientSecretSecretId,
             redirectUrl: payload.redirectUrl,
             scopes: payload.scopes,
+            tokenScope: payload.tokenScope,
           });
         })),
       )
@@ -97,7 +101,17 @@ export const GoogleDiscoveryHandlers = HttpApiBuilder.group(
       .handle("getSource", ({ path }) =>
         capture(Effect.gen(function* () {
           const ext = yield* GoogleDiscoveryExtensionService;
-          return yield* ext.getSource(path.namespace);
+          return yield* ext.getSource(path.namespace, path.scopeId);
+        })),
+      )
+      .handle("updateSource", ({ path, payload }) =>
+        capture(Effect.gen(function* () {
+          const ext = yield* GoogleDiscoveryExtensionService;
+          yield* ext.updateSource(path.namespace, path.scopeId, {
+            name: payload.name,
+            auth: payload.auth,
+          });
+          return { updated: true };
         })),
       )
       .handle("oauthCallback", ({ urlParams }) =>

@@ -18,9 +18,10 @@ import { Effect, Layer } from "effect";
 import { drizzle } from "drizzle-orm/postgres-js";
 import postgres, { type Sql } from "postgres";
 
-import { McpAuth, classifyMcpPath, mcpApp } from "./mcp";
+import { McpAuth, McpAuthLive, classifyMcpPath, mcpApp } from "./mcp";
 import { organizations } from "./services/schema";
 import { parseTestBearer } from "./test-bearer";
+import { DoTelemetryLive } from "./services/telemetry";
 
 export { McpSessionDO } from "./mcp-session";
 
@@ -79,13 +80,29 @@ const handleSeedOrg = async (
   return new Response(null, { status: 204 });
 };
 
-const testMcpFetch = HttpApp.toWebHandler(mcpApp.pipe(Effect.provide(TestMcpAuthLive)));
+// Provide a WebSdk-backed tracer on the worker side so the `mcp.request` span
+// gets reported to the OTLP receiver. Prod uses the global TracerProvider
+// installed by `otel-cf-workers.instrument()`; the test worker has no such
+// instrumentation, so we reuse DoTelemetryLive (it's a plain WebSdk +
+// OTLPTraceExporter — not Durable-Object-specific) to stand in.
+const testMcpFetch = HttpApp.toWebHandler(
+  mcpApp.pipe(Effect.provide(Layer.mergeAll(TestMcpAuthLive, DoTelemetryLive))),
+);
+
+const realAuthMcpFetch = HttpApp.toWebHandler(
+  mcpApp.pipe(Effect.provide(Layer.mergeAll(McpAuthLive, DoTelemetryLive))),
+);
 
 export default {
   async fetch(request: Request, envArg: Record<string, unknown>): Promise<Response> {
     const url = new URL(request.url);
     if (url.pathname === "/__test__/seed-org" && request.method === "POST") {
       return handleSeedOrg(request, envArg);
+    }
+    if (url.pathname === "/__test__/real-auth-mcp") {
+      const mcpUrl = new URL(request.url);
+      mcpUrl.pathname = "/mcp";
+      return realAuthMcpFetch(new Request(mcpUrl, request));
     }
     if (classifyMcpPath(url.pathname) !== null) {
       return testMcpFetch(request);

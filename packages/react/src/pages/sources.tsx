@@ -1,4 +1,4 @@
-import { useState, useCallback, useMemo } from "react";
+import { Suspense, useState, useCallback, useMemo } from "react";
 import { Link, useNavigate } from "@tanstack/react-router";
 import { Result, useAtomSet } from "@effect-atom/atom-react";
 import { detectSource } from "../api/atoms";
@@ -172,7 +172,10 @@ export function SourcesPage(props: { sourcePlugins: readonly SourcePlugin[] }) {
               <div className="mb-8 space-y-8">
                 {connectedSources.length > 0 && (
                   <section className="space-y-3">
-                    <SourceGrid sources={connectedSources} />
+                    <SourceGrid
+                      sources={connectedSources}
+                      sourcePlugins={sourcePlugins}
+                    />
                   </section>
                 )}
               </div>
@@ -273,28 +276,45 @@ function SourceGrid(props: {
     url?: string;
     runtime?: boolean;
   }[];
+  sourcePlugins: readonly SourcePlugin[];
 }) {
+  const pluginByKind = useMemo(() => {
+    const out = new Map<string, SourcePlugin>();
+    for (const p of props.sourcePlugins) out.set(p.key, p);
+    return out;
+  }, [props.sourcePlugins]);
+
   return (
     <CardStack searchable>
       <CardStackHeader>Connected</CardStackHeader>
       <CardStackContent>
-        {props.sources.map((s) => (
-          <CardStackEntry key={s.id} asChild searchText={`${s.name} ${s.id} ${s.kind}`}>
-            <Link to="/sources/$namespace" params={{ namespace: s.id }}>
-              <CardStackEntryMedia>
-                <SourceFavicon url={s.url} size={32} />
-              </CardStackEntryMedia>
-              <CardStackEntryContent>
-                <CardStackEntryTitle>{s.name}</CardStackEntryTitle>
-                <CardStackEntryDescription>{s.id}</CardStackEntryDescription>
-              </CardStackEntryContent>
-              <CardStackEntryActions>
-                {s.runtime && <Badge className="bg-muted text-muted-foreground">built-in</Badge>}
-                <Badge variant="secondary">{s.kind}</Badge>
-              </CardStackEntryActions>
-            </Link>
-          </CardStackEntry>
-        ))}
+        {props.sources.map((s) => {
+          const pluginKey = KIND_TO_PLUGIN_KEY[s.kind] ?? s.kind;
+          const plugin = pluginByKind.get(pluginKey);
+          const SummaryComponent = plugin?.summary;
+          return (
+            <CardStackEntry key={s.id} asChild searchText={`${s.name} ${s.id} ${s.kind}`}>
+              <Link to="/sources/$namespace" params={{ namespace: s.id }}>
+                <CardStackEntryMedia>
+                  <SourceFavicon url={s.url} size={32} />
+                </CardStackEntryMedia>
+                <CardStackEntryContent>
+                  <CardStackEntryTitle>{s.name}</CardStackEntryTitle>
+                  <CardStackEntryDescription>{s.id}</CardStackEntryDescription>
+                </CardStackEntryContent>
+                <CardStackEntryActions>
+                  {SummaryComponent && (
+                    <Suspense fallback={null}>
+                      <SummaryComponent sourceId={s.id} />
+                    </Suspense>
+                  )}
+                  {s.runtime && <Badge className="bg-muted text-muted-foreground">built-in</Badge>}
+                  <Badge variant="secondary">{s.kind}</Badge>
+                </CardStackEntryActions>
+              </Link>
+            </CardStackEntry>
+          );
+        })}
       </CardStackContent>
     </CardStack>
   );

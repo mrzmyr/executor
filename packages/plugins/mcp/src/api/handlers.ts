@@ -34,11 +34,13 @@ type OAuthPopupResult =
       type: "executor:oauth-result";
       ok: true;
       sessionId: string;
-      accessTokenSecretId: string;
-      refreshTokenSecretId: string | null;
+      connectionId: string;
       tokenType: string;
       expiresAt: number | null;
       scope: string | null;
+      clientInformation: Record<string, unknown> | null;
+      authorizationServerUrl: string | null;
+      resourceMetadataUrl: string | null;
     }
   | {
       type: "executor:oauth-result";
@@ -95,6 +97,7 @@ const toPopupErrorMessage = (cause: Cause.Cause<unknown>): string => {
 
 const toSourceConfig = (
   payload: { transport: "remote" | "stdio" } & Record<string, unknown>,
+  scope: string,
 ): McpSourceConfig => {
   if (payload.transport === "stdio") {
     const p = payload as {
@@ -108,6 +111,7 @@ const toSourceConfig = (
     };
     return {
       transport: "stdio",
+      scope,
       name: p.name,
       command: p.command,
       args: p.args ? [...p.args] : undefined,
@@ -128,24 +132,16 @@ const toSourceConfig = (
     auth?: { kind: string } & Record<string, unknown>;
   };
 
-  const auth = p.auth
-    ? p.auth.kind === "oauth2"
-      ? {
-          ...p.auth,
-          tokenType: (p.auth as { tokenType?: string }).tokenType ?? "Bearer",
-        }
-      : p.auth
-    : undefined;
-
   return {
     transport: "remote",
+    scope,
     name: p.name,
     endpoint: p.endpoint,
     remoteTransport: p.remoteTransport,
     queryParams: p.queryParams,
     headers: p.headers,
     namespace: p.namespace,
-    auth: auth as McpSourceConfig extends { auth?: infer A } ? A : never,
+    auth: p.auth as McpSourceConfig extends { auth?: infer A } ? A : never,
   };
 };
 
@@ -170,25 +166,28 @@ export const McpHandlers = HttpApiBuilder.group(ExecutorApiWithMcp, "mcp", (hand
         return yield* ext.probeEndpoint(payload.endpoint);
       })),
     )
-    .handle("addSource", ({ payload }) =>
+    .handle("addSource", ({ path, payload }) =>
       capture(Effect.gen(function* () {
         const ext = yield* McpExtensionService;
         return yield* ext.addSource(
-          toSourceConfig(payload as Parameters<typeof toSourceConfig>[0]),
+          toSourceConfig(
+            payload as Parameters<typeof toSourceConfig>[0],
+            path.scopeId,
+          ),
         );
       })),
     )
-    .handle("removeSource", ({ payload }) =>
+    .handle("removeSource", ({ path, payload }) =>
       capture(Effect.gen(function* () {
         const ext = yield* McpExtensionService;
-        yield* ext.removeSource(payload.namespace);
+        yield* ext.removeSource(payload.namespace, path.scopeId);
         return { removed: true };
       })),
     )
-    .handle("refreshSource", ({ payload }) =>
+    .handle("refreshSource", ({ path, payload }) =>
       capture(Effect.gen(function* () {
         const ext = yield* McpExtensionService;
-        return yield* ext.refreshSource(payload.namespace);
+        return yield* ext.refreshSource(payload.namespace, path.scopeId);
       })),
     )
     .handle("startOAuth", ({ payload }) =>
@@ -198,6 +197,10 @@ export const McpHandlers = HttpApiBuilder.group(ExecutorApiWithMcp, "mcp", (hand
           endpoint: payload.endpoint,
           redirectUrl: payload.redirectUrl,
           queryParams: payload.queryParams,
+          connectionId: payload.connectionId,
+          clientInformation: payload.clientInformation,
+          authorizationServerUrl: payload.authorizationServerUrl,
+          resourceMetadataUrl: payload.resourceMetadataUrl,
         });
       })),
     )
@@ -214,13 +217,13 @@ export const McpHandlers = HttpApiBuilder.group(ExecutorApiWithMcp, "mcp", (hand
     .handle("getSource", ({ path }) =>
       capture(Effect.gen(function* () {
         const ext = yield* McpExtensionService;
-        return yield* ext.getSource(path.namespace);
+        return yield* ext.getSource(path.namespace, path.scopeId);
       })),
     )
     .handle("updateSource", ({ path, payload }) =>
       capture(Effect.gen(function* () {
         const ext = yield* McpExtensionService;
-        yield* ext.updateSource(path.namespace, {
+        yield* ext.updateSource(path.namespace, path.scopeId, {
           name: payload.name,
           endpoint: payload.endpoint,
           headers: payload.headers,
@@ -248,11 +251,13 @@ export const McpHandlers = HttpApiBuilder.group(ExecutorApiWithMcp, "mcp", (hand
                 type: "executor:oauth-result",
                 ok: true,
                 sessionId: urlParams.state,
-                accessTokenSecretId: c.accessTokenSecretId,
-                refreshTokenSecretId: c.refreshTokenSecretId,
+                connectionId: c.connectionId,
                 tokenType: c.tokenType,
                 expiresAt: c.expiresAt,
                 scope: c.scope,
+                clientInformation: c.clientInformation,
+                authorizationServerUrl: c.authorizationServerUrl,
+                resourceMetadataUrl: c.resourceMetadataUrl,
               }),
             onFailure: (cause) =>
               Effect.succeed<OAuthPopupResult>({

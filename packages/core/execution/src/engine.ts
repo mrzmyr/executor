@@ -1,4 +1,5 @@
 import { Deferred, Effect, Fiber, Ref } from "effect";
+import type * as Cause from "effect/Cause";
 
 import type {
   Executor,
@@ -7,6 +8,7 @@ import type {
   ElicitationHandler,
   ElicitationContext,
 } from "@executor/sdk";
+import { CodeExecutionError } from "@executor/codemode-core";
 import type { CodeExecutor, ExecuteResult, SandboxToolInvoker } from "@executor/codemode-core";
 
 import {
@@ -22,9 +24,11 @@ import { buildExecuteDescription } from "./description";
 // Types
 // ---------------------------------------------------------------------------
 
-export type ExecutionEngineConfig = {
+export type ExecutionEngineConfig<
+  E extends Cause.YieldableError = CodeExecutionError,
+> = {
   readonly executor: Executor;
-  readonly codeExecutor: CodeExecutor;
+  readonly codeExecutor: CodeExecutor<E>;
 };
 
 export type ExecutionResult =
@@ -37,10 +41,10 @@ export type PausedExecution = {
 };
 
 /** Internal representation with Effect runtime state for pause/resume. */
-type InternalPausedExecution = PausedExecution & {
+type InternalPausedExecution<E> = PausedExecution & {
   readonly response: Deferred.Deferred<typeof ElicitationResponse.Type>;
-  readonly fiber: Fiber.Fiber<ExecuteResult, unknown>;
-  readonly pauseSignalRef: Ref.Ref<Deferred.Deferred<InternalPausedExecution>>;
+  readonly fiber: Fiber.Fiber<ExecuteResult, E>;
+  readonly pauseSignalRef: Ref.Ref<Deferred.Deferred<InternalPausedExecution<E>>>;
 };
 
 export type ResumeResponse = {
@@ -190,7 +194,11 @@ const makeFullInvoker = (executor: Executor, invokeOptions: InvokeOptions): Sand
 
         return searchTools(executor, args.query ?? "", limit, {
           namespace: args.namespace,
-        });
+        }).pipe(
+          Effect.withSpan("mcp.tool.dispatch", {
+            attributes: { "mcp.tool.name": path, "executor.tool.builtin": true },
+          }),
+        );
       }
       if (path === "executor.sources.list") {
         if (args !== undefined && !isRecord(args)) {
@@ -221,7 +229,11 @@ const makeFullInvoker = (executor: Executor, invokeOptions: InvokeOptions): Sand
         return listExecutorSources(executor, {
           query: isRecord(args) && typeof args.query === "string" ? args.query : undefined,
           limit,
-        });
+        }).pipe(
+          Effect.withSpan("mcp.tool.dispatch", {
+            attributes: { "mcp.tool.name": path, "executor.tool.builtin": true },
+          }),
+        );
       }
       if (path === "describe.tool") {
         if (!isRecord(args)) {
@@ -244,7 +256,15 @@ const makeFullInvoker = (executor: Executor, invokeOptions: InvokeOptions): Sand
           );
         }
 
-        return describeTool(executor, args.path);
+        return describeTool(executor, args.path).pipe(
+          Effect.withSpan("mcp.tool.dispatch", {
+            attributes: {
+              "mcp.tool.name": path,
+              "executor.tool.builtin": true,
+              "executor.tool.target_path": args.path,
+            },
+          }),
+        );
       }
       return base.invoke({ path, args });
     },
@@ -255,22 +275,26 @@ const makeFullInvoker = (executor: Executor, invokeOptions: InvokeOptions): Sand
 // Execution Engine
 // ---------------------------------------------------------------------------
 
-export type ExecutionEngine = {
+export type ExecutionEngine<E extends Cause.YieldableError = CodeExecutionError> = {
   /**
    * Execute code with elicitation handled inline by the provided handler.
    * Use this when the host supports elicitation (e.g. MCP with elicitation capability).
+   *
+   * Fails with the code executor's typed error `E` (defaults to
+   * `CodeExecutionError`). Runtimes surface their own `Data.TaggedError`
+   * subclass, which flows through here unchanged.
    */
   readonly execute: (
     code: string,
     options: { readonly onElicitation: ElicitationHandler },
-  ) => Promise<ExecuteResult>;
+  ) => Effect.Effect<ExecuteResult, E>;
 
   /**
    * Execute code, intercepting the first elicitation as a pause point.
    * Use this when the host doesn't support inline elicitation.
    * Returns either a completed result or a paused execution that can be resumed.
    */
-  readonly executeWithPause: (code: string) => Promise<ExecutionResult>;
+  readonly executeWithPause: (code: string) => Effect.Effect<ExecutionResult, E>;
 
   /**
    * Resume a paused execution. Returns a completed result, a new pause, or
@@ -279,20 +303,21 @@ export type ExecutionEngine = {
   readonly resume: (
     executionId: string,
     response: ResumeResponse,
-  ) => Promise<ExecutionResult | null>;
+  ) => Effect.Effect<ExecutionResult | null, E>;
 
   /**
    * Get the dynamic tool description (workflow + namespaces).
    */
-  readonly getDescription: () => Promise<string>;
+  readonly getDescription: Effect.Effect<string>;
 };
 
-const runEffect = <A>(effect: Effect.Effect<A, unknown>): Promise<A> =>
-  Effect.runPromise(effect as Effect.Effect<A, never>);
-
-export const createExecutionEngine = (config: ExecutionEngineConfig): ExecutionEngine => {
+export const createExecutionEngine = <
+  E extends Cause.YieldableError = CodeExecutionError,
+>(
+  config: ExecutionEngineConfig<E>,
+): ExecutionEngine<E> => {
   const { executor, codeExecutor } = config;
-  const pausedExecutions = new Map<string, InternalPausedExecution>();
+  const pausedExecutions = new Map<string, InternalPausedExecution<E>>();
   let nextId = 0;
 
   /**
@@ -301,12 +326,11 @@ export const createExecutionEngine = (config: ExecutionEngineConfig): ExecutionE
    * comes first). Re-used by both executeWithPause and resume.
    */
   const awaitCompletionOrPause = (
-    fiber: Fiber.Fiber<ExecuteResult, unknown>,
-    pauseSignal: Deferred.Deferred<InternalPausedExecution>,
-  ): Effect.Effect<ExecutionResult> =>
+    fiber: Fiber.Fiber<ExecuteResult, E>,
+    pauseSignal: Deferred.Deferred<InternalPausedExecution<E>>,
+  ): Effect.Effect<ExecutionResult, E> =>
     Effect.race(
       Fiber.join(fiber).pipe(
-        Effect.orDie,
         Effect.map((result): ExecutionResult => ({ status: "completed", result })),
       ),
       Deferred.await(pauseSignal).pipe(
@@ -329,17 +353,17 @@ export const createExecutionEngine = (config: ExecutionEngineConfig): ExecutionE
     // Ref holds the current pause signal. The elicitation handler reads
     // it each time it fires, so resume() can swap in a fresh Deferred
     // before unblocking the fiber.
-    const pauseSignalRef = yield* Ref.make(yield* Deferred.make<InternalPausedExecution>());
+    const pauseSignalRef = yield* Ref.make(yield* Deferred.make<InternalPausedExecution<E>>());
 
     // Will be set once the fiber is forked.
-    let fiber: Fiber.Fiber<ExecuteResult, unknown>;
+    let fiber: Fiber.Fiber<ExecuteResult, E>;
 
     const elicitationHandler: ElicitationHandler = (ctx) =>
       Effect.gen(function* () {
         const responseDeferred = yield* Deferred.make<typeof ElicitationResponse.Type>();
         const id = `exec_${++nextId}`;
 
-        const paused: InternalPausedExecution = {
+        const paused: InternalPausedExecution<E> = {
           id,
           elicitationContext: ctx,
           response: responseDeferred,
@@ -383,7 +407,7 @@ export const createExecutionEngine = (config: ExecutionEngineConfig): ExecutionE
 
     // Swap in a fresh pause signal BEFORE unblocking the fiber, so the
     // next elicitation handler call signals this new Deferred.
-    const nextSignal = yield* Deferred.make<InternalPausedExecution>();
+    const nextSignal = yield* Deferred.make<InternalPausedExecution<E>>();
     yield* Ref.set(paused.pauseSignalRef, nextSignal);
 
     yield* Deferred.succeed(paused.response, {
@@ -415,12 +439,9 @@ export const createExecutionEngine = (config: ExecutionEngineConfig): ExecutionE
   });
 
   return {
-    execute: (code, options) => runEffect(runInlineExecution(code, options)),
-
-    executeWithPause: (code) => runEffect(startPausableExecution(code)),
-
-    resume: (executionId, response) => runEffect(resumeExecution(executionId, response)),
-
-    getDescription: () => runEffect(buildExecuteDescription(executor)),
+    execute: runInlineExecution,
+    executeWithPause: startPausableExecution,
+    resume: resumeExecution,
+    getDescription: buildExecuteDescription(executor),
   };
 };

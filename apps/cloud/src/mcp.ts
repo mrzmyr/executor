@@ -17,22 +17,24 @@
 import { env } from "cloudflare:workers";
 import { HttpApp, HttpServerRequest, HttpServerResponse } from "@effect/platform";
 import * as Sentry from "@sentry/cloudflare";
-import { Context, Effect, Layer, Option, Schema } from "effect";
-import { createRemoteJWKSet, jwtVerify } from "jose";
+import { Context, Effect, Either, Layer, Option, Schema } from "effect";
+import { createRemoteJWKSet } from "jose";
 
-import { server } from "./env";
 import { TelemetryLive } from "./services/telemetry";
+import { verifyMcpAccessToken, type VerifiedToken } from "./mcp-auth";
 
 // ---------------------------------------------------------------------------
 // Constants
 // ---------------------------------------------------------------------------
 
-const AUTHKIT_DOMAIN = server.MCP_AUTHKIT_DOMAIN;
-const RESOURCE_ORIGIN = server.MCP_RESOURCE_ORIGIN;
+const AUTHKIT_DOMAIN = env.MCP_AUTHKIT_DOMAIN ?? "https://signin.executor.sh";
+const RESOURCE_ORIGIN = env.MCP_RESOURCE_ORIGIN ?? "https://executor.sh";
 
 const jwks = createRemoteJWKSet(new URL(`${AUTHKIT_DOMAIN}/oauth2/jwks`));
 
 const BEARER_PREFIX = "Bearer ";
+const INTERNAL_ACCOUNT_ID_HEADER = "x-executor-mcp-account-id";
+const INTERNAL_ORGANIZATION_ID_HEADER = "x-executor-mcp-organization-id";
 
 const CORS_ALLOW_ORIGIN = { "access-control-allow-origin": "*" } as const;
 
@@ -44,7 +46,16 @@ const CORS_PREFLIGHT_HEADERS = {
   "access-control-expose-headers": "mcp-session-id",
 } as const;
 
-const WWW_AUTHENTICATE = `Bearer resource_metadata="${RESOURCE_ORIGIN}/.well-known/oauth-protected-resource"`;
+const MCP_PATH = "/mcp";
+const PROTECTED_RESOURCE_METADATA_PATH = "/.well-known/oauth-protected-resource/mcp";
+const PROTECTED_RESOURCE_METADATA_URL = `${RESOURCE_ORIGIN}${PROTECTED_RESOURCE_METADATA_PATH}`;
+const RESOURCE_URL = `${RESOURCE_ORIGIN}${MCP_PATH}`;
+
+const WWW_AUTHENTICATE = [
+  'Bearer error="unauthorized"',
+  'error_description="Authorization needed"',
+  `resource_metadata="${PROTECTED_RESOURCE_METADATA_URL}"`,
+].join(", ");
 
 // ---------------------------------------------------------------------------
 // Response helpers
@@ -73,13 +84,6 @@ const corsPreflight = HttpServerResponse.empty({
 // Auth
 // ---------------------------------------------------------------------------
 
-export type VerifiedToken = {
-  /** The WorkOS account ID (user ID). */
-  accountId: string;
-  /** The WorkOS organization ID, if the session has org context. */
-  organizationId: string | null;
-};
-
 export class McpAuth extends Context.Tag("@executor/cloud/McpAuth")<
   McpAuth,
   {
@@ -87,24 +91,59 @@ export class McpAuth extends Context.Tag("@executor/cloud/McpAuth")<
   }
 >() {}
 
+const verifyJwt = (token: string) =>
+  Effect.gen(function* () {
+    const strictResult = yield* verifyMcpAccessToken(token, jwks, {
+      issuer: AUTHKIT_DOMAIN,
+      audience: RESOURCE_URL,
+    }).pipe(Effect.either);
+
+    if (Either.isRight(strictResult)) {
+      return strictResult.right;
+    }
+
+    if (env.MCP_STRICT_AUDIENCE === "true") {
+      return yield* Effect.fail(strictResult.left);
+    }
+
+    const verified = yield* verifyMcpAccessToken(token, jwks, {
+      issuer: AUTHKIT_DOMAIN,
+    });
+    yield* Effect.annotateCurrentSpan({
+      "mcp.auth.audience_fallback": true,
+    });
+    return verified;
+  });
+
 export const McpAuthLive = Layer.succeed(McpAuth, {
-  verifyBearer: (request) =>
-    Effect.promise(async () => {
-      const authHeader = request.headers.get("authorization");
-      if (!authHeader?.startsWith(BEARER_PREFIX)) return null;
-      try {
-        const { payload } = await jwtVerify(authHeader.slice(BEARER_PREFIX.length), jwks, {
-          issuer: AUTHKIT_DOMAIN,
-        });
-        if (!payload.sub) return null;
-        return {
-          accountId: payload.sub,
-          organizationId: (payload.org_id as string | undefined) ?? null,
-        };
-      } catch {
-        return null;
-      }
-    }),
+  verifyBearer: Effect.fn("mcp.auth.verify_bearer")(function* (request) {
+    const authHeader = request.headers.get("authorization");
+    if (!authHeader?.startsWith(BEARER_PREFIX)) {
+      yield* Effect.annotateCurrentSpan({ "mcp.auth.outcome": "missing_bearer" });
+      return null;
+    }
+    const verified = yield* verifyJwt(authHeader.slice(BEARER_PREFIX.length)).pipe(
+      Effect.catchTag("McpJwtVerificationError", (error) =>
+        Effect.gen(function* () {
+          yield* Effect.annotateCurrentSpan({
+            "mcp.auth.outcome": "invalid",
+            "mcp.auth.invalid_reason": error.reason,
+          });
+          return null;
+        }),
+      ),
+    );
+    if (!verified) return null;
+    if (!verified.accountId) {
+      yield* Effect.annotateCurrentSpan({ "mcp.auth.outcome": "missing_subject" });
+      return null;
+    }
+    yield* Effect.annotateCurrentSpan({
+      "mcp.auth.outcome": "verified",
+      "mcp.auth.has_organization": !!verified.organizationId,
+    });
+    return verified;
+  }),
 });
 
 // ---------------------------------------------------------------------------
@@ -180,8 +219,15 @@ const JsonRpcEnvelope = Schema.Struct({
   method: Schema.optional(Schema.String),
   id: Schema.optional(Schema.Union(Schema.String, Schema.Number, Schema.Null)),
   params: Schema.optional(UnknownRecord),
+  // Responses to server-initiated requests arrive as POST bodies too —
+  // notably elicitation replies (`result.action = "accept" | "decline" | "cancel"`).
+  result: Schema.optional(UnknownRecord),
 });
 type JsonRpcEnvelope = typeof JsonRpcEnvelope.Type;
+
+const ElicitationReplyResult = Schema.Struct({
+  action: Schema.optional(Schema.Literal("accept", "decline", "cancel")),
+});
 
 const InitializeParams = Schema.Struct({
   protocolVersion: Schema.optional(Schema.String),
@@ -210,7 +256,7 @@ const readJsonRpcEnvelope = (request: Request): Effect.Effect<Option.Option<Json
     } catch {
       return Option.none();
     }
-  });
+  }).pipe(Effect.withSpan("mcp.request.read_json_rpc"));
 
 const methodAttrs = (envelope: JsonRpcEnvelope): Record<string, unknown> => {
   const params = envelope.params ?? {};
@@ -223,7 +269,9 @@ const methodAttrs = (envelope: JsonRpcEnvelope): Record<string, unknown> => {
           ...(init.clientInfo?.name && { "mcp.client.name": init.clientInfo.name }),
           ...(init.clientInfo?.version && { "mcp.client.version": init.clientInfo.version }),
           ...(init.clientInfo?.title && { "mcp.client.title": init.clientInfo.title }),
-          "mcp.client.capability.keys": Object.keys(init.capabilities ?? {}).sort().join(","),
+          "mcp.client.capability.keys": Object.keys(init.capabilities ?? {})
+            .sort()
+            .join(","),
         }),
       });
     case "tools/call":
@@ -247,6 +295,14 @@ const methodAttrs = (envelope: JsonRpcEnvelope): Record<string, unknown> => {
   }
 };
 
+const replyAttrs = (envelope: JsonRpcEnvelope): Record<string, unknown> => {
+  if (!envelope.result || envelope.method) return {};
+  return Option.match(decode(ElicitationReplyResult, envelope.result), {
+    onNone: () => ({}),
+    onSome: ({ action }) => (action ? { "mcp.elicitation.action": action } : {}),
+  });
+};
+
 const rpcAttrs = (envelope: Option.Option<JsonRpcEnvelope>): Record<string, unknown> =>
   Option.match(envelope, {
     onNone: () => ({}),
@@ -254,6 +310,7 @@ const rpcAttrs = (envelope: Option.Option<JsonRpcEnvelope>): Record<string, unkn
       ...(e.method && { "mcp.rpc.method": e.method }),
       ...(e.id !== undefined && e.id !== null && { "mcp.rpc.id": String(e.id) }),
       ...methodAttrs(e),
+      ...replyAttrs(e),
     }),
   });
 
@@ -290,7 +347,14 @@ const annotateMcpRequest = (
       ...baseAttrs,
       ...rpcAttrs(envelope),
     });
-  });
+  }).pipe(
+    Effect.withSpan("mcp.request.annotate", {
+      attributes: {
+        "mcp.request.method": request.method,
+        "mcp.request.parse_body": opts.parseBody,
+      },
+    }),
+  );
 
 // ---------------------------------------------------------------------------
 // OAuth metadata endpoints
@@ -298,7 +362,7 @@ const annotateMcpRequest = (
 
 const protectedResourceMetadata = Effect.sync(() =>
   jsonResponse({
-    resource: RESOURCE_ORIGIN,
+    resource: RESOURCE_URL,
     authorization_servers: [AUTHKIT_DOMAIN],
     bearer_methods_supported: ["header"],
     scopes_supported: [],
@@ -316,19 +380,261 @@ const authorizationServerMetadata = Effect.promise(async () => {
 });
 
 // ---------------------------------------------------------------------------
+// Response-body peek for JSON-RPC error attrs
+// ---------------------------------------------------------------------------
+//
+// The MCP protocol wraps protocol-level failures (malformed envelope, method
+// not found, invalid params) as `{ error: { code, message } }` in the
+// JSON-RPC response body with HTTP 200 — none of which surface at the HTTP
+// layer or as an Effect failure. Same for tool results carrying
+// `isError: true`. To make those visible in Axiom we peek the first
+// JSON-RPC message out of the DO's response and stamp it onto the
+// surrounding `mcp.request` span.
+//
+// Only applied to non-streaming response shapes (POST/DELETE). GET hops
+// onto a long-lived SSE channel we don't want to consume.
+// ---------------------------------------------------------------------------
+
+type SandboxOutcome = {
+  readonly status?: string;
+  readonly error?: { readonly kind?: string; readonly message?: string };
+};
+
+type JsonRpcErrorBody = {
+  readonly jsonrpc?: string;
+  readonly error?: { readonly code?: number; readonly message?: string };
+  readonly result?: {
+    readonly isError?: boolean;
+    readonly structuredContent?: SandboxOutcome;
+  };
+};
+
+const responseBodyShape = (body: string): string => {
+  const trimmed = body.trimStart();
+  if (!trimmed) return "empty";
+  if (trimmed.startsWith("{")) return "json-object";
+  if (trimmed.startsWith("[")) return "json-array";
+  if (trimmed.startsWith("event:") || trimmed.startsWith("data:")) return "sse";
+  if (trimmed.startsWith("<")) return "html-or-xml";
+  return "other";
+};
+
+const parseFirstJsonRpc = (contentType: string, body: string): JsonRpcErrorBody | null => {
+  if (!body) return null;
+  try {
+    if (contentType.includes("text/event-stream")) {
+      // Grab the first `data:` line from the first SSE event.
+      for (const line of body.split(/\r?\n/)) {
+        if (line.startsWith("data:")) return JSON.parse(line.slice(5).trimStart());
+      }
+      return null;
+    }
+    if (contentType.includes("application/json")) {
+      return JSON.parse(body);
+    }
+    return null;
+  } catch {
+    return null;
+  }
+};
+
+const rpcResponseAttrs = (payload: JsonRpcErrorBody | null): Record<string, unknown> => {
+  // Require a JSON-RPC 2.0 envelope so we don't false-positive on other
+  // JSON shapes the edge happens to return (e.g. the auth-failure body
+  // `{ "error": "unauthorized" }` — not a JSON-RPC error).
+  if (!payload || payload.jsonrpc !== "2.0") return {};
+  const attrs: Record<string, unknown> = {};
+  const err = payload.error;
+  if (err && typeof err === "object") {
+    attrs["mcp.rpc.is_error"] = true;
+    if (typeof err.code === "number") attrs["mcp.rpc.error.code"] = err.code;
+    if (typeof err.message === "string") {
+      attrs["mcp.rpc.error.message"] = err.message.slice(0, 500);
+    }
+  }
+  if (payload.result?.isError === true) {
+    attrs["mcp.tool.result.is_error"] = true;
+  }
+  const sc = payload.result?.structuredContent;
+  if (sc && typeof sc.status === "string") {
+    attrs["mcp.tool.sandbox.status"] = sc.status;
+    if (sc.error?.kind) attrs["mcp.tool.sandbox.error.kind"] = sc.error.kind;
+    if (typeof sc.error?.message === "string") {
+      attrs["mcp.tool.sandbox.error.message"] = sc.error.message.slice(0, 500);
+    }
+  }
+  return attrs;
+};
+
+const peekAndAnnotate = (response: Response): Effect.Effect<Response> =>
+  Effect.gen(function* () {
+    const contentType = response.headers.get("content-type") ?? "";
+    if (response.status === 202) {
+      // MCP Streamable HTTP accepts notification-only POSTs with 202 and no body.
+      yield* Effect.annotateCurrentSpan({
+        "mcp.response.status_code": response.status,
+        "mcp.response.content_type": contentType,
+        "mcp.response.body.shape": "empty",
+        "mcp.response.body.length": 0,
+        "mcp.response.jsonrpc.detected": false,
+      });
+      const headers = new Headers(response.headers);
+      headers.delete("content-type");
+      headers.delete("content-length");
+      return new Response(null, {
+        status: response.status,
+        statusText: response.statusText,
+        headers,
+      });
+    }
+    if (!response.body) {
+      yield* Effect.annotateCurrentSpan({
+        "mcp.response.status_code": response.status,
+        "mcp.response.content_type": contentType,
+        "mcp.response.body.shape": "empty",
+        "mcp.response.body.length": 0,
+        "mcp.response.jsonrpc.detected": false,
+      });
+      return response;
+    }
+    // The DO can return a streaming SSE response for older in-memory
+    // sessions, so `response.text()` blocks on the
+    // entire downstream execution — RPC into the dynamic Worker, tool
+    // invocations back to the host, result serialisation. Carving this
+    // into its own span pins "worker drain time" on the trace so you can
+    // tell worker-side waiting apart from any pre/post work on the edge.
+    const text = yield* Effect.promise(() => response.text()).pipe(
+      Effect.withSpan("mcp.peek_response", {
+        attributes: {
+          "http.response.content_type": contentType,
+          "http.response.status_code": response.status,
+        },
+      }),
+    );
+    const payload = parseFirstJsonRpc(contentType, text);
+    yield* Effect.annotateCurrentSpan({
+      "mcp.response.status_code": response.status,
+      "mcp.response.content_type": contentType,
+      "mcp.response.body.length": text.length,
+      "mcp.response.body.shape": responseBodyShape(text),
+      "mcp.response.jsonrpc.detected": payload?.jsonrpc === "2.0",
+    });
+    const attrs = rpcResponseAttrs(payload);
+    if (Object.keys(attrs).length > 0) {
+      yield* Effect.annotateCurrentSpan(attrs);
+    }
+    // Internal-error code -32603 means our server failed handling a
+    // structurally valid request. Unlike -32601 / -32602 ("the client
+    // fucked up"), this is a real bug in our code — route to Sentry so
+    // we get alerted. Protocol-level client errors stay in Axiom.
+    if (payload?.error?.code === -32603) {
+      yield* Effect.sync(() => {
+        const msg = payload.error?.message ?? "unknown";
+        Sentry.captureException(new Error(`MCP internal error (-32603): ${msg}`));
+      });
+    }
+    return new Response(text, {
+      status: response.status,
+      statusText: response.statusText,
+      headers: response.headers,
+    });
+  });
+
+// ---------------------------------------------------------------------------
 // DO dispatch
 // ---------------------------------------------------------------------------
+
+// Worker and DO run in separate isolates with independent WebSdk tracer
+// providers. Neither one can see the other's OTEL context, so the DO used
+// to emit a brand-new root trace on every stub call. Ferry the worker span
+// context across with W3C headers: `traceparent` generated from the active
+// Effect span plus passthrough `tracestate` / `baggage` from the inbound
+// request.
+type IncomingPropagationHeaders = {
+  readonly traceparent?: string;
+  readonly tracestate?: string;
+  readonly baggage?: string;
+};
+
+const currentTraceparent = Effect.map(Effect.currentSpan, (span) => {
+  if (!span || !span.traceId || !span.spanId) return undefined;
+  const flags = span.sampled ? "01" : "00";
+  return `00-${span.traceId}-${span.spanId}-${flags}`;
+}).pipe(Effect.orElseSucceed(() => undefined));
+
+const currentPropagationHeaders = (request: Request): Effect.Effect<IncomingPropagationHeaders> =>
+  Effect.map(currentTraceparent, (traceparent) => ({
+    traceparent,
+    tracestate: request.headers.get("tracestate") ?? undefined,
+    baggage: request.headers.get("baggage") ?? undefined,
+  }));
+
+const withPropagationHeaders = (
+  request: Request,
+  propagation: IncomingPropagationHeaders,
+): Request => {
+  const headers = new Headers(request.headers);
+  if (propagation.traceparent) {
+    headers.set("traceparent", propagation.traceparent);
+  }
+  if (propagation.tracestate) {
+    headers.set("tracestate", propagation.tracestate);
+  }
+  if (propagation.baggage) {
+    headers.set("baggage", propagation.baggage);
+  }
+  return new Request(request, { headers });
+};
+
+const withVerifiedIdentityHeaders = (request: Request, token: VerifiedToken): Request => {
+  const headers = new Headers(request.headers);
+  headers.set(INTERNAL_ACCOUNT_ID_HEADER, token.accountId);
+  headers.set(INTERNAL_ORGANIZATION_ID_HEADER, token.organizationId ?? "");
+  return new Request(request, { headers });
+};
+
+const withMcpResponseHeaders = (response: Response): Response => {
+  const headers = new Headers(response.headers);
+  headers.set("access-control-allow-origin", "*");
+  headers.set("access-control-expose-headers", "mcp-session-id");
+  return new Response(response.body, {
+    status: response.status,
+    statusText: response.statusText,
+    headers,
+  });
+};
 
 /**
  * Forward a request to an existing session DO. Wrapping the DO's `Response`
  * with `HttpServerResponse.raw` lets streaming bodies (SSE) pass through
  * `HttpApp.toWebHandler`'s conversion unchanged.
  */
-const forwardToExistingSession = (request: Request, sessionId: string) =>
-  Effect.promise(async () => {
+const forwardToExistingSession = (
+  request: Request,
+  sessionId: string,
+  peek: boolean,
+  token: VerifiedToken,
+) =>
+  Effect.gen(function* () {
     const ns = env.MCP_SESSION;
     const stub = ns.get(ns.idFromString(sessionId));
-    return HttpServerResponse.raw(await stub.handleRequest(request));
+    const propagation = yield* currentPropagationHeaders(request);
+    const propagated = withPropagationHeaders(
+      withVerifiedIdentityHeaders(request, token),
+      propagation,
+    );
+    const raw = yield* Effect.promise(
+      () => stub.handleRequest(propagated) as Promise<Response>,
+    ).pipe(
+      Effect.withSpan("mcp.do.handle_request", {
+        attributes: {
+          "mcp.request.method": request.method,
+          "mcp.request.session_id_present": true,
+        },
+      }),
+    );
+    const annotated = peek ? yield* peekAndAnnotate(raw) : raw;
+    return HttpServerResponse.raw(withMcpResponseHeaders(annotated));
   });
 
 const dispatchPost = (request: Request, token: VerifiedToken) =>
@@ -339,26 +645,47 @@ const dispatchPost = (request: Request, token: VerifiedToken) =>
     }
 
     const sessionId = request.headers.get("mcp-session-id");
-    if (sessionId) return yield* forwardToExistingSession(request, sessionId);
+    if (sessionId) return yield* forwardToExistingSession(request, sessionId, true, token);
 
-    return yield* Effect.promise(async () => {
-      const ns = env.MCP_SESSION;
-      const stub = ns.get(ns.newUniqueId());
-      await stub.init({ organizationId });
-      return HttpServerResponse.raw(await stub.handleRequest(request));
-    });
+    const ns = env.MCP_SESSION;
+    const stub = ns.get(ns.newUniqueId());
+    const propagation = yield* currentPropagationHeaders(request);
+    yield* Effect.promise(() =>
+      stub.init({ organizationId, userId: token.accountId }, propagation),
+    ).pipe(
+      Effect.withSpan("mcp.do.init", {
+        attributes: { "mcp.request.session_id_present": false },
+      }),
+    );
+    const propagated = withPropagationHeaders(
+      withVerifiedIdentityHeaders(request, token),
+      propagation,
+    );
+    const raw = yield* Effect.promise(
+      () => stub.handleRequest(propagated) as Promise<Response>,
+    ).pipe(
+      Effect.withSpan("mcp.do.handle_request", {
+        attributes: {
+          "mcp.request.method": request.method,
+          "mcp.request.session_id_present": false,
+        },
+      }),
+    );
+    const annotated = yield* peekAndAnnotate(raw);
+    return HttpServerResponse.raw(withMcpResponseHeaders(annotated));
   });
 
-const dispatchGet = (request: Request) => {
+const dispatchGet = (request: Request, token: VerifiedToken) => {
   const sessionId = request.headers.get("mcp-session-id");
-  if (!sessionId) return Effect.succeed(jsonRpcError(400, -32000, "mcp-session-id header required for SSE"));
-  return forwardToExistingSession(request, sessionId);
+  if (!sessionId)
+    return Effect.succeed(jsonRpcError(400, -32000, "mcp-session-id header required for SSE"));
+  return forwardToExistingSession(request, sessionId, false, token);
 };
 
-const dispatchDelete = (request: Request) => {
+const dispatchDelete = (request: Request, token: VerifiedToken) => {
   const sessionId = request.headers.get("mcp-session-id");
   if (!sessionId) return Effect.succeed(HttpServerResponse.empty({ status: 204 }));
-  return forwardToExistingSession(request, sessionId);
+  return forwardToExistingSession(request, sessionId, true, token);
 };
 
 // ---------------------------------------------------------------------------
@@ -376,8 +703,8 @@ type McpRoute = "mcp" | "oauth-protected-resource" | "oauth-authorization-server
  * points.
  */
 export const classifyMcpPath = (pathname: string): McpRoute => {
-  if (pathname === "/mcp") return "mcp";
-  if (pathname === "/.well-known/oauth-protected-resource") return "oauth-protected-resource";
+  if (pathname === MCP_PATH) return "mcp";
+  if (pathname === PROTECTED_RESOURCE_METADATA_PATH) return "oauth-protected-resource";
   if (pathname === "/.well-known/oauth-authorization-server") return "oauth-authorization-server";
   return null;
 };
@@ -414,9 +741,9 @@ export const mcpApp: Effect.Effect<
     case "POST":
       return yield* dispatchPost(request, token);
     case "GET":
-      return yield* dispatchGet(request);
+      return yield* dispatchGet(request, token);
     case "DELETE":
-      return yield* dispatchDelete(request);
+      return yield* dispatchDelete(request, token);
     default:
       return jsonRpcError(405, -32001, "Method not allowed");
   }

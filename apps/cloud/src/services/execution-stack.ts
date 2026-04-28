@@ -14,9 +14,17 @@ import { withExecutionUsageTracking } from "../api/execution-usage";
 import { AutumnService } from "./autumn";
 import { createScopedExecutor } from "./executor";
 
-export const makeExecutionStack = (organizationId: string, organizationName: string) =>
+export const makeExecutionStack = (
+  userId: string,
+  organizationId: string,
+  organizationName: string,
+) =>
   Effect.gen(function* () {
-    const executor = yield* createScopedExecutor(organizationId, organizationName);
+    const executor = yield* createScopedExecutor(
+      userId,
+      organizationId,
+      organizationName,
+    ).pipe(Effect.withSpan("McpSessionDO.createScopedExecutor"));
     const codeExecutor = makeDynamicWorkerExecutor({ loader: env.LOADER });
     const autumn = yield* AutumnService;
     const engine = withExecutionUsageTracking(
@@ -25,4 +33,4 @@ export const makeExecutionStack = (organizationId: string, organizationName: str
       (orgId) => Effect.runFork(autumn.trackExecution(orgId)),
     );
     return { executor, engine };
-  });
+  }).pipe(Effect.withSpan("McpSessionDO.makeExecutionStack"));

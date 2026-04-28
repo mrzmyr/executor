@@ -1,6 +1,6 @@
 import { HttpApiBuilder } from "@effect/platform";
 import { Effect } from "effect";
-import { ToolId } from "@executor/sdk";
+import { ScopeId, ToolId } from "@executor/sdk";
 
 import { ExecutorApi } from "../api";
 import { ExecutorService } from "../services";
@@ -14,6 +14,7 @@ export const SourcesHandlers = HttpApiBuilder.group(ExecutorApi, "sources", (han
         const sources = yield* executor.sources.list();
         return sources.map((s) => ({
           id: s.id,
+          scopeId: s.scopeId ? ScopeId.make(s.scopeId) : undefined,
           name: s.name,
           kind: s.kind,
           url: s.url,
@@ -41,7 +42,10 @@ export const SourcesHandlers = HttpApiBuilder.group(ExecutorApi, "sources", (han
     .handle("tools", ({ path }) =>
       capture(Effect.gen(function* () {
         const executor = yield* ExecutorService;
-        const tools = yield* executor.tools.list({ sourceId: path.sourceId });
+        const tools = yield* executor.tools.list({
+          sourceId: path.sourceId,
+          includeAnnotations: false,
+        });
         return tools.map((t) => ({
           id: ToolId.make(t.id),
           pluginId: t.pluginId,

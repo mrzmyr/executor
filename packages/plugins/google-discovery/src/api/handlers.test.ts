@@ -22,10 +22,11 @@ const unused = Effect.dieMessage("unused");
 const failingExtension: GoogleDiscoveryPluginExtension = {
   probeDiscovery: () => Effect.die(new Error("Not implemented")),
   addSource: () => unused,
-  removeSource: () => unused,
+  removeSource: (_namespace: string, _scope: string) => unused,
   startOAuth: () => unused,
   completeOAuth: () => Effect.die(new Error("Not implemented")),
-  getSource: () => Effect.succeed(null),
+  getSource: (_namespace: string, _scope: string) => Effect.succeed(null),
+  updateSource: () => unused,
 };
 
 const Api = addGroup(GoogleDiscoveryGroup);

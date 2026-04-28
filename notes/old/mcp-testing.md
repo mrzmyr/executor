@@ -8,7 +8,7 @@ deleting one silently drops coverage that the others can't replace.
 | file | pool | drives | what it proves |
 |---|---|---|---|
 | `apps/cloud/src/mcp-session.e2e.node.test.ts` | node | `InMemoryTransport` + SDK `Client` | engine + plugin wiring; schema drift; elicitation semantics |
-| `apps/cloud/src/mcp-flow.test.ts` | workerd (vitest-pool-workers) | `SELF.fetch` + hand-rolled JSON-RPC | HTTP pipeline (auth / CORS / routing / DO dispatch) |
+| `apps/cloud/src/mcp-flow.test.ts` | workerd (vitest-pool-workers) | `SELF.fetch` + hand-rolled JSON-RPC | edge HTTP pipeline that does not require a live multi-request DO session |
 | `apps/cloud/src/mcp-miniflare.e2e.node.test.ts` | node + miniflare-on-real-port | SDK `Client` + real `StreamableHTTPClientTransport` | the long-lived-socket DO runtime actually works end-to-end; elicitation round-trips real HTTP |
 
 ## The workerd cross-request I/O wall
@@ -24,19 +24,12 @@ DO's own context outlives any single fetch handler) and fine under Miniflare on
 a real port, but `vitest-pool-workers` enforces a strict cross-request I/O
 check that prod doesn't.
 
-**Workaround.** `MCP_SESSION_REQUEST_SCOPED_RUNTIME=true` — the DO persists
-only `SessionMeta` to storage and rebuilds the DB handle + engine + MCP server
-+ `WorkerTransport` per POST/DELETE. `TransportState` survives the rebuild
-because it's already in `ctx.storage`. The flag defaults `false` in prod; the
-workerd-pool test config (`wrangler.test.jsonc`) sets it to `true`. The
-miniflare config (`wrangler.miniflare.jsonc`) leaves it `false` so we exercise
-the prod path.
-
-**What this means for coverage.** The workerd-pool suite does not actually
-prove the prod DO runtime works — it proves a test-only variant. The
-miniflare suite is what proves the long-lived-postgres path is correct. Don't
-let them both drift or delete the miniflare one because "the workerd one
-covers it."
+**Decision.** Do not carry a request-scoped runtime branch in production code
+just to satisfy the workerd-pool limitation. The workerd-pool suite only covers
+edge behavior that does not require a live multi-request MCP session (CORS,
+auth failures, metadata, stale-session handling). The real-port Miniflare suite
+owns multi-request MCP session coverage because it exercises the same
+long-lived-postgres DO runtime path that ships to Cloudflare.
 
 ## Miniflare harness gotchas
 

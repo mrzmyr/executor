@@ -15,9 +15,13 @@ import {
 export const resolveHeaders = (
   headers: Record<string, HeaderValue>,
   secrets: { readonly get: (id: string) => Effect.Effect<string | null, unknown> },
-): Effect.Effect<Record<string, string>> =>
-  Effect.gen(function* () {
-    const entries = Object.entries(headers);
+): Effect.Effect<Record<string, string>> => {
+  const entries = Object.entries(headers);
+  const secretCount = entries.reduce(
+    (acc, [, value]) => (typeof value === "string" ? acc : acc + 1),
+    0,
+  );
+  return Effect.gen(function* () {
     // Resolve secret-backed headers in parallel. Missing / failing
     // lookups drop the header rather than fail the invocation, same
     // as the serial version.
@@ -48,7 +52,15 @@ export const resolveHeaders = (
       if (value !== null) resolved[name] = value;
     }
     return resolved;
-  });
+  }).pipe(
+    Effect.withSpan("plugin.graphql.secret.resolve", {
+      attributes: {
+        "plugin.graphql.headers.total": entries.length,
+        "plugin.graphql.headers.secret_count": secretCount,
+      },
+    }),
+  );
+};
 
 // ---------------------------------------------------------------------------
 // Response helpers
@@ -73,6 +85,15 @@ export const invoke = Effect.fn("GraphQL.invoke")(function* (
   resolvedHeaders: Record<string, string>,
 ) {
   const client = yield* HttpClient.HttpClient;
+
+  yield* Effect.annotateCurrentSpan({
+    "http.method": "POST",
+    "http.url": endpoint,
+    "plugin.graphql.endpoint": endpoint,
+    "plugin.graphql.operation_kind": operation.kind,
+    "plugin.graphql.field_name": operation.fieldName,
+    "plugin.graphql.headers.resolved_count": Object.keys(resolvedHeaders).length,
+  });
 
   // Build the GraphQL request body
   const variables: Record<string, unknown> = {};
@@ -121,6 +142,12 @@ export const invoke = Effect.fn("GraphQL.invoke")(function* (
   const gqlBody = body as { data?: unknown; errors?: unknown[] } | null;
   const hasErrors = Array.isArray(gqlBody?.errors) && gqlBody.errors.length > 0;
 
+  yield* Effect.annotateCurrentSpan({
+    "http.status_code": status,
+    "plugin.graphql.has_errors": hasErrors,
+    "plugin.graphql.error_count": hasErrors ? gqlBody!.errors!.length : 0,
+  });
+
   return new InvocationResult({
     status,
     data: gqlBody?.data ?? null,
@@ -150,4 +177,11 @@ export const invokeWithLayer = (
             cause: err,
           }),
     ),
+    Effect.withSpan("plugin.graphql.invoke", {
+      attributes: {
+        "plugin.graphql.endpoint": endpoint,
+        "plugin.graphql.operation_kind": operation.kind,
+        "plugin.graphql.field_name": operation.fieldName,
+      },
+    }),
   );

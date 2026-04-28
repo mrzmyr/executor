@@ -1,5 +1,6 @@
 import { useState, type ReactNode } from "react";
 import { PlusIcon } from "lucide-react";
+import type { ScopeId } from "@executor/sdk";
 
 import { Button } from "../components/button";
 import {
@@ -31,6 +32,10 @@ export interface HeadersListProps {
    * to derive unique default secret labels/IDs like `axiom-authorization`.
    */
   readonly sourceName?: string;
+  /** When provided, inline-created secrets are written to this scope. */
+  readonly targetScope?: ScopeId;
+  /** Alias for `targetScope`, used by source flows that choose a write scope. */
+  readonly writeScope?: ScopeId;
 }
 
 export function HeadersList({
@@ -41,6 +46,8 @@ export function HeadersList({
   singleHeader = false,
   emptyLabel = "No headers",
   sourceName,
+  targetScope,
+  writeScope,
 }: HeadersListProps) {
   const [picking, setPicking] = useState(false);
   const canAddMore = !singleHeader || headers.length === 0;
@@ -107,6 +114,7 @@ export function HeadersList({
                 onRemove={singleHeader ? undefined : () => removeHeader(index)}
                 existingSecrets={existingSecrets}
                 sourceName={sourceName}
+                targetScope={targetScope ?? writeScope}
               />
             ))}
             {canAddMore && <AddHeaderRow onClick={() => setPicking(true)} />}
